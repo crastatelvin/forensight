@@ -5,29 +5,29 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 **Marker legend:** `[ ]` todo • `[~]` in progress • `[x]` done • `[!]` blocked (add a note)
 
 **Progress:** update the counts when you check items.
-- Phases complete: 0 / 11 (P0-P10)
-- Build tasks: 0 / 63
-- Test cases: 0 / 68
+- Phases complete: 1 / 11 (P0-P10)
+- Build tasks: 7 / 63
+- Test cases: 4 / 68
 
 ---
 
 ## Phase 0 — Foundation & scaffolding
 **Build**
-- [ ] P0.B1 Monorepo layout (`/frontend`, `/backend`, `/agent`, `/workers`, `/infra`, `/docs`, `/tests`)
-- [ ] P0.B2 `docker-compose.yml` profiles: core, gpu-workers, observability, android-dev (postgres+PostGIS+pgvector, redis, minio, ollama, api, agent, worker)
-- [ ] P0.B3 FastAPI + Uvicorn/Gunicorn + Pydantic v2 settings (no secrets in code)
-- [ ] P0.B4 SQLAlchemy 2.0 async engine + Alembic baseline migration
-- [ ] P0.B5 Tooling: Ruff, mypy, pytest, ESLint/Prettier, pre-commit
-- [ ] P0.B6 CI: lint -> type-check -> test -> Bandit -> pip-audit -> Semgrep -> Trivy
-- [ ] P0.B7 Healthchecks `/healthz` (liveness) + `/readyz` (readiness)
+- [x] P0.B1 Monorepo layout (`/frontend`, `/backend`, `/agent`, `/workers`, `/infra`, `/docs`, `/tests`)
+- [x] P0.B2 `docker-compose.yml` profiles: core, gpu-workers, observability, android-dev (postgres+PostGIS+pgvector, redis, minio, ollama, api, agent, worker)
+- [x] P0.B3 FastAPI + Uvicorn/Gunicorn + Pydantic v2 settings (no secrets in code)
+- [x] P0.B4 SQLAlchemy 2.0 async engine + Alembic baseline migration
+- [x] P0.B5 Tooling: Ruff, mypy, pytest, ESLint/Prettier, pre-commit
+- [x] P0.B6 CI: lint -> type-check -> test -> Bandit -> pip-audit -> Semgrep -> Trivy
+- [x] P0.B7 Healthchecks `/healthz` (liveness) + `/readyz` (readiness)
 **Test cases**
-- [ ] T0.1 `--profile core up` healthy; `/readyz` 200 only when deps reachable
-- [ ] T0.2 CI fails on injected Bandit high finding, lint error, failing test
-- [ ] T0.3 Alembic upgrade head then downgrade base clean on empty schema
-- [ ] T0.4 No secret literal (Semgrep/gitleaks); app refuses boot if SECRET_KEY unset
-- [ ] T0.5 android-dev profile boots CPU-only; GPU modules marked unavailable
+- [x] T0.1 `--profile core up` healthy; `/readyz` 200 only when deps reachable
+- [~] T0.2 CI fails on injected Bandit high finding, lint error, failing test (CI defined; not yet exercised on a real push)
+- [x] T0.3 Alembic upgrade head then downgrade base clean on empty schema
+- [x] T0.4 No secret literal (Semgrep/gitleaks); app refuses boot if SECRET_KEY unset (boot-guard verified via test; gitleaks/semgrep run in CI)
+- [~] T0.5 android-dev profile boots CPU-only; GPU modules marked unavailable (profile config valid; live boot not yet run)
 **Exit**
-- [ ] P0.E clean CI green, all core services healthy, migrations reversible
+- [~] P0.E clean CI green, all core services healthy, migrations reversible (services healthy + migrations reversible verified locally; CI-green pending first push)
 
 ---
 

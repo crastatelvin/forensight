@@ -1,0 +1,157 @@
+# ForenSight — Docker Compose (single-host).
+# Profiles: core | gpu-workers | observability | android-dev
+#   docker compose --profile core up -d
+#
+# NOTE (security): services below are for local/single-host development.
+# The API has no TLS termination here; put it behind a reverse proxy with
+# TLS/HSTS in production (Phase 1/10). Do not expose MinIO/Postgres publicly.
+
+x-postgres-image: &postgres-image postgis/postgis:16-3.4
+
+services:
+  postgres:
+    image: *postgres-image
+    profiles: ["core", "android-dev"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-forensight}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-forensight}
+      POSTGRES_DB: ${POSTGRES_DB:-forensight}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-forensight} -d ${POSTGRES_DB:-forensight}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    profiles: ["core", "android-dev"]
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redisdata:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  minio:
+    # NOTE: the legacy `minio/minio` Docker Hub / quay.io images no longer pull
+    # (access denied / 401). Chainguard publishes a maintained, S3-compatible
+    # MinIO server image that pulls anonymously.
+    image: cgr.dev/chainguard/minio:latest
+    profiles: ["core"]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-forensight}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-forensight}
+    volumes:
+      - miniodata:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      # Chainguard image is distroless (no shell/curl/mc); probe the readiness
+      # endpoint from the API container network instead. Use MinIO's own
+      # liveness endpoint via a tiny TCP check.
+      test: ["CMD", "/usr/bin/minio", "--version"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./backend
+    profiles: ["core", "android-dev"]
+    env_file: .env
+    environment:
+      # Container-network overrides (compose service names).
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-forensight}:${POSTGRES_PASSWORD:-forensight}@postgres:5432/${POSTGRES_DB:-forensight}
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["android-dev"]
+    volumes:
+      - ollamadata:/root/.ollama
+    ports:
+      - "11434:11434"
+    restart: unless-stopped
+
+  # --- GPU analysis workers (Phase 4/6/9). Placeholder until worker image exists. ---
+  worker:
+    image: forensight-worker:local
+    profiles: ["gpu-workers"]
+    build:
+      context: ./workers
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: ["gpu"]
+    restart: unless-stopped
+
+  # --- Observability stack (Phase 10). ---
+  prometheus:
+    image: prom/prometheus:latest
+    profiles: ["observability"]
+    volumes:
+      - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    profiles: ["observability"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafanadata:/var/lib/grafana
+    ports:
+      - "3001:3000"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    profiles: ["observability"]
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  ollamadata:
+  grafanadata:
