@@ -48,7 +48,7 @@ services:
     # (access denied / 401). Chainguard publishes a maintained, S3-compatible
     # MinIO server image that pulls anonymously.
     image: cgr.dev/chainguard/minio:latest
-    profiles: ["core"]
+    profiles: ["core", "android-dev"]
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-forensight}

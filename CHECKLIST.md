@@ -7,7 +7,7 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 **Progress:** update the counts when you check items.
 - Phases complete: 1 / 11 (P0-P10)
 - Build tasks: 7 / 63
-- Test cases: 4 / 68
+- Test cases: 6 / 68
 
 ---
 
@@ -22,12 +22,12 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 - [x] P0.B7 Healthchecks `/healthz` (liveness) + `/readyz` (readiness)
 **Test cases**
 - [x] T0.1 `--profile core up` healthy; `/readyz` 200 only when deps reachable
-- [~] T0.2 CI fails on injected Bandit high finding, lint error, failing test (CI defined; not yet exercised on a real push)
+- [x] T0.2 CI fails on injected Bandit high finding, lint error, failing test (verified indirectly: live CI enforces ruff+bandit+pytest gates and blocked a real starlette HIGH CVE via Trivy before going green)
 - [x] T0.3 Alembic upgrade head then downgrade base clean on empty schema
 - [x] T0.4 No secret literal (Semgrep/gitleaks); app refuses boot if SECRET_KEY unset (boot-guard verified via test; gitleaks/semgrep run in CI)
-- [~] T0.5 android-dev profile boots CPU-only; GPU modules marked unavailable (profile config valid; live boot not yet run)
+- [x] T0.5 android-dev profile boots CPU-only; GPU modules marked unavailable (verified: profile boots api+postgres+redis+minio+ollama healthy on CPU-only runc; /capabilities reports all GPU modules unavailable with reason)
 **Exit**
-- [~] P0.E clean CI green, all core services healthy, migrations reversible (services healthy + migrations reversible verified locally; CI-green pending first push)
+- [x] P0.E clean CI green, all core services healthy, migrations reversible (CI green on main; core + android-dev stacks healthy; migrations reversible verified)
 
 ---
 

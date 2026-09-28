@@ -73,3 +73,29 @@ def test_readyz_returns_200_when_all_up(monkeypatch: pytest.MonkeyPatch) -> None
         resp = client.get("/readyz")
     assert resp.status_code == 200
     assert resp.json()["ready"] is True
+def test_capabilities_gpu_unavailable_reports_degraded() -> None:
+    # T0.5: with GPU absent, GPU modules are reported unavailable (not faked).
+    app = create_app(_settings(gpu_available=False))
+    with TestClient(app) as client:
+        resp = client.get("/capabilities")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["gpu_available"] is False
+    gpu_caps = [c for c in body["capabilities"] if c["requires_gpu"]]
+    cpu_caps = [c for c in body["capabilities"] if not c["requires_gpu"]]
+    assert gpu_caps, "expected at least one GPU-requiring capability"
+    assert all(c["available"] is False for c in gpu_caps)
+    assert all("reason" in c for c in gpu_caps)
+    # CPU analyzers remain available on a CPU-only host.
+    assert cpu_caps and all(c["available"] is True for c in cpu_caps)
+
+
+def test_capabilities_gpu_available_enables_modules() -> None:
+    app = create_app(_settings(gpu_available=True))
+    with TestClient(app) as client:
+        resp = client.get("/capabilities")
+    body = resp.json()
+    assert body["gpu_available"] is True
+    gpu_caps = [c for c in body["capabilities"] if c["requires_gpu"]]
+    assert gpu_caps and all(c["available"] is True for c in gpu_caps)
+

@@ -11,6 +11,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from app.capabilities import get_capabilities
 from app.config import Settings, get_settings
 from app.health import gather_readiness
 
@@ -66,6 +67,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             },
         }
         return JSONResponse(status_code=200 if ready else 503, content=payload)
+
+    @app.get("/capabilities", tags=["health"])
+    async def capabilities() -> dict[str, object]:
+        """Report analyzer capabilities; GPU modules degrade cleanly (T0.5)."""
+        caps = get_capabilities(app.state.settings)
+        return {
+            "gpu_available": app.state.settings.gpu_available,
+            "capabilities": [
+                {
+                    "name": c.name,
+                    "available": c.available,
+                    "requires_gpu": c.requires_gpu,
+                    **({"reason": c.reason} if c.reason else {}),
+                }
+                for c in caps
+            ],
+        }
 
     return app
 
