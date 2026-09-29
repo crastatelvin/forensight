@@ -5,9 +5,9 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 **Marker legend:** `[ ]` todo • `[~]` in progress • `[x]` done • `[!]` blocked (add a note)
 
 **Progress:** update the counts when you check items.
-- Phases complete: 1 / 11 (P0-P10)
-- Build tasks: 7 / 63
-- Test cases: 6 / 68
+- Phases complete: 2 / 11 (P0-P10)
+- Build tasks: 14 / 63
+- Test cases: 13 / 68
 
 ---
 
@@ -33,23 +33,23 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 
 ## Phase 1 — Auth, RBAC & security baseline
 **Build**
-- [ ] P1.B1 fastapi-users + Argon2id hashing (no plaintext)
-- [ ] P1.B2 JWT access+refresh; secure/HttpOnly/SameSite cookies; CSRF
-- [ ] P1.B3 Roles Admin/Officer/Expert/Reviewer + central RBAC dependency
-- [ ] P1.B4 Redis rate limiting on auth + mutating endpoints
-- [ ] P1.B5 TLS/HSTS + security headers middleware (CSP etc.)
-- [ ] P1.B6 Secrets via env/SOPS+age; Vault upgrade path documented
-- [ ] P1.B7 Seed script for initial admin (no committed DB)
+- [x] P1.B1 fastapi-users + Argon2id hashing (no plaintext)
+- [x] P1.B2 JWT access+refresh; secure/HttpOnly/SameSite cookies; CSRF
+- [x] P1.B3 Roles Admin/Officer/Expert/Reviewer + central RBAC dependency
+- [x] P1.B4 Redis rate limiting on auth + mutating endpoints
+- [x] P1.B5 TLS/HSTS + security headers middleware (CSP etc.)
+- [x] P1.B6 Secrets via env/SOPS+age; Vault upgrade path documented
+- [x] P1.B7 Seed script for initial admin (no committed DB)
 **Test cases**
-- [ ] T1.1 Argon2id stored; login verifies; wrong password rejected; timing-safe
-- [ ] T1.2 Expired/invalid/forged JWT rejected; refresh rotation; reused refresh revoked
-- [ ] T1.3 RBAC matrix parametrized per role per route
-- [ ] T1.4 Rate limit 429 after threshold; resets after window
-- [ ] T1.5 CSRF required on cookie mutations; missing/invalid -> 403
-- [ ] T1.6 Security headers present on all responses
-- [ ] T1.7 No default/hardcoded creds; seed admin needs env password
+- [x] T1.1 Argon2id stored; login verifies; wrong password rejected; timing-safe
+- [x] T1.2 Expired/invalid/forged JWT rejected; refresh rotation; reused refresh revoked
+- [x] T1.3 RBAC matrix parametrized per role per route
+- [x] T1.4 Rate limit 429 after threshold; resets after window
+- [x] T1.5 CSRF required on cookie mutations; missing/invalid -> 403
+- [x] T1.6 Security headers present on all responses
+- [x] T1.7 No default/hardcoded creds; seed admin needs env password
 **Exit**
-- [ ] P1.E RBAC enforced+tested; zero plaintext secrets; auth pen-test smoke passes
+- [x] P1.E RBAC enforced+tested; zero plaintext secrets; auth pen-test smoke passes
 
 ---
 

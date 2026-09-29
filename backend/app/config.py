@@ -41,6 +41,28 @@ class Settings(BaseSettings):
     # Capability flags — allow clean degradation on CPU-only / android-dev.
     gpu_available: bool = Field(default=False)
 
+    # --- Auth / JWT (Phase 1) ---
+    # Lifetimes in seconds.
+    access_token_ttl: int = Field(default=900)  # 15 minutes
+    refresh_token_ttl: int = Field(default=1209600)  # 14 days
+    jwt_algorithm: str = Field(default="HS256")
+
+    # Cookie flags for cookie-based auth flows.
+    cookie_secure: bool = Field(default=True)  # override to False for local http
+    cookie_domain: str = Field(default="")
+    cookie_samesite: str = Field(default="lax")
+
+    # Rate limiting (Redis-backed; in-memory fallback for tests).
+    rate_limit_auth_max: int = Field(default=5)  # attempts
+    rate_limit_auth_window: int = Field(default=60)  # seconds
+    rate_limit_mutation_max: int = Field(default=60)
+    rate_limit_mutation_window: int = Field(default=60)
+
+    # Initial admin seed (password MUST come from env; never hardcoded — T1.7).
+    seed_admin_email: str = Field(default="")
+    seed_admin_password: str = Field(default="")
+
+
 
 @lru_cache
 def get_settings() -> Settings:

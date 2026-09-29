@@ -11,6 +11,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from app.auth.middleware import CSRFMiddleware, SecurityHeadersMiddleware
+from app.auth.ratelimit import InMemoryRateLimiter, RedisRateLimiter
+from app.auth.router import router as auth_router
 from app.capabilities import get_capabilities
 from app.config import Settings, get_settings
 from app.health import gather_readiness
@@ -48,6 +51,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         lifespan=lifespan,
     )
     app.state.settings = settings
+
+    # Rate limiter: Redis in prod, in-memory fallback for tests/dev.
+    if getattr(app.state, "rate_limiter", None) is None:
+        try:
+            import redis.asyncio as aioredis
+
+            client = aioredis.from_url(  # type: ignore[no-untyped-call]
+                settings.redis_url
+            )
+            app.state.rate_limiter = RedisRateLimiter(client)
+        except Exception:  # noqa: BLE001 - fall back cleanly if Redis unavailable
+            app.state.rate_limiter = InMemoryRateLimiter()
+
+    # Security middleware: headers on every response (T1.6) + CSRF (T1.5).
+    app.add_middleware(CSRFMiddleware)
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        hsts=(settings.environment.lower() == "production"),
+    )
+
+    app.include_router(auth_router)
 
     @app.get("/healthz", tags=["health"])
     async def healthz() -> dict[str, str]:

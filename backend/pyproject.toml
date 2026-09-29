@@ -17,6 +17,9 @@ dependencies = [
     "httpx==0.28.1",
     "psycopg[binary]==3.2.3",
     "starlette==1.7.0",
+    "fastapi-users[sqlalchemy]==15.0.5",
+    "pwdlib[argon2]==0.3.0",
+    "pyjwt==2.15.1",
 ]
 
 [dependency-groups]
@@ -27,6 +30,7 @@ dev = [
     "mypy==1.13.0",
     "bandit==1.8.0",
     "pip-audit==2.7.3",
+    "aiosqlite==0.22.1",
 ]
 
 [tool.ruff]
