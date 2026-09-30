@@ -8,6 +8,13 @@ ENV PYTHONUNBUFFERED=1 \
 # Install uv (fast, reproducible installs from the lockfile).
 COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /uvx /bin/
 
+# Apply OS security updates and install libmagic (needed by python-magic at
+# runtime for MIME sniffing). Keep the image lean and pin nothing to :latest.
+RUN apt-get update \
+    && apt-get -y upgrade \
+    && apt-get install -y --no-install-recommends libmagic1 \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Install dependencies first for better layer caching.
