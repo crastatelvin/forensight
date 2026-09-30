@@ -16,6 +16,7 @@ from app.auth.ratelimit import InMemoryRateLimiter, RedisRateLimiter
 from app.auth.router import router as auth_router
 from app.capabilities import get_capabilities
 from app.config import Settings, get_settings
+from app.domain.router import router as cases_router
 from app.health import gather_readiness
 
 
@@ -72,6 +73,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
 
     app.include_router(auth_router)
+    app.include_router(cases_router)
 
     @app.get("/healthz", tags=["health"])
     async def healthz() -> dict[str, str]:

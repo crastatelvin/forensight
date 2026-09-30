@@ -14,6 +14,7 @@ from alembic import context
 from app.auth import models as _auth_models  # noqa: F401
 from app.config import get_settings
 from app.db import Base
+from app.domain import models as _domain_models  # noqa: F401
 from sqlalchemy import engine_from_config, pool
 
 config = context.config

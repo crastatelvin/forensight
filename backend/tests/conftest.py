@@ -15,6 +15,7 @@ from app.auth.repository import create_user
 from app.auth.roles import Role
 from app.config import Settings, get_settings
 from app.db import Base, get_session
+from app.domain import models as domain_models
 from app.main import create_app
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
@@ -46,8 +47,9 @@ def settings() -> Settings:
 async def sessionmaker_fixture() -> AsyncIterator[async_sessionmaker[AsyncSession]]:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as conn:
-        # Register auth models, then create all tables on this engine.
+        # Register auth + domain models, then create all tables on this engine.
         _ = auth_models.User
+        _ = domain_models.Case
         await conn.run_sync(Base.metadata.create_all)
     maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
     yield maker

@@ -20,6 +20,8 @@ dependencies = [
     "fastapi-users[sqlalchemy]==15.0.5",
     "pwdlib[argon2]==0.3.0",
     "pyjwt==2.15.1",
+    "python-magic>=0.4.27",
+    "python-multipart>=0.0.18",
 ]
 
 [dependency-groups]

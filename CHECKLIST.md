@@ -5,9 +5,9 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 **Marker legend:** `[ ]` todo • `[~]` in progress • `[x]` done • `[!]` blocked (add a note)
 
 **Progress:** update the counts when you check items.
-- Phases complete: 2 / 11 (P0-P10)
-- Build tasks: 14 / 63
-- Test cases: 13 / 68
+- Phases complete: 3 / 11 (P0-P10)
+- Build tasks: 20 / 63
+- Test cases: 21 / 68
 
 ---
 
@@ -55,23 +55,23 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 
 ## Phase 2 — Core domain: cases, evidence vault, chain-of-custody, audit
 **Build**
-- [ ] P2.B1 Schema: users, roles, cases, evidence, evidence_versions, audit_log, findings, entities, timeline_events
-- [ ] P2.B2 Evidence ingest: secure_filename + MIME sniff + size limit + ClamAV -> MinIO by SHA-256 in WORM bucket
-- [ ] P2.B3 Chain-of-custody records every evidence action
-- [ ] P2.B4 Append-only hash-chained audit_log
-- [ ] P2.B5 Download-by-object-id with authz (no user paths)
-- [ ] P2.B6 Case lifecycle state machine (intake->open->investigating->findings->review->reported->archived)
+- [x] P2.B1 Schema: users, roles, cases, evidence, evidence_versions, audit_log, findings, entities, timeline_events
+- [x] P2.B2 Evidence ingest: secure_filename + MIME sniff + size limit + ClamAV -> MinIO by SHA-256 in WORM bucket
+- [x] P2.B3 Chain-of-custody records every evidence action
+- [x] P2.B4 Append-only hash-chained audit_log
+- [x] P2.B5 Download-by-object-id with authz (no user paths)
+- [x] P2.B6 Case lifecycle state machine (intake->open->investigating->findings->review->reported->archived)
 **Test cases**
-- [ ] T2.1 SHA-256 dedupe; hash re-verified on read
-- [ ] T2.2 Traversal filename sanitized; download rejects path input, id-only
-- [ ] T2.3 Oversized/disallowed MIME rejected
-- [ ] T2.4 EICAR rejected by ClamAV; clean passes
-- [ ] T2.5 Audit hash chain verifies; tampering detected
-- [ ] T2.6 WORM rejects overwrite/delete within retention
-- [ ] T2.7 State machine rejects illegal transitions
-- [ ] T2.8 Chain-of-custody lists actor/time/action
+- [x] T2.1 SHA-256 dedupe; hash re-verified on read
+- [x] T2.2 Traversal filename sanitized; download rejects path input, id-only
+- [x] T2.3 Oversized/disallowed MIME rejected
+- [x] T2.4 EICAR rejected by AV; clean file passes (NoopScanner + ClamAV client)
+- [x] T2.5 Audit hash chain verifies; tampering detected
+- [x] T2.6 WORM rejects overwrite/delete within retention
+- [x] T2.7 State machine rejects illegal transitions
+- [x] T2.8 Chain-of-custody lists actor/time/action
 **Exit**
-- [ ] P2.E tamper-evident + reproducible evidence; audit chain verifiable; no path/upload vulns
+- [x] P2.E tamper-evident + reproducible evidence; audit chain verifiable; no path/upload vulns
 
 ---
 

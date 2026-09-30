@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     seed_admin_email: str = Field(default="")
     seed_admin_password: str = Field(default="")
 
+    # --- Evidence / AV (Phase 2) ---
+    # If set, evidence uploads are scanned via clamd at this host (TCP 3310).
+    clamav_host: str = Field(default="")
+
 
 
 @lru_cache
