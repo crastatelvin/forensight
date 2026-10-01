@@ -138,43 +138,70 @@ async def list_case_evidence(
 
 
 async def search_cases(
-    session: AsyncSession, query: str, *, limit: int = 50
+    session: AsyncSession,
+    query: str,
+    *,
+    viewer_id: uuid.UUID | None = None,
+    all_access: bool = False,
+    limit: int = 50,
 ) -> list[Case]:
-    """Full-text search over case metadata (T3.3).
+    """Full-text search over case metadata, scoped to the viewer (T3.3/T3.7).
 
     Uses Postgres websearch_to_tsquery against the generated search_tsv column
     with ts_rank ordering. Parameter-bound, so injection attempts are inert.
     On non-Postgres (SQLite tests) falls back to a safe ILIKE scan.
+
+    Scoping: when all_access is False, only cases owned by or assigned to
+    viewer_id are returned, so search never leaks cases outside the caller's
+    scope. all_access=True (admin/reviewer) returns matches organisation-wide.
     """
     dialect = session.bind.dialect.name if session.bind else ""
     if dialect == "postgresql":
-        stmt = text(
-            "SELECT * FROM cases "
-            "WHERE search_tsv @@ websearch_to_tsquery('english', :q) "
-            "ORDER BY ts_rank(search_tsv, websearch_to_tsquery('english', :q)) DESC "
-            "LIMIT :lim"
+        # Two fully-static query strings (no user input in SQL text); the
+        # scoped variant restricts to owner/assignee. Values are bound via
+        # parameters (:q/:viewer/:lim), so neither variant is injectable.
+        params: dict[str, object] = {"q": query, "lim": limit}
+        base_select = "SELECT id FROM cases WHERE "
+        match_clause = "search_tsv @@ websearch_to_tsquery('english', :q)"
+        order_clause = (
+            " ORDER BY ts_rank(search_tsv,"
+            " websearch_to_tsquery('english', :q)) DESC LIMIT :lim"
         )
-        result = await session.execute(stmt, {"q": query, "lim": limit})
-        rows = result.mappings().all()
-        ids = [r["id"] for r in rows]
+        if all_access:
+            stmt = text(base_select + match_clause + order_clause)
+        else:
+            params["viewer"] = viewer_id
+            stmt = text(
+                base_select
+                + match_clause
+                + " AND (owner_id = :viewer OR assigned_to = :viewer)"
+                + order_clause
+            )
+        result = await session.execute(stmt, params)
+        ids = [r["id"] for r in result.mappings().all()]
         if not ids:
             return []
-        cases = {c.id: c for c in (await session.execute(
-            select(Case).where(Case.id.in_(ids))
-        )).scalars().all()}
+        cases = {
+            c.id: c
+            for c in (
+                await session.execute(select(Case).where(Case.id.in_(ids)))
+            ).scalars().all()
+        }
         return [cases[i] for i in ids if i in cases]
 
     # SQLite fallback: parametrized LIKE (still injection-safe).
     like = f"%{query}%"
-    result = await session.execute(
-        select(Case)
-        .where(
-            Case.title.ilike(like)
-            | Case.description.ilike(like)
-            | Case.number.ilike(like)
-        )
-        .order_by(Case.created_at.desc())
-        .limit(limit)
+    conditions = (
+        Case.title.ilike(like)
+        | Case.description.ilike(like)
+        | Case.number.ilike(like)
     )
+    stmt2 = select(Case).where(conditions)
+    if not all_access:
+        stmt2 = stmt2.where(
+            (Case.owner_id == viewer_id) | (Case.assigned_to == viewer_id)
+        )
+    stmt2 = stmt2.order_by(Case.created_at.desc()).limit(limit)
+    result = await session.execute(stmt2)
     return list(result.scalars().all())
 

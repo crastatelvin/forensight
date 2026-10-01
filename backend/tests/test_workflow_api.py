@@ -62,16 +62,14 @@ async def test_assignment_notifies(
         )
     ).json()
 
-    import uuid
-
-    target = str(uuid.uuid4())
+    target = seed_users["expert"]["id"]
     ok = await client.post(
         f"/cases/{case['id']}/assign", headers=officer, json={"assigned_to": target}
     )
     assert ok.status_code == 200
     assert any(e[0] == "case.assigned" for e in notifier.events)
 
-    # Reviewer may not assign.
+    # Reviewer may not assign (RBAC: 403 before any case-scope check).
     bad = await client.post(
         f"/cases/{case['id']}/assign", headers=reviewer, json={"assigned_to": target}
     )

@@ -62,6 +62,11 @@ async def app(
 ) -> FastAPI:
     application = create_app(settings)
     application.state.rate_limiter = InMemoryRateLimiter()
+    # Install an in-memory notifier so tests never reach for Redis.
+    from app.domain import router as _domain_router
+    from app.domain.notifications import InMemoryNotifier
+
+    _domain_router._NOTIFIER = InMemoryNotifier()
 
     async def _override_get_session() -> AsyncIterator[AsyncSession]:
         async with sessionmaker_fixture() as session:
@@ -92,9 +97,11 @@ async def seed_users(
     }
     async with sessionmaker_fixture() as session:
         for role_value, c in creds.items():
-            await create_user(
+            user = await create_user(
                 session, email=c["email"], password=c["password"], role=Role(role_value)
             )
+            await session.flush()
+            c["id"] = str(user.id)
         await session.commit()
     return creds
 

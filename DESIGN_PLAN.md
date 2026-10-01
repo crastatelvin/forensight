@@ -218,6 +218,14 @@ Plus **structured case memory** (findings/entities/timeline tables) — the sour
 - File uploads: `secure_filename`, MIME sniffing, size limits, AV scan (ClamAV) on ingest, stored in MinIO by content-hash — kills path traversal and overwrite.
 - Downloads: never join user paths; serve by object id with authz checks — kills the old `download_report` traversal.
 - RBAC enforced centrally (dependency/middleware), not copy-pasted per route.
+- Per-case access control (resource-level authorization) layered on top of RBAC:
+  ADMIN read/write all; OFFICER read/write own or assigned cases; EXPERT
+  read/write assigned cases; REVIEWER read-only across all cases. A read-scope
+  miss returns 404 (non-disclosure of out-of-scope cases); a write attempt on a
+  readable-but-not-writable case returns 403. Enforced centrally in
+  `app/domain/access.py`, not per route. Search results and evidence/finding/
+  entity/timeline access are scoped the same way. Case assignment validates
+  that the assignee user exists.
 - CSRF protection, secure/HttpOnly/SameSite cookies, TLS everywhere, HSTS.
 - Rate limiting + input validation (Pydantic) on all endpoints; agent tool inputs schema-validated.
 - Audit log is append-only + hash-chained; evidence bucket is WORM/object-locked.

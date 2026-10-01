@@ -6,8 +6,8 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 
 **Progress:** update the counts when you check items.
 - Phases complete: 4 / 11 (P0-P10)
-- Build tasks: 25 / 63
-- Test cases: 27 / 68
+- Build tasks: 27 / 65
+- Test cases: 29 / 70
 
 ---
 
@@ -82,15 +82,19 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 - [x] P3.B3 Notifications (Redis pub/sub) + SLA/status tracking
 - [x] P3.B4 Exports CSV/JSON/ZIP (manifest + metadata, authorized bytes only)
 - [x] P3.B5 OpenAPI published; all inputs Pydantic-validated
+- [x] P3.B6 Per-case access control (owner/assignee scoping) in app/domain/access.py
+- [x] P3.B7 Assignment validates assignee exists; entity creation audited
 **Test cases**
-- [x] T3.1 Case CRUD honors RBAC (officer own / reviewer read-only / admin all)
+- [x] T3.1 Case CRUD honors RBAC + per-case scope (officer own/assigned, reviewer read-only, admin all) - enforced in access.py
 - [x] T3.2 Assignment triggers notification; unauthorized assignment blocked
 - [x] T3.3 Full-text search ranked; SQLi neutralized (parametrized)
 - [x] T3.4 CSV/JSON/ZIP match DB; ZIP manifest lists content-hashes
 - [x] T3.5 Illegal status transition -> 409; audit recorded
 - [x] T3.6 OpenAPI contract test: endpoints documented, schemas validated
+- [x] T3.7 Per-case access: officer blocked from other officers case (404); admin all; reviewer read-only; expert only assigned; search scoped to caller
+- [x] T3.8 Assign to non-existent user -> 422
 **Exit**
-- [x] P3.E full case workflow via API with RBAC + audit; exports correct
+- [x] P3.E full case workflow via API with RBAC + per-case access control + audit; exports correct
 
 ---
 
