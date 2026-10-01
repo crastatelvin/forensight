@@ -50,6 +50,11 @@ class Case(Base):
         String(32), default=CaseStatus.INTAKE, nullable=False
     )
     owner_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    assigned_to: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
+    priority: Mapped[str] = mapped_column(String(16), default="normal", nullable=False)
+    due_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

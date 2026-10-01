@@ -72,6 +72,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         hsts=(settings.environment.lower() == "production"),
     )
 
+    # Notifications: Redis pub/sub in prod, in-memory recorder otherwise (T3.2).
+    from app.domain import router as _domain_router
+    from app.domain.notifications import InMemoryNotifier, RedisNotifier
+
+    if getattr(_domain_router, "_NOTIFIER", None) is None:
+        try:
+            import redis.asyncio as aioredis
+
+            n_client = aioredis.from_url(  # type: ignore[no-untyped-call]
+                settings.redis_url
+            )
+            _domain_router._NOTIFIER = RedisNotifier(n_client)
+        except Exception:  # noqa: BLE001
+            _domain_router._NOTIFIER = InMemoryNotifier()
+
     app.include_router(auth_router)
     app.include_router(cases_router)
 

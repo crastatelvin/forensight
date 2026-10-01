@@ -24,25 +24,45 @@ from app.auth.roles import Role
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.domain.antivirus import ClamAVScanner, InfectedFileError, NoopScanner, Scanner
+from app.domain.exports import export_csv, export_json, export_zip
 from app.domain.ingest import EvidenceValidationError
 from app.domain.models import Case
 from app.domain.repository import (
     append_audit,
     custody_for_evidence,
     get_case,
+    list_case_evidence,
+    search_cases,
 )
 from app.domain.schemas import (
+    CaseAssign,
     CaseCreate,
     CaseRead,
     CaseTransition,
     CustodyEntry,
+    EntityCreate,
+    EntityRead,
     EvidenceRead,
+    FindingCreate,
+    FindingRead,
+    TimelineEventRead,
 )
 from app.domain.service import IngestService
 from app.domain.state_machine import IllegalTransitionError, assert_transition
 from app.domain.storage import ObjectStore
+from app.domain.workflow_repo import (
+    create_entity,
+    create_finding,
+    list_entities,
+    list_findings,
+    list_timeline,
+)
 
 router = APIRouter(prefix="/cases", tags=["cases"])
+
+# Module-level notifier, wired by the app factory (RedisNotifier in prod,
+# InMemoryNotifier in tests). None means notifications are a no-op.
+_NOTIFIER: object | None = None
 
 _MUTATORS = (Role.ADMIN, Role.OFFICER, Role.EXPERT)
 
@@ -188,3 +208,175 @@ async def evidence_custody(
     # T2.8: full chain-of-custody timeline with actor, time, action.
     entries = await custody_for_evidence(session, evidence_id)
     return [CustodyEntry.model_validate(e) for e in entries]
+
+
+# --- Assignment (T3.2) ---
+
+@router.post("/{case_id}/assign", response_model=CaseRead)
+async def assign_case(
+    case_id: uuid.UUID,
+    payload: CaseAssign,
+    user: Annotated[CurrentUser, Depends(require_roles(Role.ADMIN, Role.OFFICER))],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> CaseRead:
+    case = await get_case(session, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    case.assigned_to = payload.assigned_to
+    await append_audit(
+        session, actor_id=uuid.UUID(user.id), action="case.assign",
+        target=str(case.id), payload={"assigned_to": str(payload.assigned_to)},
+    )
+    await session.commit()
+    await _notify(
+        case_id=case.id, event="case.assigned",
+        payload={"assigned_to": str(payload.assigned_to), "by": user.id},
+    )
+    return CaseRead.model_validate(case)
+
+
+async def _notify(*, case_id: uuid.UUID, event: str, payload: dict[str, object]) -> None:
+    # Resolved lazily from the app to avoid import cycles; patched in tests.
+    from app.domain import router as _self
+
+    notifier = getattr(_self, "_NOTIFIER", None)
+    if notifier is not None:
+        await notifier.publish(event, {"case_id": str(case_id), **payload})
+
+
+# --- Evidence listing (T3.1) ---
+
+@router.get("/{case_id}/evidence", response_model=list[EvidenceRead])
+async def list_evidence(
+    case_id: uuid.UUID,
+    _user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[EvidenceRead]:
+    items = await list_case_evidence(session, case_id)
+    return [EvidenceRead.model_validate(e) for e in items]
+
+
+# --- Findings CRUD (draft) ---
+
+@router.post("/{case_id}/findings", response_model=FindingRead, status_code=201)
+async def add_finding(
+    case_id: uuid.UUID,
+    payload: FindingCreate,
+    user: Annotated[CurrentUser, Depends(require_roles(*_MUTATORS))],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> FindingRead:
+    if await get_case(session, case_id) is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    finding = await create_finding(
+        session, case_id=case_id, title=payload.title, body=payload.body,
+        created_by=uuid.UUID(user.id),
+    )
+    await append_audit(
+        session, actor_id=uuid.UUID(user.id), action="finding.create",
+        target=str(finding.id), payload={"case_id": str(case_id)},
+    )
+    await session.commit()
+    return FindingRead.model_validate(finding)
+
+
+@router.get("/{case_id}/findings", response_model=list[FindingRead])
+async def get_findings(
+    case_id: uuid.UUID,
+    _user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[FindingRead]:
+    return [FindingRead.model_validate(f) for f in await list_findings(session, case_id)]
+
+
+# --- Entities ---
+
+@router.post("/{case_id}/entities", response_model=EntityRead, status_code=201)
+async def add_entity(
+    case_id: uuid.UUID,
+    payload: EntityCreate,
+    user: Annotated[CurrentUser, Depends(require_roles(*_MUTATORS))],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> EntityRead:
+    if await get_case(session, case_id) is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    entity = await create_entity(
+        session, case_id=case_id, kind=payload.kind, value=payload.value,
+        attributes=payload.attributes,
+    )
+    await session.commit()
+    return EntityRead.model_validate(entity)
+
+
+@router.get("/{case_id}/entities", response_model=list[EntityRead])
+async def get_entities(
+    case_id: uuid.UUID,
+    _user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[EntityRead]:
+    return [EntityRead.model_validate(e) for e in await list_entities(session, case_id)]
+
+
+@router.get("/{case_id}/timeline", response_model=list[TimelineEventRead])
+async def get_timeline(
+    case_id: uuid.UUID,
+    _user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[TimelineEventRead]:
+    return [
+        TimelineEventRead.model_validate(t) for t in await list_timeline(session, case_id)
+    ]
+
+
+# --- Search (T3.3) ---
+
+@router.get("/search/query", response_model=list[CaseRead])
+async def search(
+    q: str,
+    _user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> list[CaseRead]:
+    results = await search_cases(session, q)
+    return [CaseRead.model_validate(c) for c in results]
+
+
+# --- Exports (T3.4) ---
+
+@router.get("/{case_id}/export")
+async def export_case(
+    case_id: uuid.UUID,
+    fmt: str,
+    _user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> Response:
+    case = await get_case(session, case_id)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    evidence = await list_case_evidence(session, case_id)
+
+    if fmt == "json":
+        return Response(
+            content=export_json(case, evidence),
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{case.number}.json"'
+            },
+        )
+    if fmt == "csv":
+        return Response(
+            content=export_csv(evidence),
+            media_type="text/csv",
+            headers={
+                "Content-Disposition": f'attachment; filename="{case.number}.csv"'
+            },
+        )
+    if fmt == "zip":
+        return Response(
+            content=export_zip(case, evidence),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{case.number}.zip"'
+            },
+        )
+    raise HTTPException(status_code=422, detail="fmt must be one of: json, csv, zip")
+
+

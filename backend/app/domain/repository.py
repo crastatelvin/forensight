@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.audit import GENESIS_HASH, compute_entry_hash
@@ -124,3 +124,57 @@ async def find_evidence_by_hash(
         )
     )
     return result.scalar_one_or_none()
+
+
+async def list_case_evidence(
+    session: AsyncSession, case_id: uuid.UUID
+) -> list[Evidence]:
+    result = await session.execute(
+        select(Evidence)
+        .where(Evidence.case_id == case_id)
+        .order_by(Evidence.created_at.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def search_cases(
+    session: AsyncSession, query: str, *, limit: int = 50
+) -> list[Case]:
+    """Full-text search over case metadata (T3.3).
+
+    Uses Postgres websearch_to_tsquery against the generated search_tsv column
+    with ts_rank ordering. Parameter-bound, so injection attempts are inert.
+    On non-Postgres (SQLite tests) falls back to a safe ILIKE scan.
+    """
+    dialect = session.bind.dialect.name if session.bind else ""
+    if dialect == "postgresql":
+        stmt = text(
+            "SELECT * FROM cases "
+            "WHERE search_tsv @@ websearch_to_tsquery('english', :q) "
+            "ORDER BY ts_rank(search_tsv, websearch_to_tsquery('english', :q)) DESC "
+            "LIMIT :lim"
+        )
+        result = await session.execute(stmt, {"q": query, "lim": limit})
+        rows = result.mappings().all()
+        ids = [r["id"] for r in rows]
+        if not ids:
+            return []
+        cases = {c.id: c for c in (await session.execute(
+            select(Case).where(Case.id.in_(ids))
+        )).scalars().all()}
+        return [cases[i] for i in ids if i in cases]
+
+    # SQLite fallback: parametrized LIKE (still injection-safe).
+    like = f"%{query}%"
+    result = await session.execute(
+        select(Case)
+        .where(
+            Case.title.ilike(like)
+            | Case.description.ilike(like)
+            | Case.number.ilike(like)
+        )
+        .order_by(Case.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+

@@ -48,3 +48,54 @@ class CustodyEntry(BaseModel):
     action: str
     detail: str
     created_at: datetime
+
+
+class CaseAssign(BaseModel):
+    assigned_to: uuid.UUID
+
+
+class FindingCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=512)
+    body: str = Field(default="", max_length=20000)
+
+
+class FindingRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    case_id: uuid.UUID
+    title: str
+    body: str
+    status: str
+    created_by: uuid.UUID
+    created_at: datetime
+
+
+class EntityCreate(BaseModel):
+    kind: str = Field(min_length=1, max_length=32)
+    value: str = Field(min_length=1, max_length=512)
+    attributes: dict[str, object] = Field(default_factory=dict)
+
+
+class EntityRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    case_id: uuid.UUID
+    kind: str
+    value: str
+    attributes: dict[str, object]
+    created_at: datetime
+
+
+class TimelineEventRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    case_id: uuid.UUID
+    occurred_at: datetime | None
+    label: str
+    source_ref: str
+    uncertain: bool
+    created_at: datetime
+
