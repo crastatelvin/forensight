@@ -77,6 +77,19 @@ class Settings(BaseSettings):
     # execution still work via the inline /run endpoint.
     queue_url: str = Field(default="")
 
+    # --- Agent / LLM (Phase 5) ---
+    # `ollama` for a local model, `cloud` for the hosted default. Switching is
+    # configuration only; no code change (T5.1).
+    llm_provider: str = Field(default="")
+    llm_model: str = Field(default="")
+    llm_base_url: str = Field(default="")
+    llm_api_key: str = Field(default="")
+    llm_embed_model: str = Field(default="")
+    #: Must match the pgvector column width in migration 0006, and the width the
+    #: embedding model actually returns. A mismatch is rejected on write rather
+    #: than silently degrading recall.
+    embed_dim: int = Field(default=1024, ge=8, le=8192)
+
     # --- Reverse proxy ---
     # uvicorn/gunicorn trust X-Forwarded-For from these sources only. Rate
     # limiting keys on client IP, so trusting everything ("*") lets any caller

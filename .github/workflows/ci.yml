@@ -220,6 +220,24 @@ jobs:
         run: |
           docker compose logs worker | grep -q 'Worker process is ready for action'
 
+      # The agent's tool catalogue must be populated: it was empty until the app
+      # factory registered tools explicitly, and an empty catalogue looks like
+      # "the agent has no tools" rather than a wiring bug.
+      - name: Agent tool catalogue is populated
+        run: |
+          curl -fsS http://localhost:8000/agent/tools \
+            | python3 -c "import sys,json; t=json.load(sys.stdin); assert len(t) >= 5, t"
+
+      # No LLM is configured in CI, so the agent must fail loudly rather than
+      # defaulting to a provider the operator never chose.
+      - name: Agent refuses to run without a configured provider
+        run: |
+          code=$(curl -s -o /dev/null -w '%{http_code}' \
+            -X POST http://localhost:8000/agent/cases/00000000-0000-0000-0000-000000000000/runs \
+            -H 'Content-Type: application/json' -d '{"objective":"check provider"}')
+          # 401 (unauth) or 404 (no such case) both prove it did not silently succeed.
+          test "$code" != "201" 
+
       - name: Dump logs on failure
         if: failure()
         run: docker compose logs

@@ -208,3 +208,100 @@ unversioned library that could change between runs. A test enforces this by AST
 scan. Also fill in `threshold`, `tier`, and `version` — the result payload
 cannot be built without them, and a score is never stored without the bar it was
 judged against.
+
+## Agent
+
+The agent runs a fixed graph over one case: Intake → Planner → Memory →
+Reflector ⇄ ToolExec → HITL → Report. It never widens its own scope — the case
+id comes from the run, not from the model's arguments.
+
+```bash
+curl localhost:8000/agent/tools -H "Authorization: Bearer $TOKEN"
+curl -X POST localhost:8000/agent/cases/$CASE/runs \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"objective":"identify the entry point"}'
+
+curl localhost:8000/agent/runs/$RUN            # status, report or refusal
+curl localhost:8000/agent/runs/$RUN/tool-calls # audit: arg hash + result hash
+curl localhost:8000/agent/runs/$RUN/checkpoints
+curl -N localhost:8000/agent/runs/$RUN/stream # SSE
+```
+
+### Human approval
+
+A run that calls a state-changing tool stops with `status=awaiting_approval`
+and returns the frozen action. Approve or reject it explicitly:
+
+```bash
+curl -X POST localhost:8000/agent/runs/$RUN/approve \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"action_id":"'"$ACTION"'"}'
+
+curl -X POST localhost:8000/agent/runs/$RUN/reject \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"action_id":"'"$ACTION"'","reason":"not supported by the evidence"}'
+```
+
+Both decisions are audited. An `action_id` that does not match the parked action
+is refused — you cannot approve something other than what you were shown.
+
+### Reports and refusals
+
+A run ends as either:
+
+- `completed` with a report where **every claim carries its citations** — result
+  id, analyzer, score, threshold, model version, and tier, repeated per claim so
+  a reader seeing one line still sees the limitation.
+- `declined` with a `refusal` explaining what was missing.
+
+`declined` is a first-class outcome, not a failure. A model that cannot source a
+claim produces a recorded refusal, never an unsourced sentence.
+
+### Providers
+
+Switch with configuration only:
+
+```bash
+LLM_PROVIDER=ollama LLM_MODEL=qwen2.5:7b LLM_BASE_URL=http://ollama:11434/v1
+LLM_PROVIDER=cloud  LLM_MODEL=gpt-4o-mini    LLM_API_KEY=...
+```
+
+Leaving `LLM_PROVIDER` empty returns **503 with a reason** rather than silently
+defaulting — case data must never be sent somewhere the operator did not choose.
+
+Embeddings must return exactly `EMBED_DIM` (1024) values; that is the pgvector
+column width, and it is the width `bge-m3` actually returns via Ollama. A
+different embedding model needs both a new `EMBED_DIM` and a migration — it is
+not a config tweak. Width is validated on write, so a mismatch fails at the
+insert with a clear message.
+
+Models must be pulled before use:
+
+```bash
+docker exec forensight-ollama-1 ollama pull bge-m3
+docker exec forensight-ollama-1 ollama pull qwen2.5:7b
+```
+
+### Prompt injection
+
+Evidence is attacker-controlled, so it is never treated as instructions:
+
+1. Injection shapes in evidence are neutralised (not rejected — the tampering
+   attempt is itself a finding) and the finding is recorded.
+2. Content reaches the model inside a labelled `<<<UNTRUSTED_EVIDENCE>>>`
+   block, capped in size so it cannot evict the system prompt.
+3. Tool scope is enforced in SQL, not in the prompt. A fully jailbroken model is
+   still bounded by the case it was started for.
+
+An operator's *objective* is trusted input, so an injection shape there is
+refused with **422** rather than sanitised.
+
+### Adding a tool
+
+1. Add a Pydantic args model and an `async def` in `app/agent/builtin.py`,
+   decorated with `@define_tool`. Set `state_changing=True` if it writes.
+2. Add it to the tuple in `builtin.register_all()`.
+
+It is then typed, audited, case-scoped, approval-gated if it writes, and
+published in the catalogue. Tools must never take a case id as an argument —
+that is how scope escapes.

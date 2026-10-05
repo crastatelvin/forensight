@@ -98,9 +98,11 @@ services:
       retries: 10
     restart: unless-stopped
 
+  # Local LLM + embedding server. In `core` too: the agent needs a provider to do
+  # anything, and Ollama keeps the default path air-gap friendly.
   ollama:
     image: ollama/ollama:latest
-    profiles: ["android-dev"]
+    profiles: ["core", "android-dev"]
     volumes:
       - ollamadata:/root/.ollama
     ports:

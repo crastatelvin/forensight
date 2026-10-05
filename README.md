@@ -4,18 +4,20 @@ Production-grade forensic investigation platform: evidence vault with WORM
 storage, hash-chained audit, chain-of-custody, and a real AI agent (tools +
 memory).
 
-> Build status: **Phase 4 — async analysis pipeline** complete (see `CHECKLIST.md`).
-> Phases 5-10 — the LangGraph agent, the real Tier-A ML analyzers, the Next.js
-> frontend, signed reports, and ops hardening — are not built yet. `agent/` and
-> `frontend/` are placeholders; the one shipped analyzer is a deterministic
-> reference module, not an ML model.
+> Build status: **Phase 5 — agent core** complete (see `CHECKLIST.md`).
+> Phases 6-10 — the real Tier-A ML analyzers, the Next.js frontend, signed
+> reports, and ops hardening — are not built yet. `frontend/` is a placeholder
+> and the one shipped analyzer is a deterministic reference module, not an ML
+> model. The agent is real: it plans, calls typed and audited tools, refuses to
+> assert anything it cannot cite to an analyzer result, and pauses for human
+> approval before changing state.
 
 ## Monorepo layout
 
 | Path | Purpose |
 |---|---|
 | `backend/` | FastAPI API gateway (auth, REST, WebSocket, OpenAPI) |
-| `agent/` | LangGraph autonomous agent service (tools, memory, HITL) |
+| `backend/app/agent/` | Autonomous agent: graph, tools, provenance guard, memory, HITL |
 | `backend/workers/` | Analysis workers (Dramatiq; pipeline done in P4, ML analyzers in P6) |
 | `frontend/` | Next.js (App Router, TypeScript, Tailwind, shadcn/ui) |
 | `infra/` | Docker Compose, deployment, observability configs |
@@ -56,10 +58,29 @@ docker compose exec -e SEED_ADMIN_EMAIL=you@example.com \
 
 | Profile | Brings up | Status |
 |---|---|---|
-| `core` | postgres, redis, minio, api, CPU analysis worker | works |
+| `core` | postgres, redis, minio, ollama, api, CPU analysis worker | works |
 | `gpu-workers` | GPU analysis worker (`worker-gpu`) | needs the nvidia container runtime |
 | `observability` | Prometheus, Grafana, Loki | Prometheus scrapes `/metrics` |
 | `android-dev` | CPU-only API + Postgres + small Ollama; GPU modules degrade cleanly | |
+
+## The agent
+
+The graph is `Intake → Planner → Memory → Reflector ⇄ ToolExec → HITL → Report`,
+over one case, with an append-only checkpoint after every step.
+
+Two properties are enforced in code rather than in the prompt:
+
+- **Provenance.** Every claim in a report is resolved against a stored
+  `analysis_results` row. Unsourced, hallucinated, cross-case, or paraphrased
+  citations are rejected. A model that cannot source a claim produces a recorded
+  `refusal`, never an unsourced sentence.
+- **Human approval.** Every state-changing tool parks its arguments for explicit
+  approval. Approve and reject are both audited, and an approval cannot be
+  replayed against different arguments.
+
+Prompt injection is handled in three layers — neutralise, wrap as labelled
+untrusted data, and enforce case scope in SQL — so a jailbroken model is still
+bounded by the case it was started for. See [`docs/runbook.md`](docs/runbook.md).
 
 ## Backend development (without Docker)
 

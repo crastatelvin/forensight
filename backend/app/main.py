@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.agent.router import router as agent_router
 from app.analysis.router import router as analysis_router
 from app.auth.middleware import CSRFMiddleware, SecurityHeadersMiddleware
 from app.auth.ratelimit import (
@@ -142,15 +143,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             RedisNotifier(app.state.redis) if app.state.redis is not None else InMemoryNotifier()
         )
 
-    # Register analyzers at construction, not import time, so tests can reset the
-    # registry without the app re-populating it behind their backs.
-    from app.analysis.registry import register_all
+    # Register analyzers and agent tools at construction, not import time, so
+    # tests can reset the registries without the app repopulating them, and so
+    # GET /agent/tools reflects the real catalogue rather than an empty registry.
+    from app.agent.builtin import register_all as register_agent_tools
+    from app.analysis.registry import register_all as register_analyzers
 
-    register_all()
+    register_analyzers()
+    register_agent_tools()
 
     app.include_router(auth_router)
     app.include_router(cases_router)
     app.include_router(analysis_router)
+    app.include_router(agent_router)
     app.include_router(metrics_router)
 
     @app.get("/healthz", tags=["health"])

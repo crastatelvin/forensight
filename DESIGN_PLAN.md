@@ -120,13 +120,22 @@ The platform is designed so modules are plugins — new Tier-A analyzers can be 
 - Authlib / fastapi-users for auth; python-jose for JWT
 
 **Agent core**
-- **LangGraph** (stateful graph agent: planner -> tool executor -> reflector, with checkpointing and human-in-the-loop interrupts). This is the current production standard for tool-using, memory-bearing agents and supports durable state + HITL natively.
+- A stateful graph agent: planner -> tool executor -> reflector, with checkpointing and human-in-the-loop interrupts.
+
+  *Implemented as a plain state machine rather than LangGraph — a deliberate deviation, recorded rather than quietly dropped:*
+  - Interrupts must land in the audit trail (approve **and** reject). LangGraph interrupts, but not that, so an audited layer would sit on top regardless.
+  - The Postgres checkpointer is ours either way; `langgraph-checkpoint-postgres` would be an alternative implementation of a table we already write.
+  - What the framework would add is free-form graph composition, which we do not need until a second graph exists.
+
+  What the state machine buys that a framework would not: the whole agent runs against a scripted fake, so provenance, case scoping, human approval and injection defence are tested with **no network and no model**. That is where the risk actually is.
 - Tool layer: typed Python tool functions with strict Pydantic schemas; each tool logged to the audit trail.
-- LLM abstraction: **LiteLLM** as a single interface so you can swap Ollama (local, `llama3.1`/`qwen2.5`/`mistral`) <-> vLLM <-> external APIs without code changes. Default cloud now; local later for chain-of-custody.
+- LLM abstraction: a `ChatModel` protocol with an OpenAI-compatible HTTP adapter, so you can swap Ollama (local, `qwen2.5`/`mistral`) <-> vLLM <-> external APIs without code changes. Provider is chosen by `LLM_PROVIDER` alone. Default cloud now; local later for chain-of-custody.
+
+  *Implemented without LiteLLM — a second deliberate deviation:* every target provider (OpenAI, Azure, Groq, Together, and Ollama itself) speaks `/v1`, and `httpx` already ships. LiteLLM's value is multi-provider routing and cost accounting, which we do not use at one provider. It remains the upgrade path once there are several providers with real failover needs — it slots in as a second implementation behind the same protocol, with no caller changes.
 
 **Memory**
-- Short-term: LangGraph checkpointer (Postgres-backed) per conversation/case thread.
-- Long-term semantic + episodic: **pgvector** (simplest, one DB). Embeddings via `bge-m3`/`nomic-embed-text` served by Ollama or a small `sentence-transformers` service.
+- Short-term: Postgres checkpointer per conversation/case thread (append-only `agent_checkpoints`; the latest row for a run is the resumable state).
+- Long-term semantic + episodic: **pgvector** `vector(1024)` with an HNSW cosine index (simplest, one DB). Embeddings via `bge-m3` served by Ollama. Scope is enforced in the SQL predicate — case **and** actor — never by filtering after the fact.
 - Structured "case memory": normal Postgres tables (findings, entities, timeline) the agent reads/writes as tools — this is more reliable and auditable than dumping everything in a vector store.
 
 **Real ML analysis workers**

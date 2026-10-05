@@ -91,7 +91,11 @@ append-only. Tracked, not yet built.
 | Secret leakage in repo | `.env` gitignored; gitleaks + Semgrep in CI | done |
 | Known-vulnerable dependencies | Bandit + pip-audit + Trivy in CI | done (pip-audit advisory) |
 | XSS in report/UI rendering | Deferred to Phase 7/8 — no HTML rendering exists yet | open |
-| Agent prompt injection | Deferred to Phase 5 | open |
+| Agent prompt injection | Sanitise injection shapes, wrap evidence as labelled untrusted data, and enforce case scope in SQL so a jailbroken model is still bounded |
+| Agent asserting an unsourced conclusion | Every citation resolved against a stored `analysis_results` row; unsourced, hallucinated, cross-case and paraphrased citations rejected. A model that cannot source a claim yields a recorded `refusal` |
+| Agent silently changing case state | Every state-changing tool parks frozen arguments for explicit approval; approve and reject both audited; an approval cannot be replayed against different arguments |
+| Agent reading another case's memory or evidence | Case id comes from the run, never from model arguments; memory scope is a SQL predicate (case + actor) |
+| Agent tool calls going unaudited | Every call, including rejected ones, recorded with arg hash and result hash |
 | Labelled data exfiltration by a user | Deferred to Phase 10 (egress control) | open |
 
 ## Deliberate non-goals
