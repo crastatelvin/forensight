@@ -3,6 +3,7 @@
 Each check is best-effort and fast-failing. `/readyz` returns 200 only when
 all configured dependencies are reachable (test T0.1).
 """
+
 from __future__ import annotations
 
 import asyncio

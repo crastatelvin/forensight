@@ -3,6 +3,7 @@
 The chain links each entry to the previous via SHA-256. Verification recomputes
 each entry_hash; any tampered row (or reordering) breaks the chain.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -17,7 +18,11 @@ def canonical_payload(payload: dict[str, Any]) -> str:
 
 
 def compute_entry_hash(
-    *, prev_hash: str, actor_id: str | None, action: str, target: str,
+    *,
+    prev_hash: str,
+    actor_id: str | None,
+    action: str,
+    target: str,
     payload: dict[str, Any],
 ) -> str:
     material = "|".join(

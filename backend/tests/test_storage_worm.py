@@ -3,6 +3,7 @@
 Confirms the content-addressed WORM bucket rejects overwrite/delete of committed
 evidence within retention. Requires a running MinIO (compose `core` profile).
 """
+
 from __future__ import annotations
 
 import base64
@@ -64,4 +65,3 @@ def test_worm_rejects_overwrite_and_delete() -> None:
         )
     )
     assert errors, "expected object-lock to reject deletion of the locked version"
-

@@ -4,6 +4,7 @@ Revision ID: 0003_domain
 Revises: 0002_auth
 Create Date: 2026-09-29 00:00:00.000000
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -40,8 +41,10 @@ def upgrade() -> None:
         "evidence",
         sa.Column("id", _UUID, primary_key=True),
         sa.Column(
-            "case_id", _UUID,
-            sa.ForeignKey("cases.id", ondelete="CASCADE"), nullable=False,
+            "case_id",
+            _UUID,
+            sa.ForeignKey("cases.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("filename", sa.String(512), nullable=False),
         sa.Column("sha256", sa.String(64), nullable=False),
@@ -58,40 +61,42 @@ def upgrade() -> None:
         "evidence_versions",
         sa.Column("id", _UUID, primary_key=True),
         sa.Column(
-            "evidence_id", _UUID,
-            sa.ForeignKey("evidence.id", ondelete="CASCADE"), nullable=False,
+            "evidence_id",
+            _UUID,
+            sa.ForeignKey("evidence.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("sha256", sa.String(64), nullable=False),
         sa.Column("note", sa.Text(), nullable=False, server_default=""),
         sa.Column("created_at", _TS, server_default=sa.func.now(), nullable=False),
     )
-    op.create_index(
-        "ix_evidence_versions_evidence_id", "evidence_versions", ["evidence_id"]
-    )
+    op.create_index("ix_evidence_versions_evidence_id", "evidence_versions", ["evidence_id"])
 
     op.create_table(
         "chain_of_custody",
         sa.Column("id", _UUID, primary_key=True),
         sa.Column(
-            "evidence_id", _UUID,
-            sa.ForeignKey("evidence.id", ondelete="CASCADE"), nullable=False,
+            "evidence_id",
+            _UUID,
+            sa.ForeignKey("evidence.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("actor_id", _UUID, nullable=False),
         sa.Column("action", sa.String(64), nullable=False),
         sa.Column("detail", sa.Text(), nullable=False, server_default=""),
         sa.Column("created_at", _TS, server_default=sa.func.now(), nullable=False),
     )
-    op.create_index(
-        "ix_chain_of_custody_evidence_id", "chain_of_custody", ["evidence_id"]
-    )
+    op.create_index("ix_chain_of_custody_evidence_id", "chain_of_custody", ["evidence_id"])
 
     op.create_table(
         "findings",
         sa.Column("id", _UUID, primary_key=True),
         sa.Column(
-            "case_id", _UUID,
-            sa.ForeignKey("cases.id", ondelete="CASCADE"), nullable=False,
+            "case_id",
+            _UUID,
+            sa.ForeignKey("cases.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("title", sa.String(512), nullable=False),
         sa.Column("body", sa.Text(), nullable=False, server_default=""),
@@ -105,14 +110,14 @@ def upgrade() -> None:
         "entities",
         sa.Column("id", _UUID, primary_key=True),
         sa.Column(
-            "case_id", _UUID,
-            sa.ForeignKey("cases.id", ondelete="CASCADE"), nullable=False,
+            "case_id",
+            _UUID,
+            sa.ForeignKey("cases.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("kind", sa.String(32), nullable=False),
         sa.Column("value", sa.String(512), nullable=False),
-        sa.Column(
-            "attributes", postgresql.JSONB(), nullable=False, server_default="{}"
-        ),
+        sa.Column("attributes", postgresql.JSONB(), nullable=False, server_default="{}"),
         sa.Column("created_at", _TS, server_default=sa.func.now(), nullable=False),
     )
     op.create_index("ix_entities_case_id", "entities", ["case_id"])
@@ -121,8 +126,10 @@ def upgrade() -> None:
         "timeline_events",
         sa.Column("id", _UUID, primary_key=True),
         sa.Column(
-            "case_id", _UUID,
-            sa.ForeignKey("cases.id", ondelete="CASCADE"), nullable=False,
+            "case_id",
+            _UUID,
+            sa.ForeignKey("cases.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column("occurred_at", _TS, nullable=True),
         sa.Column("label", sa.String(512), nullable=False),
@@ -165,4 +172,3 @@ def downgrade() -> None:
     op.drop_index("ix_cases_owner_id", table_name="cases")
     op.drop_index("ix_cases_number", table_name="cases")
     op.drop_table("cases")
-

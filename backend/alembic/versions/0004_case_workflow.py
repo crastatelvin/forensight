@@ -4,6 +4,7 @@ Revision ID: 0004_case_workflow
 Revises: 0003_domain
 Create Date: 2026-09-30 00:00:00.000000
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -39,9 +40,7 @@ def upgrade() -> None:
         "setweight(to_tsvector('english', coalesce(description,'')), 'B')"
         ") STORED"
     )
-    op.create_index(
-        "ix_cases_search_tsv", "cases", ["search_tsv"], postgresql_using="gin"
-    )
+    op.create_index("ix_cases_search_tsv", "cases", ["search_tsv"], postgresql_using="gin")
 
 
 def downgrade() -> None:

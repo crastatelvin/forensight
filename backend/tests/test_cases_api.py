@@ -1,4 +1,5 @@
 """Phase 2 API tests: case lifecycle, evidence upload/download, custody (T2.1-T2.8)."""
+
 from __future__ import annotations
 
 import base64
@@ -26,15 +27,11 @@ async def test_create_case_requires_mutator_role(
 ) -> None:
     # Reviewer cannot create; officer can.
     reviewer = await _auth(client, seed_users["reviewer"])
-    r = await client.post(
-        "/cases", headers=reviewer, json={"number": "C-1", "title": "X"}
-    )
+    r = await client.post("/cases", headers=reviewer, json={"number": "C-1", "title": "X"})
     assert r.status_code == 403
 
     officer = await _auth(client, seed_users["officer"])
-    ok = await client.post(
-        "/cases", headers=officer, json={"number": "C-1", "title": "X"}
-    )
+    ok = await client.post("/cases", headers=officer, json={"number": "C-1", "title": "X"})
     assert ok.status_code == 201
     assert ok.json()["status"] == "intake"
 
@@ -45,9 +42,7 @@ async def test_illegal_transition_returns_409(
     # T2.7: intake -> investigating is illegal (must go via open) -> 409.
     officer = await _auth(client, seed_users["officer"])
     case = (
-        await client.post(
-            "/cases", headers=officer, json={"number": "C-2", "title": "Y"}
-        )
+        await client.post("/cases", headers=officer, json={"number": "C-2", "title": "Y"})
     ).json()
     bad = await client.post(
         f"/cases/{case['id']}/transition",
@@ -71,9 +66,7 @@ async def test_evidence_upload_download_and_custody(
 
     officer = await _auth(client, seed_users["officer"])
     case = (
-        await client.post(
-            "/cases", headers=officer, json={"number": "C-3", "title": "Z"}
-        )
+        await client.post("/cases", headers=officer, json={"number": "C-3", "title": "Z"})
     ).json()
 
     # Patch the ingest service to use a fake in-memory store (no MinIO here).
@@ -96,15 +89,11 @@ async def test_evidence_upload_download_and_custody(
         assert ev["content_type"] == "image/png"
         assert len(ev["sha256"]) == 64
 
-        dl = await client.get(
-            f"/cases/evidence/{ev['id']}/download", headers=officer
-        )
+        dl = await client.get(f"/cases/evidence/{ev['id']}/download", headers=officer)
         assert dl.status_code == 200
         assert dl.content == _PNG
 
-        cust = await client.get(
-            f"/cases/evidence/{ev['id']}/custody", headers=officer
-        )
+        cust = await client.get(f"/cases/evidence/{ev['id']}/custody", headers=officer)
         assert cust.status_code == 200
         actions = [c["action"] for c in cust.json()]
         assert "upload" in actions and "access" in actions
@@ -124,9 +113,7 @@ async def test_evidence_rejects_disallowed_type(
 
     officer = await _auth(client, seed_users["officer"])
     case = (
-        await client.post(
-            "/cases", headers=officer, json={"number": "C-4", "title": "W"}
-        )
+        await client.post("/cases", headers=officer, json={"number": "C-4", "title": "W"})
     ).json()
 
     fake = IngestService(FakeStore(), NoopScanner())

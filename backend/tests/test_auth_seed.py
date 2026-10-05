@@ -1,4 +1,5 @@
 """Phase 1 seed-script test (T1.7): no default/hardcoded credentials."""
+
 from __future__ import annotations
 
 import pytest
@@ -11,9 +12,7 @@ async def test_seed_requires_env_password(monkeypatch: pytest.MonkeyPatch) -> No
     # T1.7: without SEED_ADMIN_* the seed refuses (returns non-zero, no user).
     import app.seed as seed_mod
 
-    monkeypatch.setattr(
-        seed_mod, "get_settings", lambda: Settings(secret_key="x" * 20)
-    )
+    monkeypatch.setattr(seed_mod, "get_settings", lambda: Settings(secret_key="x" * 20))
     rc = await seed_mod.seed_admin()
     assert rc == 2  # refused; no default credentials
 

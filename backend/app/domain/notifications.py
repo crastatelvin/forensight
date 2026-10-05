@@ -3,6 +3,7 @@
 Falls back to an in-process recorder when Redis is unavailable (tests), so the
 notification contract is always observable.
 """
+
 from __future__ import annotations
 
 import json

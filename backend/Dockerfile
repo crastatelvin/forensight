@@ -26,13 +26,16 @@ COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
 
+# Entrypoint applies `alembic upgrade head` before serving. Made executable
+# before the ownership change, since a non-root user cannot chmod a file it
+# does not own.
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
+
 # Run as a non-root user.
 RUN useradd --create-home --uid 10001 appuser && chown -R appuser:appuser /app
 USER appuser
 
 EXPOSE 8000
 
-# Gunicorn with Uvicorn workers for production; override for dev with --reload.
-CMD ["uv", "run", "gunicorn", "app.main:app", \
-     "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:8000", "--workers", "2"]
+ENTRYPOINT ["./docker-entrypoint.sh"]

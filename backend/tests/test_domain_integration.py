@@ -3,6 +3,7 @@
 Uses a fake in-memory object store so no live MinIO is required for these; the
 real WORM behavior (T2.6) is exercised separately against MinIO.
 """
+
 from __future__ import annotations
 
 import base64
@@ -87,9 +88,7 @@ async def test_download_reverifies_hash_and_records_custody(domain_session) -> N
     ev = await svc.ingest(
         domain_session, case_id=case_id, actor_id=actor, filename="a.png", data=_PNG
     )
-    fetched, data = await svc.download(
-        domain_session, evidence_id=ev.id, actor_id=actor
-    )
+    fetched, data = await svc.download(domain_session, evidence_id=ev.id, actor_id=actor)
     assert data == _PNG
     custody = await custody_for_evidence(domain_session, ev.id)
     actions = [c.action for c in custody]
@@ -100,15 +99,11 @@ async def test_download_reverifies_hash_and_records_custody(domain_session) -> N
 async def test_audit_chain_verifies_and_detects_tamper(domain_session) -> None:
     # T2.5: chain verifies; tampering a row breaks verification.
     actor = uuid.uuid4()
-    await append_audit(
-        domain_session, actor_id=actor, action="a", target="t1", payload={"n": 1}
-    )
+    await append_audit(domain_session, actor_id=actor, action="a", target="t1", payload={"n": 1})
     e2 = await append_audit(
         domain_session, actor_id=actor, action="b", target="t2", payload={"n": 2}
     )
-    await append_audit(
-        domain_session, actor_id=actor, action="c", target="t3", payload={"n": 3}
-    )
+    await append_audit(domain_session, actor_id=actor, action="c", target="t3", payload={"n": 3})
     assert await verify_audit_chain(domain_session) is True
 
     # Tamper with a committed row's payload.

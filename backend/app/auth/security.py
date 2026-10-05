@@ -6,6 +6,7 @@
   signed with the app SECRET_KEY; refresh tokens are random and stored hashed
   server-side for rotation/revocation (T1.2).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -32,6 +33,7 @@ def verify_password(password: str, hashed: str) -> tuple[bool, str | None]:
 
 # --- Access tokens (signed JWT) ---
 
+
 def create_access_token(
     *, subject: str, role: str, secret_key: str, algorithm: str, ttl_seconds: int
 ) -> str:
@@ -46,9 +48,7 @@ def create_access_token(
     return jwt.encode(payload, secret_key, algorithm=algorithm)
 
 
-def decode_access_token(
-    token: str, *, secret_key: str, algorithm: str
-) -> dict[str, Any]:
+def decode_access_token(token: str, *, secret_key: str, algorithm: str) -> dict[str, Any]:
     """Decode + validate a JWT. Raises jwt.PyJWTError on any problem (T1.2)."""
     payload: dict[str, Any] = jwt.decode(token, secret_key, algorithms=[algorithm])
     if payload.get("type") != "access":
@@ -57,6 +57,7 @@ def decode_access_token(
 
 
 # --- Refresh tokens (opaque, stored hashed) ---
+
 
 def generate_refresh_token() -> str:
     return secrets.token_urlsafe(48)

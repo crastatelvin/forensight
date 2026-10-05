@@ -1,9 +1,11 @@
 """Auth API routes (Phase 1): register (admin), login, refresh, logout, me."""
+
 from __future__ import annotations
 
+import secrets
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -56,6 +58,7 @@ async def register(
 async def login(
     payload: LoginRequest,
     request: Request,
+    response: Response,
     settings: Annotated[Settings, Depends(get_settings)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TokenPair:
@@ -78,13 +81,64 @@ async def login(
         session, user_id=user.id, ttl_seconds=settings.refresh_token_ttl
     )
     await session.commit()
+    _set_auth_cookies(response, access, refresh_token, settings)
     return TokenPair(access_token=access, refresh_token=refresh_token)
+
+
+def _set_auth_cookies(response: Response, access: str, refresh: str, settings: Settings) -> None:
+    """Mirror the token pair into HttpOnly cookies.
+
+    Bearer clients ignore these; browser clients get cookie auth, which is what
+    the CSRF double-submit check protects. The access cookie is HttpOnly (never
+    readable by JS); the CSRF cookie deliberately is not, because the frontend
+    has to echo it back in a header.
+    """
+    kwargs: dict[str, Any] = {"domain": settings.cookie_domain or None}
+    response.set_cookie(
+        "access_token",
+        access,
+        max_age=settings.access_token_ttl,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        **kwargs,
+    )
+    response.set_cookie(
+        "refresh_token",
+        refresh,
+        max_age=settings.refresh_token_ttl,
+        httponly=True,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        **kwargs,
+    )
+    response.set_cookie(
+        "csrf_token",
+        secrets.token_urlsafe(32),
+        max_age=settings.refresh_token_ttl,
+        httponly=False,
+        secure=settings.cookie_secure,
+        samesite=settings.cookie_samesite,
+        **kwargs,
+    )
+
+
+def _clear_auth_cookies(response: Response, settings: Settings) -> None:
+    for name in ("access_token", "refresh_token", "csrf_token"):
+        response.delete_cookie(
+            name,
+            domain=settings.cookie_domain or None,
+            secure=settings.cookie_secure,
+            httponly=True,
+            samesite=settings.cookie_samesite,
+        )
 
 
 @router.post("/refresh", response_model=TokenPair)
 async def refresh(
     payload: RefreshRequest,
     request: Request,
+    response: Response,
     settings: Annotated[Settings, Depends(get_settings)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TokenPair:
@@ -116,6 +170,9 @@ async def refresh(
         session, user_id=user.id, ttl_seconds=settings.refresh_token_ttl
     )
     await session.commit()
+    # Rotate the cookies too, otherwise a browser session keeps using the
+    # already-revoked refresh cookie and silently falls back to logging out.
+    _set_auth_cookies(response, access, new_refresh, settings)
     return TokenPair(access_token=access, refresh_token=new_refresh)
 
 
@@ -124,10 +181,13 @@ async def logout(
     user: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     response: Response,
+    settings: Annotated[Settings, Depends(get_settings)],
 ) -> Response:
     await revoke_all_user_refresh_tokens(session, uuid.UUID(user.id))
     await session.commit()
-    response.delete_cookie("access_token")
+    _clear_auth_cookies(response, settings)
+    # Return the injected response so its Set-Cookie headers survive; a fresh
+    # 204 would silently drop them and leave the browser's session alive.
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
 
@@ -141,4 +201,3 @@ async def me(
     if db_user is None:
         raise HTTPException(status_code=404, detail="User not found")
     return UserRead.model_validate(db_user)
-

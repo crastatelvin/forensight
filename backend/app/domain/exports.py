@@ -1,4 +1,5 @@
 """Case export helpers: CSV / JSON / ZIP manifest (T3.4)."""
+
 from __future__ import annotations
 
 import csv
@@ -47,13 +48,17 @@ def export_json(case: Case, evidence: list[Evidence]) -> bytes:
 def export_csv(evidence: list[Evidence]) -> bytes:
     buf = io.StringIO()
     writer = csv.writer(buf)
-    writer.writerow(
-        ["id", "filename", "sha256", "content_type", "size_bytes", "created_at"]
-    )
+    writer.writerow(["id", "filename", "sha256", "content_type", "size_bytes", "created_at"])
     for e in evidence:
         writer.writerow(
-            [str(e.id), e.filename, e.sha256, e.content_type, e.size_bytes,
-             e.created_at.isoformat()]
+            [
+                str(e.id),
+                e.filename,
+                e.sha256,
+                e.content_type,
+                e.size_bytes,
+                e.created_at.isoformat(),
+            ]
         )
     return buf.getvalue().encode("utf-8")
 
@@ -72,8 +77,7 @@ def export_zip(case: Case, evidence: list[Evidence]) -> bytes:
             "case_number": case.number,
             "evidence_count": len(evidence),
             "content_hashes": [
-                {"id": str(e.id), "filename": e.filename, "sha256": e.sha256}
-                for e in evidence
+                {"id": str(e.id), "filename": e.filename, "sha256": e.sha256} for e in evidence
             ],
         }
         zf.writestr("manifest.json", json.dumps(manifest, indent=2))

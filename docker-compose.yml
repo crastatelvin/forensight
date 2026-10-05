@@ -6,11 +6,12 @@
 # The API has no TLS termination here; put it behind a reverse proxy with
 # TLS/HSTS in production (Phase 1/10). Do not expose MinIO/Postgres publicly.
 
-x-postgres-image: &postgres-image postgis/postgis:16-3.4
-
 services:
   postgres:
-    image: *postgres-image
+    # PostGIS + pgvector; see infra/postgres/Dockerfile for why it is built.
+    build:
+      context: ./infra/postgres
+    image: forensight-postgres:local
     profiles: ["core", "android-dev"]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-forensight}
@@ -85,6 +86,8 @@ services:
         condition: service_healthy
     ports:
       - "8000:8000"
+    # The image entrypoint runs `alembic upgrade head` before serving, so the
+    # schema is always current — see backend/docker-entrypoint.sh.
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz').status==200 else 1)\""]
       interval: 10s
@@ -103,7 +106,10 @@ services:
 
   # --- GPU analysis workers (Phase 4/6/9). Placeholder until worker image exists. ---
   worker:
+    # Phase 4. `image:` + `pull_policy: never` keeps `up` honest instead of
+    # failing at build time on a context that has no Dockerfile yet.
     image: forensight-worker:local
+    pull_policy: never
     profiles: ["gpu-workers"]
     build:
       context: ./workers
@@ -126,8 +132,11 @@ services:
     profiles: ["observability"]
     volumes:
       - ./infra/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - promdata:/prometheus
     ports:
       - "9090:9090"
+    # No depends_on api: api lives in the `core` profile, and a dependency on a
+    # service absent from the active profile makes compose reject the file.
     restart: unless-stopped
 
   grafana:
@@ -145,8 +154,30 @@ services:
     image: grafana/loki:latest
     profiles: ["observability"]
     command: ["-config.file=/etc/loki/local-config.yaml"]
+    # The referenced config was never mounted, so the container had nothing to
+    # read and could not start.
+    volumes:
+      - ./infra/observability/loki.yaml:/etc/loki/local-config.yaml:ro
+      - lokidata:/loki
     ports:
       - "3100:3100"
+    restart: unless-stopped
+
+  # Collects the API's stdout so Loki has something to index. Without a push
+  # client the observability stack ships a log store that never receives logs.
+  promtail:
+    image: grafana/promtail:latest
+    profiles: ["observability"]
+    command: ["-config.file=/etc/promtail/config.yaml"]
+    volumes:
+      - ./infra/observability/promtail.yaml:/etc/promtail/config.yaml:ro
+      - ./infra/observability/promtail.yaml:/etc/promtail/local-config.yaml:ro
+      # Read-only: the agent tails logs, it must never be able to mutate them.
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      loki:
+        condition: service_started
     restart: unless-stopped
 
 volumes:
@@ -155,3 +186,5 @@ volumes:
   miniodata:
   ollamadata:
   grafanadata:
+  promdata:
+  lokidata:

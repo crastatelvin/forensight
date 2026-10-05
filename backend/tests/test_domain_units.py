@@ -1,4 +1,5 @@
 """Phase 2 unit tests: ingest validation, state machine, audit hashing (T2.2/T2.3/T2.7)."""
+
 from __future__ import annotations
 
 import base64
@@ -94,11 +95,17 @@ def CASE_ARCHIVED_TERMINAL() -> bool:
 def test_audit_hash_is_deterministic_and_chains() -> None:
     # T2.5 (unit level): same inputs -> same hash; different prev -> different hash.
     h1 = compute_entry_hash(
-        prev_hash=GENESIS_HASH, actor_id="a", action="upload", target="ev1",
+        prev_hash=GENESIS_HASH,
+        actor_id="a",
+        action="upload",
+        target="ev1",
         payload={"x": 1},
     )
     h1b = compute_entry_hash(
-        prev_hash=GENESIS_HASH, actor_id="a", action="upload", target="ev1",
+        prev_hash=GENESIS_HASH,
+        actor_id="a",
+        action="upload",
+        target="ev1",
         payload={"x": 1},
     )
     h2 = compute_entry_hash(

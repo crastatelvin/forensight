@@ -6,6 +6,7 @@
   cookie-authenticated mutating requests. Bearer-token (header) requests are
   exempt because they are not sent automatically by browsers.
 """
+
 from __future__ import annotations
 
 import secrets
@@ -18,6 +19,14 @@ from starlette.responses import JSONResponse, Response
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "TRACE"})
 CSRF_COOKIE = "csrf_token"
 CSRF_HEADER = "x-csrf-token"
+
+# Endpoints that *establish* a session rather than ride one. A browser hitting
+# /auth/login has no CSRF cookie yet, so demanding one would make login
+# impossible; demanding one only matters when an existing cookie can be
+# attached automatically, which by definition is not the case here. Login CSRF
+# is instead mitigated by SameSite cookies plus never reflecting the token in a
+# response body the attacker can read.
+_CSRF_EXEMPT_PATHS = frozenset({"/auth/login", "/auth/refresh"})
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -37,9 +46,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         headers.setdefault("X-Content-Type-Options", "nosniff")
         headers.setdefault("X-Frame-Options", "DENY")
         headers.setdefault("Referrer-Policy", "no-referrer")
-        headers.setdefault(
-            "Permissions-Policy", "geolocation=(), microphone=(), camera=()"
-        )
+        headers.setdefault("Permissions-Policy", "geolocation=(), microphone=(), camera=()")
         if self._hsts:
             headers.setdefault(
                 "Strict-Transport-Security",
@@ -54,11 +61,9 @@ class CSRFMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if request.method not in _SAFE_METHODS:
+        if request.method not in _SAFE_METHODS and request.url.path not in _CSRF_EXEMPT_PATHS:
             has_auth_cookie = request.cookies.get("access_token") is not None
-            uses_bearer = request.headers.get("authorization", "").lower().startswith(
-                "bearer "
-            )
+            uses_bearer = request.headers.get("authorization", "").lower().startswith("bearer ")
             # Only enforce for cookie-authenticated requests (not bearer/header).
             if has_auth_cookie and not uses_bearer:
                 cookie_token = request.cookies.get(CSRF_COOKIE)

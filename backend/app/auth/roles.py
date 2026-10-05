@@ -6,6 +6,7 @@ Four roles per the plan (Decision 5, 6 Security):
 - EXPERT: forensic expert; runs analyses, records findings.
 - REVIEWER: read-only oversight.
 """
+
 from __future__ import annotations
 
 from enum import StrEnum

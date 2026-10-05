@@ -4,6 +4,7 @@ Wires together validation, AV scan, content-addressed WORM storage, DB record,
 chain-of-custody, and the audit log. Download is strictly by object id + case
 authz — no user-supplied path ever touches storage (T2.2).
 """
+
 from __future__ import annotations
 
 import uuid
@@ -61,9 +62,7 @@ class IngestService:
 
         # Content-addressed WORM write (T2.1/T2.6).
         self._store.ensure_bucket()
-        storage_key = self._store.put_evidence(
-            key=digest, data=data, content_type=mime
-        )
+        storage_key = self._store.put_evidence(key=digest, data=data, content_type=mime)
 
         evidence = Evidence(
             case_id=case_id,

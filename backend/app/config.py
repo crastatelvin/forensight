@@ -3,9 +3,11 @@
 No secrets are hardcoded. The app refuses to boot if SECRET_KEY is unset
 (enforced in `app.main`), satisfying test T0.4.
 """
+
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -50,7 +52,11 @@ class Settings(BaseSettings):
     # Cookie flags for cookie-based auth flows.
     cookie_secure: bool = Field(default=True)  # override to False for local http
     cookie_domain: str = Field(default="")
-    cookie_samesite: str = Field(default="lax")
+    cookie_samesite: Literal["lax", "strict", "none"] = Field(default="lax")
+
+    # Browser origins allowed to call the API with credentials. Explicit list,
+    # never "*" — credentialed CORS rejects the wildcard anyway.
+    cors_origins: list[str] = Field(default=["http://localhost:3000", "http://127.0.0.1:3000"])
 
     # Rate limiting (Redis-backed; in-memory fallback for tests).
     rate_limit_auth_max: int = Field(default=5)  # attempts
@@ -66,6 +72,14 @@ class Settings(BaseSettings):
     # If set, evidence uploads are scanned via clamd at this host (TCP 3310).
     clamav_host: str = Field(default="")
 
+    # --- Reverse proxy ---
+    # uvicorn/gunicorn trust X-Forwarded-For from these sources only. Rate
+    # limiting keys on client IP, so trusting everything ("*") lets any caller
+    # forge an IP and evade limits entirely. Default to loopback.
+    forwarded_allow_ips: str = Field(default="127.0.0.1")
+
+    # Number of gunicorn worker processes in the container.
+    web_concurrency: int = Field(default=2, ge=1, le=32)
 
 
 @lru_cache

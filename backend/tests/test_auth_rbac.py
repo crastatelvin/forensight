@@ -1,4 +1,5 @@
 """Phase 1 RBAC + rate-limit + headers + CSRF tests (T1.3–T1.7)."""
+
 from __future__ import annotations
 
 import pytest
@@ -80,7 +81,5 @@ async def test_bearer_mutation_exempt_from_csrf(
 ) -> None:
     # T1.5: bearer (header) auth is not subject to CSRF; logout succeeds.
     token = await _login(client, seed_users["reviewer"])
-    resp = await client.post(
-        "/auth/logout", headers={"Authorization": f"Bearer {token}"}
-    )
+    resp = await client.post("/auth/logout", headers={"Authorization": f"Bearer {token}"})
     assert resp.status_code == 204

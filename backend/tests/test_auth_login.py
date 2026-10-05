@@ -1,4 +1,5 @@
 """Phase 1 auth tests: hashing, login, JWT/refresh rotation (T1.1, T1.2)."""
+
 from __future__ import annotations
 
 from app.auth.security import (
@@ -61,9 +62,7 @@ async def test_forged_token_rejected(
     client: AsyncClient, seed_users: dict[str, dict[str, str]]
 ) -> None:
     # T1.2: forged/invalid JWT rejected on a protected route.
-    resp = await client.get(
-        "/auth/me", headers={"Authorization": "Bearer not.a.real.token"}
-    )
+    resp = await client.get("/auth/me", headers={"Authorization": "Bearer not.a.real.token"})
     assert resp.status_code == 401
 
 

@@ -4,18 +4,23 @@
 dependency that authorizes a set of roles. Reviewer is read-only: it never
 appears in mutating-route role sets.
 """
+
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Coroutine
 from typing import Annotated, Any
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.repository import get_user_by_id
 from app.auth.roles import Role
 from app.auth.security import decode_access_token
 from app.config import Settings, get_settings
+from app.db import get_session
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -30,6 +35,7 @@ async def get_current_user(
     request: Request,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
     settings: Annotated[Settings, Depends(get_settings)],
+    session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CurrentUser:
     # Accept bearer header; fall back to access-token cookie for cookie flows.
     token: str | None = None
@@ -56,13 +62,23 @@ async def get_current_user(
         ) from exc
 
     try:
-        role = Role(payload["role"])
+        # The role claim is validated for shape only — the DB row below is
+        # authoritative, so a role change takes effect immediately.
+        Role(payload["role"])
+        user_id = str(payload["sub"])
+        uid = uuid.UUID(user_id)
     except (KeyError, ValueError) as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token claims"
         ) from exc
 
-    return CurrentUser(user_id=str(payload["sub"]), role=role)
+    # A signature-valid token is not proof the account still exists or is still
+    # enabled. Without this check, deactivating a user does nothing until their
+    # access token expires, and deleting them outright changes nothing at all.
+    account = await get_user_by_id(session, uid)
+    if account is None or not account.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account unavailable")
+    return CurrentUser(user_id=user_id, role=Role(account.role))
 
 
 def require_roles(

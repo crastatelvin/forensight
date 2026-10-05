@@ -8,6 +8,7 @@ Usage:
     SEED_ADMIN_EMAIL=admin@example.com SEED_ADMIN_PASSWORD=... \
         uv run python -m app.seed
 """
+
 from __future__ import annotations
 
 import asyncio

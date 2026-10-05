@@ -1,18 +1,44 @@
-"""Phase 3 access-control tests (T3.7): per-case ownership/assignment scoping.
+"""Object-level authorization tests (P2.B5, T3.1, T3.7).
 
-Verifies:
-- Officer cannot read/modify a case owned by another officer (404 non-disclosure).
-- Expert can only access cases assigned to them.
-- Reviewer can read any case but cannot write.
-- Admin can read/write any case.
-- Assignment to a non-existent user is rejected (422).
-- Search results are scoped to the caller.
+The security property under test: knowing an id is not authorization.
+
+Policy under test:
+- ADMIN and REVIEWER may *read* every case — oversight is the point of the
+  role, and RBAC separately keeps reviewer read-only.
+- OFFICER/EXPERT may read and write only cases they own or are assigned to.
+  This is the actual isolation boundary: two officers working different
+  investigations must not read each other's evidence.
+- A case the caller cannot see is reported as 404, not 403, so an id cannot be
+  probed for existence — and a write discloses no more than a read.
+
+Also covers: assignment grants visibility, assignment to a non-existent user is
+rejected, and search/listing are scoped so they cannot be used to bypass case
+access.
 """
+
 from __future__ import annotations
 
 import uuid
 
+import pytest
 from httpx import AsyncClient
+
+
+@pytest.fixture
+def fake_store():
+    from app.domain import router as domain_router
+    from app.domain.antivirus import NoopScanner
+    from app.domain.service import IngestService
+
+    from tests.test_domain_integration import FakeStore
+
+    service = IngestService(FakeStore(), NoopScanner())
+    original = domain_router._ingest_service
+    domain_router._ingest_service = lambda settings: service
+    try:
+        yield service
+    finally:
+        domain_router._ingest_service = original
 
 
 async def _auth(client: AsyncClient, creds: dict[str, str]) -> dict[str, str]:
@@ -21,41 +47,87 @@ async def _auth(client: AsyncClient, creds: dict[str, str]) -> dict[str, str]:
     return {"Authorization": f"Bearer {r.json()['access_token']}"}
 
 
-async def _make_case(
-    client: AsyncClient, headers: dict[str, str], number: str
-) -> str:
-    r = await client.post(
-        "/cases", headers=headers, json={"number": number, "title": "T"}
-    )
+async def _make_case(client: AsyncClient, headers: dict[str, str], number: str) -> str:
+    r = await client.post("/cases", headers=headers, json={"number": number, "title": "T"})
     assert r.status_code == 201, r.text
     return r.json()["id"]
 
 
-async def test_officer_cannot_access_other_officers_case(
+async def test_officer_cannot_read_another_users_case_or_evidence(
+    client: AsyncClient, seed_users: dict[str, dict[str, str]], fake_store
+) -> None:
+    """The real boundary: a case the caller neither owns nor is assigned to."""
+    officer = await _auth(client, seed_users["officer"])
+    expert = await _auth(client, seed_users["expert"])
+    case_id = await _make_case(client, officer, "AC-2")
+
+    up = await client.post(
+        f"/cases/{case_id}/evidence",
+        headers=officer,
+        files={
+            "file": (
+                "secret.png",
+                __import__("base64").b64decode(
+                    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+                    "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+                ),
+                "application/octet-stream",
+            )
+        },
+    )
+    assert up.status_code == 201
+    eid = up.json()["id"]
+    png = __import__("base64").b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
+        "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+    )
+
+    assert (await client.get(f"/cases/{case_id}", headers=expert)).status_code == 404
+    assert (await client.get(f"/cases/{case_id}/evidence", headers=expert)).status_code == 404
+    assert (await client.get(f"/cases/{case_id}/findings", headers=expert)).status_code == 404
+
+    denied = await client.get(f"/cases/evidence/{eid}/download", headers=expert)
+    assert denied.status_code == 404
+    assert denied.content != png  # no bytes in the body either
+
+    # Custody log is equally protected: it names actors and hashes.
+    assert (await client.get(f"/cases/evidence/{eid}/custody", headers=expert)).status_code == 404
+
+    # Export would hand over the whole case record.
+    assert (
+        await client.get(f"/cases/{case_id}/export", headers=expert, params={"fmt": "json"})
+    ).status_code == 404
+
+
+async def test_second_officer_cannot_write_to_a_foreign_case(
     client: AsyncClient, seed_users: dict[str, dict[str, str]]
 ) -> None:
-    # Two distinct officers: register a second officer via admin.
+    """Two distinct officers, not just officer-vs-expert: isolation must hold
+    between peers working different investigations."""
     admin = await _auth(client, seed_users["admin"])
-    second = {"email": "officer2@t.io", "password": "Officer2Pass12!"}
-    reg = await client.post(
-        "/auth/register", headers=admin,
-        json={**second, "role": "officer"},
-    )
+    second = {"email": "officer2@example.com", "password": "Officer2Pass12!"}
+    reg = await client.post("/auth/register", headers=admin, json={**second, "role": "officer"})
     assert reg.status_code == 201
 
     officer1 = await _auth(client, seed_users["officer"])
     case_id = await _make_case(client, officer1, "OWN-1")
-
     officer2 = await _auth(client, second)
-    # Officer2 does not own and is not assigned -> 404 (non-disclosure).
-    got = await client.get(f"/cases/{case_id}", headers=officer2)
-    assert got.status_code == 404
-    # And cannot add findings.
-    f = await client.post(
-        f"/cases/{case_id}/findings", headers=officer2,
-        json={"title": "x", "body": ""},
-    )
-    assert f.status_code == 404
+
+    # Not owner, not assigned -> 404 on read and on every write. A write must
+    # not disclose more than a read does.
+    assert (await client.get(f"/cases/{case_id}", headers=officer2)).status_code == 404
+    assert (
+        await client.post(f"/cases/{case_id}/findings", headers=officer2, json={"title": "x"})
+    ).status_code == 404
+    assert (
+        await client.patch(f"/cases/{case_id}", headers=officer2, json={"title": "hijacked"})
+    ).status_code == 404
+    assert (
+        await client.post(f"/cases/{case_id}/transition", headers=officer2, json={"target": "open"})
+    ).status_code == 404
+    assert (
+        await client.get(f"/cases/{case_id}/export", headers=officer2, params={"fmt": "json"})
+    ).status_code == 404
 
 
 async def test_admin_can_access_any_case(
@@ -64,84 +136,135 @@ async def test_admin_can_access_any_case(
     officer = await _auth(client, seed_users["officer"])
     case_id = await _make_case(client, officer, "ADM-1")
     admin = await _auth(client, seed_users["admin"])
-    got = await client.get(f"/cases/{case_id}", headers=admin)
-    assert got.status_code == 200
+    assert (await client.get(f"/cases/{case_id}", headers=admin)).status_code == 200
 
 
-async def test_reviewer_can_read_but_not_write(
+async def test_reviewer_reads_every_case_but_writes_none(
     client: AsyncClient, seed_users: dict[str, dict[str, str]]
 ) -> None:
+    """Oversight means global *read*; RBAC is what keeps reviewer read-only."""
     officer = await _auth(client, seed_users["officer"])
-    case_id = await _make_case(client, officer, "REV-1")
     reviewer = await _auth(client, seed_users["reviewer"])
-    # Reviewer reads any case.
+    case_id = await _make_case(client, officer, "REV-1")
+
     assert (await client.get(f"/cases/{case_id}", headers=reviewer)).status_code == 200
-    # Reviewer cannot create findings (RBAC: 403, reviewer not a mutator).
-    f = await client.post(
-        f"/cases/{case_id}/findings", headers=reviewer,
-        json={"title": "x", "body": ""},
-    )
-    assert f.status_code == 403
+    assert (await client.get(f"/cases/{case_id}/findings", headers=reviewer)).status_code == 200
+    assert (
+        await client.get(f"/cases/{case_id}/export", headers=reviewer, params={"fmt": "json"})
+    ).status_code == 200
+
+    # ...and every write is refused.
+    assert (
+        await client.post(f"/cases/{case_id}/findings", headers=reviewer, json={"title": "x"})
+    ).status_code == 403
+    assert (
+        await client.post(f"/cases/{case_id}/transition", headers=reviewer, json={"target": "open"})
+    ).status_code == 403
+    assert (
+        await client.patch(f"/cases/{case_id}", headers=reviewer, json={"title": "x"})
+    ).status_code == 403
 
 
-async def test_expert_only_sees_assigned_case(
-    client: AsyncClient, seed_users: dict[str, dict[str, str]]
+async def test_assignment_grants_visibility(
+    client: AsyncClient, seed_users: dict[str, dict[str, str]], sessionmaker_fixture
 ) -> None:
+    """Assigning a case must actually let the assignee see it — otherwise
+    scoping would make collaboration impossible."""
     officer = await _auth(client, seed_users["officer"])
-    case_id = await _make_case(client, officer, "EXP-1")
     expert = await _auth(client, seed_users["expert"])
+    case_id = await _make_case(client, officer, "EXP-1")
 
-    # Before assignment, expert cannot see it.
     assert (await client.get(f"/cases/{case_id}", headers=expert)).status_code == 404
 
-    # Officer assigns the expert.
     assign = await client.post(
-        f"/cases/{case_id}/assign", headers=officer,
+        f"/cases/{case_id}/assign",
+        headers=officer,
         json={"assigned_to": seed_users["expert"]["id"]},
     )
     assert assign.status_code == 200
+    assert assign.json()["assigned_to"] == seed_users["expert"]["id"]
 
-    # Now the expert can read it.
     assert (await client.get(f"/cases/{case_id}", headers=expert)).status_code == 200
 
 
-async def test_assign_to_nonexistent_user_rejected(
+async def test_expert_sees_only_their_own_and_assigned_cases(
     client: AsyncClient, seed_users: dict[str, dict[str, str]]
 ) -> None:
+    """Experts are scoped like officers: own cases plus assigned ones.
+
+    Both roles are mutators, so both can open a case and own it. Scoping experts
+    to assigned-only would lock them out of the cases they just created.
+    """
+    officer = await _auth(client, seed_users["officer"])
+    expert = await _auth(client, seed_users["expert"])
+
+    own = await _make_case(client, expert, "EXP-OWN")
+    assert (await client.get(f"/cases/{own}", headers=expert)).status_code == 200
+
+    theirs = await _make_case(client, officer, "EXP-THEIRS")
+    assert (await client.get(f"/cases/{theirs}", headers=expert)).status_code == 404
+
+
+async def test_assign_to_nonexistent_user_is_rejected(
+    client: AsyncClient, seed_users: dict[str, dict[str, str]]
+) -> None:
+    """A dangling assignee would silently break the notification and the grant."""
     officer = await _auth(client, seed_users["officer"])
     case_id = await _make_case(client, officer, "ASG-404")
     bad = await client.post(
-        f"/cases/{case_id}/assign", headers=officer,
+        f"/cases/{case_id}/assign",
+        headers=officer,
         json={"assigned_to": str(uuid.uuid4())},
     )
     assert bad.status_code == 422
 
 
-async def test_search_is_scoped_to_caller(
+async def test_search_does_not_leak_across_case_scope(
     client: AsyncClient, seed_users: dict[str, dict[str, str]]
 ) -> None:
-    # Officer1 creates a case with a unique marker.
-    officer1 = await _auth(client, seed_users["officer"])
-    await client.post(
-        "/cases", headers=officer1,
-        json={"number": "SCOPE-1", "title": "Zephyrmarker Case"},
-    )
+    """Search must be scoped too, or it is a universal read oracle."""
+    officer = await _auth(client, seed_users["officer"])
+    expert = await _auth(client, seed_users["expert"])
+    marker = "Zzyzxmarker"
+    await client.post("/cases", headers=officer, json={"number": "SCOPE-1", "title": marker})
 
-    # A second officer must not find it via search.
-    admin = await _auth(client, seed_users["admin"])
-    second = {"email": "officer3@t.io", "password": "Officer3Pass12!"}
-    await client.post(
-        "/auth/register", headers=admin, json={**second, "role": "officer"}
-    )
-    officer3 = await _auth(client, second)
-    res = await client.get(
-        "/cases/search/query", headers=officer3, params={"q": "Zephyrmarker"}
-    )
-    assert res.status_code == 200
-    assert all("Zephyrmarker" not in c["title"] for c in res.json())
+    mine = await client.get("/cases/search/query", headers=officer, params={"q": marker})
+    assert any(marker in c["title"] for c in mine.json())
 
-    # Admin searches organisation-wide and finds it.
-    admin_res = await client.get(
-        "/cases/search/query", headers=admin, params={"q": "Zephyrmarker"}
-    )
-    assert any("Zephyrmarker" in c["title"] for c in admin_res.json())
+    # An unassigned searcher must not retrieve it by title.
+    theirs = await client.get("/cases/search/query", headers=expert, params={"q": marker})
+    assert all(marker not in c["title"] for c in theirs.json())
+
+    # A reviewer, by contrast, sees all of it — oversight again.
+    reviewer = await _auth(client, seed_users["reviewer"])
+    audit = await client.get("/cases/search/query", headers=reviewer, params={"q": marker})
+    assert any(marker in c["title"] for c in audit.json())
+
+
+async def test_case_list_is_scoped(
+    client: AsyncClient, seed_users: dict[str, dict[str, str]]
+) -> None:
+    officer = await _auth(client, seed_users["officer"])
+    expert = await _auth(client, seed_users["expert"])
+    await client.post("/cases", headers=officer, json={"number": "AC-7", "title": "T"})
+
+    mine = await client.get("/cases", headers=officer)
+    assert any(c["number"] == "AC-7" for c in mine.json())
+
+    theirs = await client.get("/cases", headers=expert)
+    assert all(c["number"] != "AC-7" for c in theirs.json())
+
+
+async def test_unknown_case_is_404_not_empty_list(
+    client: AsyncClient, seed_users: dict[str, dict[str, str]]
+) -> None:
+    """Clients must be able to tell 'no such case' from 'no evidence'."""
+    officer = await _auth(client, seed_users["officer"])
+    missing = str(uuid.uuid4())
+    for path in (
+        f"/cases/{missing}/evidence",
+        f"/cases/{missing}/findings",
+        f"/cases/{missing}/entities",
+        f"/cases/{missing}/timeline",
+    ):
+        assert (await client.get(path, headers=officer)).status_code == 404

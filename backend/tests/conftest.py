@@ -3,6 +3,7 @@
 Builds the app against an in-memory SQLite DB (aiosqlite) so auth flows can be
 exercised without Postgres, while still using the real ORM models + routes.
 """
+
 from __future__ import annotations
 
 import uuid

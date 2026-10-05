@@ -1,4 +1,5 @@
 """Data-access helpers for users and refresh tokens (Phase 1)."""
+
 from __future__ import annotations
 
 import uuid
@@ -17,9 +18,7 @@ from app.auth.security import (
 
 
 async def get_user_by_email(session: AsyncSession, email: str) -> User | None:
-    result = await session.execute(
-        select(User).where(User.__table__.c.email == email)
-    )
+    result = await session.execute(select(User).where(User.__table__.c.email == email))
     return result.scalar_one_or_none()
 
 
@@ -27,9 +26,7 @@ async def get_user_by_id(session: AsyncSession, user_id: uuid.UUID) -> User | No
     return await session.get(User, user_id)
 
 
-async def create_user(
-    session: AsyncSession, *, email: str, password: str, role: Role
-) -> User:
+async def create_user(session: AsyncSession, *, email: str, password: str, role: Role) -> User:
     user = User(
         email=email,
         hashed_password=hash_password(password),
@@ -58,9 +55,7 @@ async def issue_refresh_token(
     return raw
 
 
-async def get_refresh_record(
-    session: AsyncSession, raw_token: str
-) -> RefreshToken | None:
+async def get_refresh_record(session: AsyncSession, raw_token: str) -> RefreshToken | None:
     token_hash = hash_refresh_token(raw_token)
     result = await session.execute(
         select(RefreshToken).where(RefreshToken.token_hash == token_hash)
@@ -68,13 +63,9 @@ async def get_refresh_record(
     return result.scalar_one_or_none()
 
 
-async def revoke_all_user_refresh_tokens(
-    session: AsyncSession, user_id: uuid.UUID
-) -> None:
+async def revoke_all_user_refresh_tokens(session: AsyncSession, user_id: uuid.UUID) -> None:
     result = await session.execute(
-        select(RefreshToken).where(
-            RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False)
-        )
+        select(RefreshToken).where(RefreshToken.user_id == user_id, RefreshToken.revoked.is_(False))
     )
     for record in result.scalars().all():
         record.revoked = True

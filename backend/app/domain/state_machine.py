@@ -3,6 +3,7 @@
 Only transitions in CASE_TRANSITIONS are allowed. Illegal transitions raise
 IllegalTransitionError so the API can return 409.
 """
+
 from __future__ import annotations
 
 from app.domain.models import CaseStatus
@@ -32,6 +33,4 @@ def can_transition(current: str, target: str) -> bool:
 
 def assert_transition(current: str, target: str) -> None:
     if not can_transition(current, target):
-        raise IllegalTransitionError(
-            f"Illegal case transition: {current!r} -> {target!r}"
-        )
+        raise IllegalTransitionError(f"Illegal case transition: {current!r} -> {target!r}")

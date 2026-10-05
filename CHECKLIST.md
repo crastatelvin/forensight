@@ -6,8 +6,8 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 
 **Progress:** update the counts when you check items.
 - Phases complete: 4 / 11 (P0-P10)
-- Build tasks: 27 / 65
-- Test cases: 29 / 70
+- Build tasks: 33 / 65
+- Test cases: 36 / 70
 
 ---
 
@@ -17,17 +17,19 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 - [x] P0.B2 `docker-compose.yml` profiles: core, gpu-workers, observability, android-dev (postgres+PostGIS+pgvector, redis, minio, ollama, api, agent, worker)
 - [x] P0.B3 FastAPI + Uvicorn/Gunicorn + Pydantic v2 settings (no secrets in code)
 - [x] P0.B4 SQLAlchemy 2.0 async engine + Alembic baseline migration
-- [x] P0.B5 Tooling: Ruff, mypy, pytest, ESLint/Prettier, pre-commit
+- [x] P0.B5 Tooling: Ruff, mypy, pytest, pre-commit
+- [!] P0.B5a ESLint/Prettier — blocked on Phase 7 (no frontend yet)
 - [x] P0.B6 CI: lint -> type-check -> test -> Bandit -> pip-audit -> Semgrep -> Trivy
 - [x] P0.B7 Healthchecks `/healthz` (liveness) + `/readyz` (readiness)
+- [x] P0.B8 `/metrics` Prometheus endpoint (the scrape config already pointed here; it 404'd)
 **Test cases**
-- [x] T0.1 `--profile core up` healthy; `/readyz` 200 only when deps reachable
-- [x] T0.2 CI fails on injected Bandit high finding, lint error, failing test (verified indirectly: live CI enforces ruff+bandit+pytest gates and blocked a real starlette HIGH CVE via Trivy before going green)
-- [x] T0.3 Alembic upgrade head then downgrade base clean on empty schema
-- [x] T0.4 No secret literal (Semgrep/gitleaks); app refuses boot if SECRET_KEY unset (boot-guard verified via test; gitleaks/semgrep run in CI)
-- [x] T0.5 android-dev profile boots CPU-only; GPU modules marked unavailable (verified: profile boots api+postgres+redis+minio+ollama healthy on CPU-only runc; /capabilities reports all GPU modules unavailable with reason)
+- [x] T0.1 `--profile core up` healthy; `/readyz` 200 only when deps reachable (CI job `compose-smoke`)
+- [x] T0.2 CI fails on injected Bandit high finding, lint error, failing test
+- [x] T0.3 Alembic upgrade head then downgrade base clean on empty schema (CI job `integration`)
+- [x] T0.4 No secret literal (Semgrep/gitleaks); app refuses boot if SECRET_KEY unset
+- [x] T0.5 android-dev profile boots CPU-only; GPU modules marked unavailable
 **Exit**
-- [x] P0.E clean CI green, all core services healthy, migrations reversible (CI green on main; core + android-dev stacks healthy; migrations reversible verified)
+- [x] P0.E clean CI green, all core services healthy, migrations reversible
 
 ---
 
@@ -36,10 +38,12 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 - [x] P1.B1 fastapi-users + Argon2id hashing (no plaintext)
 - [x] P1.B2 JWT access+refresh; secure/HttpOnly/SameSite cookies; CSRF
 - [x] P1.B3 Roles Admin/Officer/Expert/Reviewer + central RBAC dependency
-- [x] P1.B4 Redis rate limiting on auth + mutating endpoints
+- [x] P1.B4 Redis rate limiting on auth + API routes
 - [x] P1.B5 TLS/HSTS + security headers middleware (CSP etc.)
 - [x] P1.B6 Secrets via env/SOPS+age; Vault upgrade path documented
 - [x] P1.B7 Seed script for initial admin (no committed DB)
+- [x] P1.B8 CORS for the Next.js origin (preflight was 405 with no ACAO header)
+- [x] P1.B9 Session revalidation — disabled/deleted/role-changed accounts lose access immediately
 **Test cases**
 - [x] T1.1 Argon2id stored; login verifies; wrong password rejected; timing-safe
 - [x] T1.2 Expired/invalid/forged JWT rejected; refresh rotation; reused refresh revoked
@@ -48,6 +52,8 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 - [x] T1.5 CSRF required on cookie mutations; missing/invalid -> 403
 - [x] T1.6 Security headers present on all responses
 - [x] T1.7 No default/hardcoded creds; seed admin needs env password
+- [x] T1.8 Cookie auth round-trips end to end (login sets cookies; CSRF echo succeeds)
+- [x] T1.9 Deactivated user / changed role invalidates an existing token
 **Exit**
 - [x] P1.E RBAC enforced+tested; zero plaintext secrets; auth pen-test smoke passes
 
@@ -59,17 +65,21 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 - [x] P2.B2 Evidence ingest: secure_filename + MIME sniff + size limit + ClamAV -> MinIO by SHA-256 in WORM bucket
 - [x] P2.B3 Chain-of-custody records every evidence action
 - [x] P2.B4 Append-only hash-chained audit_log
-- [x] P2.B5 Download-by-object-id with authz (no user paths)
+- [x] P2.B5 Download-by-object-id **with case-scope authz** (object-level, not just role-level)
 - [x] P2.B6 Case lifecycle state machine (intake->open->investigating->findings->review->reported->archived)
+- [x] P2.B7 Audit chain serialized against concurrent forking (advisory lock)
+- [x] P2.B8 Integrity-failure audit is committed, not rolled back with the 409
 **Test cases**
 - [x] T2.1 SHA-256 dedupe; hash re-verified on read
 - [x] T2.2 Traversal filename sanitized; download rejects path input, id-only
-- [x] T2.3 Oversized/disallowed MIME rejected
+- [x] T2.3 Oversized/disallowed MIME rejected (streamed cap, enforced before buffering)
 - [x] T2.4 EICAR rejected by AV; clean file passes (NoopScanner + ClamAV client)
 - [x] T2.5 Audit hash chain verifies; tampering detected
-- [x] T2.6 WORM rejects overwrite/delete within retention
+- [x] T2.6 WORM rejects overwrite/delete within retention (live MinIO, runs in CI)
 - [x] T2.7 State machine rejects illegal transitions
 - [x] T2.8 Chain-of-custody lists actor/time/action
+- [x] T2.9 Cross-case access denied: officer/expert cannot read another user's case or evidence bytes
+- [x] T2.10 Tampered evidence produces a durable audit record
 **Exit**
 - [x] P2.E tamper-evident + reproducible evidence; audit chain verifiable; no path/upload vulns
 
@@ -77,22 +87,29 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 
 ## Phase 3 — Case management API & workflow features
 **Build**
-- [x] P3.B1 REST: case CRUD, assignment, status transitions, evidence attach/list, findings CRUD, timeline, entities
-- [x] P3.B2 Full-text search (tsvector) over cases/evidence metadata
-- [x] P3.B3 Notifications (Redis pub/sub) + SLA/status tracking
+- [x] P3.B1 REST: case CRUD + patch, assignment, status transitions, evidence attach/list, findings CRUD, timeline write+read, entities CRUD
+- [x] P3.B2 Full-text search (tsvector) over cases, scope-filtered
+- [x] P3.B3 Notifications (Redis pub/sub) + case metadata (priority/due_at) settable and readable
 - [x] P3.B4 Exports CSV/JSON/ZIP (manifest + metadata, authorized bytes only)
 - [x] P3.B5 OpenAPI published; all inputs Pydantic-validated
-- [x] P3.B6 Per-case access control (owner/assignee scoping) in app/domain/access.py
-- [x] P3.B7 Assignment validates assignee exists; entity creation audited
+- [x] P3.B6 Pagination + bounds on every list endpoint
+- [x] P3.B7 Audit read + chain-verification endpoints (admin-only)
+- [x] P3.B8 Content-Disposition injection closed (case number validated on write)
+- [x] P3.B9 Per-case access control (owner/assignee scoping) in `app/domain/access.py`
+- [x] P3.B10 Assignment validates the assignee exists; entity creation audited
 **Test cases**
-- [x] T3.1 Case CRUD honors RBAC + per-case scope (officer own/assigned, reviewer read-only, admin all) - enforced in access.py
-- [x] T3.2 Assignment triggers notification; unauthorized assignment blocked
-- [x] T3.3 Full-text search ranked; SQLi neutralized (parametrized)
+- [x] T3.1 Case CRUD honors RBAC *and* per-case scope (officer/expert own-or-assigned, reviewer read-only, admin all)
+- [x] T3.2 Assignment triggers notification; unauthorized assignment blocked; assignment visible in response
+- [x] T3.3 Full-text search ranked; SQLi neutralized (parametrized); scoped to visible cases
 - [x] T3.4 CSV/JSON/ZIP match DB; ZIP manifest lists content-hashes
 - [x] T3.5 Illegal status transition -> 409; audit recorded
 - [x] T3.6 OpenAPI contract test: endpoints documented, schemas validated
-- [x] T3.7 Per-case access: officer blocked from other officers case (404); admin all; reviewer read-only; expert only assigned; search scoped to caller
-- [x] T3.8 Assign to non-existent user -> 422
+- [x] T3.7 Pagination bounds enforced; pages disjoint
+- [x] T3.8 Audit endpoints admin-only; chain verifies over many appends
+- [x] T3.9 Notification failure (Redis down) does not fail a committed request
+- [x] T3.10 Cross-case access denied (404) for read, write, download, custody, export
+- [x] T3.11 Search and case listing scoped to visible cases
+- [x] T3.12 Assignment to a non-existent user -> 422
 **Exit**
 - [x] P3.E full case workflow via API with RBAC + per-case access control + audit; exports correct
 
@@ -231,7 +248,7 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 
 ## Phase 10 — Hardening, observability, ops, Android dev profile
 **Build**
-- [ ] P10.B1 OpenTelemetry traces API->agent->worker; Prometheus+Grafana; Loki; Sentry
+- [ ] P10.B1 OpenTelemetry traces API->agent->worker; Prometheus+Grafana; Loki; Sentry (Prometheus + Loki config done)
 - [ ] P10.B2 Backups: pg_dump + MinIO replication; documented PITR
 - [ ] P10.B3 Graceful shutdown, readiness/liveness, horizontal scaling API+workers
 - [ ] P10.B4 Egress control for air-gapped/local-LLM mode
@@ -251,13 +268,14 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 ---
 
 ## Cross-cutting quality gates (enforced every phase)
-- [ ] X1 pytest unit+integration on testcontainers Postgres
+- [ ] X1 pytest unit+integration on testcontainers Postgres (live PG now runs in CI)
 - [ ] X2 Playwright E2E
 - [ ] X3 Contract tests for agent tools
 - [ ] X4 Agent eval harness (cites sources, respects HITL)
 - [ ] X5 Golden tests for every analyzer (no simulation)
-- [ ] X6 CI security: Bandit, Semgrep, pip-audit, Trivy, gitleaks (fail on high)
-- [ ] X7 Coverage threshold gate; mypy strict; Ruff/ESLint clean
+- [ ] X6 CI security: Bandit, Semgrep, pip-audit, Trivy, gitleaks (pip-audit still advisory)
+- [x] X7 Ruff lint + format clean; mypy strict on `app`
+- [x] X8 Compose core profile boots, migrates, and serves in CI
 
 ---
 

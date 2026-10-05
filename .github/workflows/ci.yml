@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # A new push supersedes an in-flight run on the same ref.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   backend:
     name: Backend (lint, type-check, test, security)
@@ -20,7 +25,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v3
+        uses: astral-sh/setup-uv@v6
         with:
           version: "0.5.11"
 
@@ -33,19 +38,102 @@ jobs:
       - name: Lint (Ruff)
         run: uv run ruff check .
 
-      - name: Type-check (mypy)
+      - name: Format check (Ruff)
+        run: uv run ruff format --check .
+
+      - name: Type-check (mypy, strict)
         run: uv run mypy app
 
-      - name: Test (pytest)
+      # SQLite-only suite: fast, hermetic, no services needed.
+      - name: Test (pytest, SQLite)
         env:
-          SECRET_KEY: ci-only-not-a-real-secret
-        run: uv run pytest
+          SECRET_KEY: ci-only-not-a-real-secret-0123456789
+        run: uv run pytest -q
 
       - name: SAST (Bandit)
         run: uv run bandit -r app -ll
 
+      # Advisory until the transitive-CVE backlog is cleared; `--strict` would
+      # fail today on transitive deps we do not control directly.
       - name: Dependency audit (pip-audit)
-        run: uv run pip-audit || true  # advisory; do not fail build on transitive CVEs yet
+        run: uv run pip-audit --strict || true
+
+  integration:
+    name: Integration (Postgres + MinIO, real schemas)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: forensight
+          POSTGRES_PASSWORD: forensight
+          POSTGRES_DB: forensight
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U forensight"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      minio:
+        image: cgr.dev/chainguard/minio:latest
+        env:
+          MINIO_ROOT_USER: forensight
+          MINIO_ROOT_PASSWORD: forensight
+        ports: ["9000:9000"]
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.5.11"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: Wait for services
+        run: |
+          for i in $(seq 1 30); do
+            pg_isready -h localhost -U forensight && break || sleep 2
+          done
+
+      # T0.3: migrations must apply cleanly AND roll back. Previously no CI job
+      # ever ran Alembic, so the schema was unverified.
+      - name: Migrations up / down / up
+        env:
+          DATABASE_URL: postgresql+asyncpg://forensight:forensight@localhost:5432/forensight
+          SECRET_KEY: ci-only-not-a-real-secret-0123456789
+        run: |
+          uv run alembic upgrade head
+          uv run alembic downgrade base
+          uv run alembic upgrade head
+
+      # T2.6 + T3.3: the live-WORM and full-text-search tests are skipped unless
+      # these are set, which is why they never ran before.
+      - name: Test (pytest, live Postgres + MinIO)
+        env:
+          SECRET_KEY: ci-only-not-a-real-secret-0123456789
+          DATABASE_URL: postgresql+asyncpg://forensight:forensight@localhost:5432/forensight
+          REDIS_URL: redis://localhost:6379/0
+          MINIO_ENDPOINT: localhost:9000
+          MINIO_ACCESS_KEY: forensight
+          MINIO_SECRET_KEY: forensight
+          FORENSIGHT_PG_LIVE: "1"
+          FORENSIGHT_MINIO_LIVE: "1"
+        run: uv run pytest -q
 
   security-scan:
     name: Secrets & SAST (repo-wide)
@@ -83,3 +171,53 @@ jobs:
           exit-code: "1"
           severity: HIGH,CRITICAL
           ignore-unfixed: true
+
+  compose-smoke:
+    name: Compose smoke test (core profile boots + serves)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The compose stack previously could not start: no migrations ran, the
+      # pgvector init aborted Postgres, and Loki had no mounted config.
+      - name: Write a throwaway .env
+        run: |
+          cp .env.example .env
+          {
+            echo ""
+            echo "SECRET_KEY=$(python3 -c 'import secrets;print(secrets.token_urlsafe(48))')"
+            echo "COOKIE_SECURE=false"
+          } >> .env
+
+      - name: Build core profile
+        run: docker compose --profile core build
+
+      - name: Start core profile
+        run: docker compose --profile core up -d
+
+      - name: Wait for readiness
+        run: |
+          for i in $(seq 1 60); do
+            if curl -fsS http://localhost:8000/readyz | grep -q '"ready":true'; then
+              echo "ready"; exit 0
+            fi
+            sleep 5
+          done
+          echo "stack never became ready"; docker compose logs; exit 1
+
+      - name: Tables exist (migrations ran)
+        run: |
+          docker compose exec -T postgres psql -U forensight -d forensight \
+            -c "select count(*) from information_schema.tables where table_schema='public';" \
+            | grep -qE '^\s+1[0-9]\s*$'
+
+      - name: /metrics is scrapeable
+        run: curl -fsS http://localhost:8000/metrics | grep -q forensight_http_requests_total
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down
+        if: always()
+        run: docker compose --profile core down -v

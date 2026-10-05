@@ -5,6 +5,7 @@ Covers:
 - T0.4 (app refuses to boot if SECRET_KEY unset)
 - liveness always ok
 """
+
 from __future__ import annotations
 
 import pytest
@@ -73,6 +74,8 @@ def test_readyz_returns_200_when_all_up(monkeypatch: pytest.MonkeyPatch) -> None
         resp = client.get("/readyz")
     assert resp.status_code == 200
     assert resp.json()["ready"] is True
+
+
 def test_capabilities_gpu_unavailable_reports_degraded() -> None:
     # T0.5: with GPU absent, GPU modules are reported unavailable (not faked).
     app = create_app(_settings(gpu_available=False))
@@ -98,4 +101,3 @@ def test_capabilities_gpu_available_enables_modules() -> None:
     assert body["gpu_available"] is True
     gpu_caps = [c for c in body["capabilities"] if c["requires_gpu"]]
     assert gpu_caps and all(c["available"] is True for c in gpu_caps)
-

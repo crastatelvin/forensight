@@ -5,6 +5,7 @@ Surfaces which analyzer classes are available given the host's capabilities
 `android-dev` CPU-only profile — degrade cleanly and *report* unavailable
 modules instead of faking them (test T0.5, and the plan's honesty clause).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -35,8 +36,7 @@ _GPU_CAPABILITIES: tuple[str, ...] = (
 
 def get_capabilities(settings: Settings) -> list[Capability]:
     caps: list[Capability] = [
-        Capability(name=name, available=True, requires_gpu=False)
-        for name in _CPU_CAPABILITIES
+        Capability(name=name, available=True, requires_gpu=False) for name in _CPU_CAPABILITIES
     ]
     for name in _GPU_CAPABILITIES:
         caps.append(

@@ -3,6 +3,7 @@
 Exercises the websearch_to_tsquery path against the generated search_tsv column
 (the test suite otherwise runs the SQLite ILIKE fallback).
 """
+
 from __future__ import annotations
 
 import os

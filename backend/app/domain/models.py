@@ -1,8 +1,9 @@
 """Core domain models: cases, evidence, findings, entities, timeline (Phase 2)."""
+
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     BigInteger,
@@ -27,6 +28,18 @@ JSONType = JSON().with_variant(JSONB(none_as_null=True), "postgresql")  # type: 
 BigIntPK = BigInteger().with_variant(Integer(), "sqlite")
 
 
+def utcnow() -> datetime:
+    """Python-side UTC clock for columns the ORM must be able to read back.
+
+    A pure `onupdate=func.now()` leaves SQLAlchemy unable to populate the value
+    without a round trip, so serializing the object afterwards does lazy IO from
+    a synchronous context and blows up with MissingGreenlet. Supplying the
+    Python callable keeps the value known in-session; the server_default stays
+    as the backstop for rows written outside the ORM.
+    """
+    return datetime.now(UTC)
+
+
 class CaseStatus:
     """Case lifecycle states (see CASE_TRANSITIONS for the allowed graph)."""
 
@@ -46,22 +59,22 @@ class Case(Base):
     number: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     title: Mapped[str] = mapped_column(String(512), nullable=False)
     description: Mapped[str] = mapped_column(Text, default="", nullable=False)
-    status: Mapped[str] = mapped_column(
-        String(32), default=CaseStatus.INTAKE, nullable=False
-    )
+    status: Mapped[str] = mapped_column(String(32), default=CaseStatus.INTAKE, nullable=False)
     owner_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
     assigned_to: Mapped[uuid.UUID | None] = mapped_column(nullable=True, index=True)
     priority: Mapped[str] = mapped_column(String(16), default="normal", nullable=False)
-    due_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        default=utcnow,
+        nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
-        onupdate=func.now(),
+        default=utcnow,
+        onupdate=utcnow,
         nullable=False,
     )
 
@@ -152,9 +165,7 @@ class Entity(Base):
     )
     kind: Mapped[str] = mapped_column(String(32), nullable=False)
     value: Mapped[str] = mapped_column(String(512), nullable=False)
-    attributes: Mapped[dict[str, object]] = mapped_column(
-        JSONType, default=dict, nullable=False
-    )
+    attributes: Mapped[dict[str, object]] = mapped_column(JSONType, default=dict, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -167,9 +178,7 @@ class TimelineEvent(Base):
     case_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("cases.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    occurred_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    occurred_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     label: Mapped[str] = mapped_column(String(512), nullable=False)
     source_ref: Mapped[str] = mapped_column(String(512), default="", nullable=False)
     uncertain: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -191,13 +200,9 @@ class AuditLog(Base):
     actor_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     action: Mapped[str] = mapped_column(String(128), nullable=False)
     target: Mapped[str] = mapped_column(String(512), default="", nullable=False)
-    payload: Mapped[dict[str, object]] = mapped_column(
-        JSONType, default=dict, nullable=False
-    )
+    payload: Mapped[dict[str, object]] = mapped_column(JSONType, default=dict, nullable=False)
     prev_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     entry_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-
-

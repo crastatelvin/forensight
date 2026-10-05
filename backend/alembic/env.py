@@ -4,6 +4,7 @@ Runs migrations synchronously via a sync driver derived from the async URL so
 `alembic upgrade head` / `downgrade base` work in CI without an event loop
 (test T0.3).
 """
+
 from __future__ import annotations
 
 from logging.config import fileConfig

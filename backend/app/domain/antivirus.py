@@ -5,16 +5,14 @@ Pluggable interface so the platform runs with or without a live ClamAV daemon.
 - NoopScanner is used when AV is disabled (dev/test without the daemon).
 Both detect the EICAR test string so the scan path is always test-covered.
 """
+
 from __future__ import annotations
 
 from typing import Protocol
 
 # The standard EICAR antivirus test signature. Detecting it proves the scan
 # path works without shipping a real virus.
-EICAR_SIGNATURE = (
-    rb"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR"
-    rb"-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
-)
+EICAR_SIGNATURE = rb"X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR" rb"-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
 
 
 class InfectedFileError(Exception):

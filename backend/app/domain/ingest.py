@@ -4,6 +4,7 @@ Kills path-traversal (T2.2) by never trusting the client filename for storage
 and by content-addressing objects by SHA-256. MIME is sniffed from bytes, not
 from the client-supplied content-type (T2.3).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -64,9 +65,7 @@ def validate_upload(*, filename: str, data: bytes) -> tuple[str, str, str]:
     if len(data) == 0:
         raise EvidenceValidationError("Empty file")
     if len(data) > MAX_EVIDENCE_BYTES:
-        raise EvidenceValidationError(
-            f"File exceeds maximum size of {MAX_EVIDENCE_BYTES} bytes"
-        )
+        raise EvidenceValidationError(f"File exceeds maximum size of {MAX_EVIDENCE_BYTES} bytes")
     mime = sniff_mime(data)
     if mime not in ALLOWED_MIME_TYPES:
         raise EvidenceValidationError(f"Disallowed content type: {mime}")

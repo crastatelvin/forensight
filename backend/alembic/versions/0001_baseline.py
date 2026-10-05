@@ -4,6 +4,7 @@ Revision ID: 0001_baseline
 Revises:
 Create Date: 2026-09-28 00:00:00.000000
 """
+
 from __future__ import annotations
 
 from collections.abc import Sequence

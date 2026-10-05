@@ -4,6 +4,7 @@ Evidence is content-addressed: the object key is the SHA-256 hex. The bucket is
 created with object-lock enabled and objects are written with a retention lock,
 so committed evidence cannot be overwritten or deleted within retention.
 """
+
 from __future__ import annotations
 
 import io
