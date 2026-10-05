@@ -79,6 +79,9 @@ services:
       DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-forensight}:${POSTGRES_PASSWORD:-forensight}@postgres:5432/${POSTGRES_DB:-forensight}
       REDIS_URL: redis://redis:6379/0
       MINIO_ENDPOINT: minio:9000
+      # Non-empty so submissions queue to a worker instead of only being
+      # runnable inline via POST /analyses/jobs/{id}/run.
+      QUEUE_URL: redis://redis:6379/1
     depends_on:
       postgres:
         condition: service_healthy
@@ -104,17 +107,69 @@ services:
       - "11434:11434"
     restart: unless-stopped
 
-  # --- GPU analysis workers (Phase 4/6/9). Placeholder until worker image exists. ---
+  # --- Analysis workers (Phase 4). ---
+  # CPU worker. Lives in `core` so the stack is usable on a laptop; heavy ML
+  # (Phase 6/9) runs on worker-gpu.
   worker:
-    # Phase 4. `image:` + `pull_policy: never` keeps `up` honest instead of
-    # failing at build time on a context that has no Dockerfile yet.
-    image: forensight-worker:local
-    pull_policy: never
-    profiles: ["gpu-workers"]
-    build:
-      context: ./workers
+    image: forensight-api
+    profiles: ["core"]
+    # Same image so workers and API cannot drift on the domain layer they share.
+    # `entrypoint` is overridden because the image's ENTRYPOINT migrates and then
+    # serves gunicorn; the worker must instead consume the queue.
+    entrypoint: []
+    command:
+      - uv
+      - run
+      - --no-sync
+      - dramatiq
+      - workers.dramatiq_worker
+      - --processes
+      - "${ANALYSIS_WORKER_CONCURRENCY:-2}"
+      - --threads
+      - "${ANALYSIS_WORKER_CONCURRENCY:-2}"
     env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-forensight}:${POSTGRES_PASSWORD:-forensight}@postgres:5432/${POSTGRES_DB:-forensight}
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      QUEUE_URL: redis://redis:6379/1
+      GPU_AVAILABLE: "false"
     depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # GPU worker. Kept as a separate service because the nvidia device reservation
+  # makes compose refuse to start on a host without the driver, which would take
+  # the whole `core` profile down on every laptop.
+  worker-gpu:
+    image: forensight-api
+    profiles: ["gpu-workers"]
+    entrypoint: []
+    command:
+      - uv
+      - run
+      - --no-sync
+      - dramatiq
+      - workers.dramatiq_worker
+      - --processes
+      - "${ANALYSIS_WORKER_CONCURRENCY:-2}"
+      - --threads
+      - "${ANALYSIS_WORKER_CONCURRENCY:-4}"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-forensight}:${POSTGRES_PASSWORD:-forensight}@postgres:5432/${POSTGRES_DB:-forensight}
+      REDIS_URL: redis://redis:6379/0
+      MINIO_ENDPOINT: minio:9000
+      QUEUE_URL: redis://redis:6379/1
+      # Only claim a GPU this host genuinely has: a worker that reports GPU it
+      # cannot use would produce scores nobody can support.
+      GPU_AVAILABLE: ${GPU_AVAILABLE:-false}
+    depends_on:
+      postgres:
+        condition: service_healthy
       redis:
         condition: service_healthy
     deploy:

@@ -72,6 +72,11 @@ class Settings(BaseSettings):
     # If set, evidence uploads are scanned via clamd at this host (TCP 3310).
     clamav_host: str = Field(default="")
 
+    # --- Analysis workers (Phase 4) ---
+    # Queue backend for analysis jobs. Left unset in dev so submission and
+    # execution still work via the inline /run endpoint.
+    queue_url: str = Field(default="")
+
     # --- Reverse proxy ---
     # uvicorn/gunicorn trust X-Forwarded-For from these sources only. Rate
     # limiting keys on client IP, so trusting everything ("*") lets any caller

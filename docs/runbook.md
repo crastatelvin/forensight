@@ -139,3 +139,72 @@ against `evidence.sha256` after any restore.
 | MinIO | Uploads/downloads fail; `/readyz` reports `minio: false`. |
 | Postgres | Everything DB-backed fails. Nothing degrades silently. |
 | GPU absent | `/capabilities` reports GPU modules unavailable with a reason. Never faked. |
+## Analysis pipeline
+
+Submit analysis of one evidence item with one module:
+
+```bash
+curl -X POST localhost:8000/cases/$CASE/analyses \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"module":"byte-entropy","evidence_id":"'$EVID'"}'
+```
+
+Then either wait for a worker (the `core` profile runs one) or run it inline:
+
+```bash
+curl -X POST localhost:8000/analyses/jobs/$JOB/run -H "Authorization: Bearer $TOKEN"
+curl localhost:8000/cases/$CASE/results -H "Authorization: Bearer $TOKEN"
+```
+
+### Job status
+
+| Status | Meaning |
+|---|---|
+| `queued` | Accepted, waiting for a worker |
+| `running` | A worker is executing it |
+| `done` | Result recorded |
+| `failed` | Analysis or infrastructure error; see `error` on the job |
+| `unsupported` | This host cannot run the module; see `unsupported_reason` |
+
+`unsupported` is deliberately not `failed` — nothing went wrong, and reporting
+it as a failure would suggest a bug and invite a pointless retry.
+
+### Workers
+
+```bash
+docker compose logs worker --tail 50      # CPU worker
+docker compose --profile gpu-workers up -d worker-gpu
+```
+
+`worker` runs in the `core` profile; `worker-gpu` is separate because the nvidia
+device reservation makes compose refuse to start on a host without the driver,
+which would take the whole stack down on a laptop. Give a GPU worker
+`GPU_AVAILABLE=true` only when it genuinely has one.
+
+### Idempotency
+
+The key is `sha256(evidence_hash + evidence_id + module + params + model_version)`
+and is UNIQUE in the database. Consequences:
+
+- Re-submitting identical work returns the existing job; it never recomputes.
+- Changing params, or bumping a module's `model_version`, produces a new job.
+- Identical bytes uploaded into a *different* case get their own job. The
+  content hash alone would reproduce a score, but a job is also a record inside
+  a case, so sharing job rows across cases would misreport where the work
+  happened and leak cross-case structure.
+
+To invalidate cached results, bump the module's `version`. That is the intended
+lever and nothing else should need it.
+
+### Adding an analyzer
+
+1. Write it in `backend/app/analysis/modules/<name>.py`: a `ModuleSpec` plus a
+   function `run(data: bytes, params: dict) -> dict` returning at least `score`.
+2. Register it in `registry.register_all()`.
+3. Nothing else changes — API, worker, caching, and audit already work.
+
+A module must be deterministic: no randomness, no wall-clock time, no
+unversioned library that could change between runs. A test enforces this by AST
+scan. Also fill in `threshold`, `tier`, and `version` — the result payload
+cannot be built without them, and a score is never stored without the bar it was
+judged against.

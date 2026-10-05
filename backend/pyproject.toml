@@ -23,6 +23,7 @@ dependencies = [
     "python-magic>=0.4.27",
     "python-multipart>=0.0.18",
     "prometheus-client==0.21.1",
+    "dramatiq[redis]==1.17.0",
 ]
 
 [dependency-groups]

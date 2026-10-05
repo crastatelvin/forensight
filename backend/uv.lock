@@ -347,6 +347,23 @@ wheels = [
 ]
 
 [[package]]
+name = "dramatiq"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "prometheus-client" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/37/a2/e5fd290620f75cea5e84e0199c82cb08334d54b4d102353fb93bb5fab572/dramatiq-1.17.0.tar.gz", hash = "sha256:7621280160b2f0dcb9cdd20eeee41e009d42bc7cc75a2c4b9b944c641dadd4df", size = 98573, upload-time = "2024-05-09T14:59:28.462Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d3/f5/8699390dd1ca34039c6eb7d9e3e22c4adb64eb39f437aac900d0b0365f7f/dramatiq-1.17.0-py3-none-any.whl", hash = "sha256:5c103de1b2f1d3dbca4f80fa7d32312f5253234a14a33277d48b7b2ca9498456", size = 120085, upload-time = "2024-05-09T14:59:26.402Z" },
+]
+
+[package.optional-dependencies]
+redis = [
+    { name = "redis" },
+]
+
+[[package]]
 name = "email-validator"
 version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -426,6 +443,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "asyncpg" },
+    { name = "dramatiq", extra = ["redis"] },
     { name = "fastapi" },
     { name = "fastapi-users", extra = ["sqlalchemy"] },
     { name = "gunicorn" },
@@ -460,6 +478,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = "==1.14.0" },
     { name = "asyncpg", specifier = "==0.30.0" },
+    { name = "dramatiq", extras = ["redis"], specifier = "==1.17.0" },
     { name = "fastapi", specifier = "==0.141.1" },
     { name = "fastapi-users", extras = ["sqlalchemy"], specifier = "==15.0.5" },
     { name = "gunicorn", specifier = "==23.0.0" },

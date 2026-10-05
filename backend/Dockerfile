@@ -23,6 +23,7 @@ RUN uv sync --frozen --no-dev || uv sync --no-dev
 
 # Copy application source.
 COPY app ./app
+COPY workers ./workers
 COPY alembic ./alembic
 COPY alembic.ini ./alembic.ini
 

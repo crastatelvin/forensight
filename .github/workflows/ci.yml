@@ -42,7 +42,7 @@ jobs:
         run: uv run ruff format --check .
 
       - name: Type-check (mypy, strict)
-        run: uv run mypy app
+        run: uv run mypy app workers
 
       # SQLite-only suite: fast, hermetic, no services needed.
       - name: Test (pytest, SQLite)
@@ -213,6 +213,12 @@ jobs:
 
       - name: /metrics is scrapeable
         run: curl -fsS http://localhost:8000/metrics | grep -q forensight_http_requests_total
+
+      # P4.B1: the analysis worker must actually boot and consume the queue,
+      # not merely start alongside the API.
+      - name: Analysis worker is consuming the queue
+        run: |
+          docker compose logs worker | grep -q 'Worker process is ready for action'
 
       - name: Dump logs on failure
         if: failure()

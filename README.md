@@ -4,10 +4,11 @@ Production-grade forensic investigation platform: evidence vault with WORM
 storage, hash-chained audit, chain-of-custody, and a real AI agent (tools +
 memory).
 
-> Build status: **Phase 3 — case management API & workflow** complete
-> (see `CHECKLIST.md`). Phases 4-10 — analysis workers, the LangGraph agent,
-> analyzers, the Next.js frontend, signed reports, and ops — are not built yet.
-> `agent/`, `workers/`, and `frontend/` are placeholders.
+> Build status: **Phase 4 — async analysis pipeline** complete (see `CHECKLIST.md`).
+> Phases 5-10 — the LangGraph agent, the real Tier-A ML analyzers, the Next.js
+> frontend, signed reports, and ops hardening — are not built yet. `agent/` and
+> `frontend/` are placeholders; the one shipped analyzer is a deterministic
+> reference module, not an ML model.
 
 ## Monorepo layout
 
@@ -15,7 +16,7 @@ memory).
 |---|---|
 | `backend/` | FastAPI API gateway (auth, REST, WebSocket, OpenAPI) |
 | `agent/` | LangGraph autonomous agent service (tools, memory, HITL) |
-| `workers/` | Async analysis workers (Celery + real ML analyzers) |
+| `backend/workers/` | Analysis workers (Dramatiq; pipeline done in P4, ML analyzers in P6) |
 | `frontend/` | Next.js (App Router, TypeScript, Tailwind, shadcn/ui) |
 | `infra/` | Docker Compose, deployment, observability configs |
 | `docs/` | Architecture, runbooks, threat model, admin guide |
@@ -55,8 +56,8 @@ docker compose exec -e SEED_ADMIN_EMAIL=you@example.com \
 
 | Profile | Brings up | Status |
 |---|---|---|
-| `core` | postgres, redis, minio, api | works |
-| `gpu-workers` | GPU-enabled analysis workers | Phase 4 — image not built yet |
+| `core` | postgres, redis, minio, api, CPU analysis worker | works |
+| `gpu-workers` | GPU analysis worker (`worker-gpu`) | needs the nvidia container runtime |
 | `observability` | Prometheus, Grafana, Loki | Prometheus scrapes `/metrics` |
 | `android-dev` | CPU-only API + Postgres + small Ollama; GPU modules degrade cleanly | |
 

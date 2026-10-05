@@ -5,9 +5,9 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 **Marker legend:** `[ ]` todo • `[~]` in progress • `[x]` done • `[!]` blocked (add a note)
 
 **Progress:** update the counts when you check items.
-- Phases complete: 4 / 11 (P0-P10)
-- Build tasks: 33 / 65
-- Test cases: 36 / 70
+- Phases complete: 5 / 11 (P0-P10)
+- Build tasks: 39 / 65
+- Test cases: 42 / 70
 
 ---
 
@@ -117,21 +117,22 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 
 ## Phase 4 — Async analysis infrastructure & idempotency
 **Build**
-- [ ] P4.B1 Celery + Redis broker; worker pool with GPU/CPU capability flags
-- [ ] P4.B2 analysis_jobs + analysis_results (queued/running/done/failed)
-- [ ] P4.B3 Idempotency key = hash(evidence_hash+module+params+model_version)
-- [ ] P4.B4 Module registry plugin interface (name/inputs/params/version/threshold/output/capability)
-- [ ] P4.B5 Model registry on MinIO: pinned versions + checksum verify before load
-- [ ] P4.B6 Result payload always includes score + threshold + model_version + tier
+- [x] P4.B1 Dramatiq + Redis broker; CPU worker (`worker`) and GPU worker (`worker-gpu`)
+- [x] P4.B2 analysis_jobs + analysis_results (queued/running/done/failed/unsupported)
+- [x] P4.B3 Idempotency key = hash(evidence_hash+evidence_id+module+params+model_version), UNIQUE in the DB
+- [x] P4.B4 Module registry plugin interface (name/inputs/params/version/threshold/output/capability)
+- [x] P4.B5 Model registry on MinIO: pinned versions + checksum verify before load
+- [x] P4.B6 Result payload always includes score + threshold + model_version + tier + disclaimer
 **Test cases**
-- [ ] T4.1 Same input cached; changed version recomputes
-- [ ] T4.2 Job lifecycle correct; failed job records error, worker survives
-- [ ] T4.3 Checksum mismatch refuses model load
-- [ ] T4.4 GPU-only on CPU -> unsupported, not faked
-- [ ] T4.5 Result schema carries version+threshold+tier
-- [ ] T4.6 N identical jobs collapse to one computation (race)
+- [x] T4.1 Same input cached; changed version recomputes
+- [x] T4.2 Job lifecycle correct; failed job records error, worker survives
+- [x] T4.3 Checksum mismatch refuses model load
+- [x] T4.4 GPU-only on CPU -> unsupported, not faked
+- [x] T4.5 Result schema carries version+threshold+tier
+- [x] T4.6 N identical jobs collapse to one computation (race)
 **Exit**
-- [ ] P4.E reproducible, cached, capability-aware pipeline proven with golden inputs
+- [x] P4.E reproducible, cached, capability-aware pipeline proven with golden inputs
+      (verified against live Postgres/MinIO/Redis/worker; `byte-entropy` golden values 0.0 and 8.0)
 
 ---
 
@@ -268,7 +269,7 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 ---
 
 ## Cross-cutting quality gates (enforced every phase)
-- [ ] X1 pytest unit+integration on testcontainers Postgres (live PG now runs in CI)
+- [x] X1 pytest unit+integration on live Postgres + MinIO (CI `integration` job)
 - [ ] X2 Playwright E2E
 - [ ] X3 Contract tests for agent tools
 - [ ] X4 Agent eval harness (cites sources, respects HITL)
