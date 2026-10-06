@@ -44,6 +44,7 @@ from app.agent.types import (
     AgentState,
     Citation,
     Claim,
+    PendingAction,
     ProvenanceError,
     RunStatus,
     Step,
@@ -365,7 +366,18 @@ async def test_agent_declines_when_it_cannot_cite(
 def _settings():  # noqa: ANN202
     from app.config import Settings
 
-    return Settings(secret_key="s" * 40, minio_endpoint="")
+    # `llm_provider`/`llm_model` are set so `resolve_model` succeeds. Several
+    # endpoints resolve a model only to reach the tool runner's embedding step --
+    # `POST /runs/{id}/approve` goes through it -- and without these the endpoint
+    # answers 503 and the test would be asserting on the refusal rather than on the
+    # behaviour. Nothing here talks to a provider: the runner treats an embedding
+    # failure as a non-event and carries on.
+    return Settings(
+        secret_key="s" * 40,
+        minio_endpoint="",
+        llm_provider="ollama",
+        llm_model="scripted-test-model",
+    )
 
 
 # --- T5.5 / P5.B9: prompt injection --------------------------------------
@@ -1476,3 +1488,332 @@ async def test_another_officers_runs_are_a_404_not_a_filtered_list(
     # And the body must not be an empty list: "no runs" is a different statement
     # from "you may not look", and a reviewer acting on the first is worse off.
     assert resp.json() != [], resp.text
+
+
+async def test_a_parked_action_is_pending_not_failed() -> None:
+    """Three states, not two.
+
+    A tool call whose action is parked for approval has produced no result. Joining
+    `ok` from the result rendered that as `ok: false`, so the console displayed a
+    waiting action as a **failed** one — a false statement about the audit trail,
+    and precisely the kind of thing that makes someone stop believing the rest of
+    it. The agent did nothing wrong; it is waiting for a person.
+
+    Pinned here because the join is a lookup with a default, and the wrong default
+    is invisible until someone renders it.
+    """
+    from app.agent.router import _run_payload as payload_of
+    from app.agent.types import (
+        AgentState,
+        PendingAction,
+        Step,
+        ToolCall,
+        ToolResult,
+    )
+    from app.agent.types import (
+        datetime as _dt,
+    )
+
+    class _Run:
+        id = uuid.uuid4()
+        case_id = uuid.uuid4()
+        thread_id = "t"
+        status = "awaiting_approval"
+        step = "hitl"
+        objective = "o"
+        report = ""
+        refusal = ""
+        error = ""
+        model = "scripted"
+        created_at = _dt(2026, 1, 1, tzinfo=UTC)
+        updated_at = _dt(2026, 1, 1, tzinfo=UTC)
+
+    state = AgentState(run_id="r", case_id="c", thread_id="t", objective="o")
+    state.step = Step.HITL
+    state.tool_calls = [
+        ToolCall(name="get_case", args={}, call_id="read"),
+        ToolCall(name="update_case_finding", args={"title": "x"}, call_id="write"),
+    ]
+    state.tool_results = [
+        ToolResult(call_id="read", name="get_case", ok=True, output={}),
+    ]
+    state.tool_results[0].compute_hash()
+    state.pending = PendingAction(
+        action_id="a1",
+        tool="update_case_finding",
+        args={"title": "x"},
+        reason="changes case state",
+        requested_at=_dt(2026, 1, 1, tzinfo=UTC),
+    )
+
+    calls = {c["call_id"]: c for c in payload_of(_Run(), state)["tool_calls"]}
+
+    # The read completed.
+    assert calls["read"]["status"] == "ok"
+    assert calls["read"]["error"] == ""
+
+    # The write is waiting, and is labelled as waiting.
+    assert calls["write"]["status"] == "pending", calls["write"]
+    assert calls["write"]["ok"] is False
+    assert "approval" in calls["write"]["error"], calls["write"]
+    # `approved_action_id` is empty while waiting: nothing has been approved *and
+    # applied* yet, so claiming otherwise would be inventing an audit entry. The
+    # pending decision is named at the run level instead.
+    assert calls["write"]["approved_action_id"] == "", calls["write"]
+    payload = payload_of(_Run(), state)
+    assert payload["pending_action_id"] == "a1", payload["pending_action_id"]
+    assert payload["pending_tool"] == "update_case_finding"
+
+
+async def test_a_call_that_truly_ran_and_failed_still_says_failed() -> None:
+    """The `pending` default must not swallow a genuine failure.
+
+    The previous test could pass if `_call_status` simply returned `pending`
+    whenever no result matched. So this pins the other direction: a call with a
+    result that reports failure is `failed`, and one with no result and nothing
+    parked is also `failed` — an unexplained gap is not the same as a deliberate
+    pause.
+    """
+    from app.agent.router import _run_payload as payload_of
+    from app.agent.types import AgentState, ToolCall, ToolResult
+
+    class _Run:
+        id = uuid.uuid4()
+        case_id = uuid.uuid4()
+        thread_id = "t"
+        status = "running"
+        step = "planner"
+        objective = "o"
+        report = ""
+        refusal = ""
+        error = ""
+        model = "scripted"
+        created_at = datetime(2026, 1, 1, tzinfo=UTC)
+        updated_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    state = AgentState(run_id="r", case_id="c", thread_id="t", objective="o")
+    state.tool_calls = [
+        ToolCall(name="run_analysis", args={}, call_id="broke"),
+        ToolCall(name="search_evidence", args={}, call_id="orphan"),
+    ]
+    state.tool_results = [
+        ToolResult(
+            call_id="broke", name="run_analysis", ok=False, output=None, error="no such module"
+        )
+    ]
+
+    calls = {c["call_id"]: c for c in payload_of(_Run(), state)["tool_calls"]}
+    assert calls["broke"]["status"] == "failed"
+    assert calls["broke"]["error"] == "no such module"
+    # Nothing is parked, so an unexplained missing result is a failure, not a pause.
+    assert calls["orphan"]["status"] == "failed"
+
+
+async def test_approving_returns_without_continuing_the_run(
+    client: AsyncClient, seed_users, sessionmaker_fixture
+) -> None:
+    """`POST /runs/{id}/approve` must return once the decision is recorded.
+
+    It called `graph.approve`, which applied the action *and* ran the rest of the
+    agent loop inline, so the operator watched "Applying…" for the length of a whole
+    model run with no feedback and no stream to watch. Found by clicking Approve in
+    the browser: the button sat disabled on "Applying…" and the run never moved.
+
+    Driven over HTTP rather than at the graph, because the regression was in the
+    endpoint. The approved write must still have landed before the response —
+    approving is the irreversible half, and the run continuing afterwards must not
+    be able to un-apply it or repeat it — so the test asserts the action ran *and*
+    that the run has not finished.
+    """
+    from app.agent.repository import AgentRun
+
+    officer = await _auth(client, seed_users["officer"])
+    cid = (
+        await client.post(
+            "/cases", headers=officer, json={"number": "APR-1", "title": "Approve is fast"}
+        )
+    ).json()["id"]
+    actor = uuid.UUID((await client.get("/auth/me", headers=officer)).json()["id"])
+    run_id = await _make_run(sessionmaker_fixture, case_id=cid, actor=actor)
+
+    # Park a state-changing action exactly as the HITL step would.
+    async with sessionmaker_fixture() as session:
+        run = await session.get(AgentRun, run_id)
+        assert run is not None
+        graph = AgentGraph(
+            session=session,
+            model=ScriptedModel(
+                [
+                    ChatResponse(
+                        tool_calls=[
+                            {
+                                "function": {
+                                    "name": "update_case_finding",
+                                    "arguments": json.dumps(
+                                        {"title": "Window forced", "body": "evidence"}
+                                    ),
+                                }
+                            }
+                        ]
+                    )
+                ]
+            ),
+            settings=_settings(),
+            run=run,
+        )
+        outcome = await graph.start(
+            AgentState(run_id=str(run.id), case_id=cid, thread_id=run.thread_id, objective="record")
+        )
+        assert outcome.state.pending is not None, "the action was not parked"
+        action_id = outcome.state.pending.action_id
+
+    findings_before = (await client.get(f"/cases/{cid}/findings", headers=officer)).json()
+
+    # The endpoint under test.
+    resp = await client.post(
+        f"/agent/runs/{run_id}/approve",
+        headers=officer,
+        json={"action_id": action_id, "reason": "reviewed"},
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    # The irreversible half is done, before anyone was told it was.
+    findings_after = (await client.get(f"/cases/{cid}/findings", headers=officer)).json()
+    assert (
+        len(findings_after) == len(findings_before) + 1
+    ), f"the approved write did not land: {findings_before} -> {findings_after}"
+
+    # But the run has not continued: it is parked mid-graph, not finished.
+    assert body["status"] != "completed", body
+    assert body["pending_action_id"] == "", "the action is still parked"
+
+    # And the checkpoint the stream will resume from reflects that progress, so
+    # continuing the run is not lost by the split.
+    async with sessionmaker_fixture() as session:
+        resumed = await load_state(session, run_id)
+        assert resumed is not None
+        assert resumed.pending is None, "the stream would re-park the same action"
+
+
+async def test_rejecting_also_returns_without_continuing(
+    sessionmaker_fixture,
+) -> None:
+    """Symmetry matters here: a reject that blocked would look identical to a
+    failed approval, and an operator would not know their click had landed."""
+    from app.agent.repository import AgentRun
+    from app.domain.models import Case
+
+    async with sessionmaker_fixture() as db:
+        case = Case(number="REJ-1", title="Reject returns early", owner_id=uuid.uuid4())
+        db.add(case)
+        await db.flush()
+        run = await create_run(
+            db,
+            case_id=case.id,
+            thread_id="t-reject",
+            objective="record a finding",
+            actor_id=uuid.uuid4(),
+            model="scripted",
+        )
+        row = await db.get(AgentRun, run.id)
+        assert row is not None
+        state = AgentState(run_id=str(run.id), case_id=str(case.id), thread_id="t-reject")
+        state.pending = PendingAction(
+            action_id="act-2",
+            tool="update_case_finding",
+            args={"title": "no"},
+            reason="changes case state",
+            requested_at=datetime.now(UTC),
+        )
+        graph = AgentGraph(session=db, model=ScriptedModel([]), settings=_settings(), run=row)
+        await graph.reject_only(state, action_id="act-2", reason="not justified")
+
+        assert state.pending is None
+        assert state.status is RunStatus.RUNNING
+        # The refusal is recorded rather than dropped, so the agent can see that a
+        # human considered the action and said no — otherwise it may simply retry.
+        system_notes = [m for m in state.messages if m.get("role") == "system"]
+        assert system_notes, "the rejection was not recorded in the transcript"
+        assert "REJECTED" in system_notes[-1]["content"]
+        assert "not justified" in system_notes[-1]["content"]
+
+
+async def test_an_approved_action_joins_to_its_own_call_in_the_audit(
+    client: AsyncClient, seed_users, sessionmaker_fixture
+) -> None:
+    """One logical action, one identity.
+
+    The parked `ToolCall`, the `PendingAction.action_id` and the call actually
+    executed on approval were three unrelated random ids. Nothing could join them,
+    so `_run_payload` could not find a result for the parked call and reported it
+    as **failed** — while the write had demonstrably happened. Found by approving a
+    live run in the browser and watching a finding appear on the case next to a
+    tool call labelled "failed".
+
+    Asserted on the thing that was wrong: after approving, the parked call reports
+    `ok`, carries a result hash, and its `approved_action_id` points at itself.
+    """
+    from app.agent.repository import AgentRun
+
+    officer = await _auth(client, seed_users["officer"])
+    cid = (
+        await client.post(
+            "/cases", headers=officer, json={"number": "JOIN-1", "title": "Audit join"}
+        )
+    ).json()["id"]
+    actor = uuid.UUID((await client.get("/auth/me", headers=officer)).json()["id"])
+    run_id = await _make_run(sessionmaker_fixture, case_id=cid, actor=actor)
+
+    async with sessionmaker_fixture() as session:
+        run = await session.get(AgentRun, run_id)
+        assert run is not None
+        outcome = await AgentGraph(
+            session=session,
+            model=ScriptedModel(
+                [
+                    ChatResponse(
+                        tool_calls=[
+                            {
+                                "function": {
+                                    "name": "update_case_finding",
+                                    "arguments": json.dumps(
+                                        {"title": "Window forced", "body": "evidence"}
+                                    ),
+                                }
+                            }
+                        ]
+                    )
+                ]
+            ),
+            settings=_settings(),
+            run=run,
+        ).start(
+            AgentState(run_id=str(run.id), case_id=cid, thread_id=run.thread_id, objective="record")
+        )
+        assert outcome.state.pending is not None, "nothing was parked"
+        parked = outcome.state.tool_calls[-1]
+        assert (
+            parked.call_id == outcome.state.pending.action_id
+        ), "the pending action and the call that requested it must share an id"
+        action_id = outcome.state.pending.action_id
+
+    resp = await client.post(
+        f"/agent/runs/{run_id}/approve", headers=officer, json={"action_id": action_id}
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+
+    write_call = next(c for c in body["tool_calls"] if c["tool"] == "update_case_finding")
+    assert (
+        write_call["status"] == "ok"
+    ), f"an applied write was reported as {write_call['status']!r}: {write_call}"
+    assert len(write_call["result_hash"]) == 64, "no result hash to audit against"
+    assert write_call["error"] == ""
+    assert write_call["approved_action_id"] == action_id
+
+    # Exactly one call for that action: re-executing must not add a second entry,
+    # or the audit would read as though the write happened twice.
+    assert len([c for c in body["tool_calls"] if c["tool"] == "update_case_finding"]) == 1, body[
+        "tool_calls"
+    ]

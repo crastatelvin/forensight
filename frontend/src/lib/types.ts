@@ -209,16 +209,26 @@ export interface ClaimRead {
   citations: CitationRead[];
 }
 
-/** One tool call as recorded in the run's checkpoint state. */
+/**
+ * One tool call as recorded in the run's checkpoint state.
+ *
+ * `status` is three-valued on purpose. `ok` is a boolean because a call's outcome
+ * lives on its result, but a call whose action is parked for approval has produced
+ * no result at all — and collapsing that into `ok: false` renders an action still
+ * waiting for a decision as a *failed* one. That is a false statement about the
+ * audit trail, which is the one thing in this interface that must not be
+ * approximate.
+ */
 export interface AgentToolCallRead {
   tool: string;
   call_id: string;
   args: Record<string, unknown>;
   args_hash: string;
-  /** Joined from the matching result; a call with no result is never `true`. */
+  status: "ok" | "failed" | "pending";
   ok: boolean;
   error: string;
   result_hash: string;
+  /** Set when this call is the parked action awaiting a human decision. */
   approved_action_id: string;
 }
 

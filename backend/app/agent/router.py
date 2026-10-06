@@ -194,13 +194,25 @@ def _run_payload(run: Any, state: AgentState | None) -> dict[str, Any]:
                 "call_id": call.call_id,
                 "args": call.args,
                 "args_hash": call.args_hash(),
-                # `ok` is not on ToolCall; a call's success is the result's. Taken
-                # from the matching result so the audit row and the displayed status
-                # cannot disagree.
+                # Three states, not two. `ok` is not on ToolCall -- a call's
+                # outcome lives on its result -- so it is joined from the matching
+                # result to keep the audit row and the displayed status from
+                # disagreeing. A call whose action is *parked for approval* has no
+                # result yet, and reporting that as `ok: false` would call it a
+                # failure: the agent has not done anything wrong, it is waiting for
+                # a person. `pending` is the truth, and a client that shows "failed"
+                # for an action still awaiting a decision is stating a falsehood
+                # about the audit trail.
+                "status": _call_status(state, call.call_id),
                 "ok": _result_ok(state, call.call_id),
                 "error": _result_error(state, call.call_id),
                 "result_hash": _result_hash(state, call.call_id),
-                "approved_action_id": "",
+                # From the *result*, not the current pending action: once the run
+                # continues, the pending action is cleared, and a call that was
+                # applied because a human approved it has to stay distinguishable
+                # from one applied directly. That distinction is the whole point of
+                # the HITL gate, so it cannot depend on state that is about to change.
+                "approved_action_id": _approved_for(state, call.call_id),
             }
             for call in (state.tool_calls if state else [])
         ],
@@ -221,6 +233,22 @@ def _result(state: AgentState | None, call_id: str) -> Any:
     return None
 
 
+def _call_status(state: AgentState | None, call_id: str) -> str:
+    """`ok`, `failed` or `pending` for one tool call.
+
+    `pending` is the case that matters. A parked action has produced no result, and
+    the previous join rendered that as `ok: false` -- so the console displayed a
+    waiting action as a failed one, which is a false statement about an audit trail
+    and the sort of thing that erodes trust in everything else the log says.
+    """
+    result = _result(state, call_id)
+    if result is not None:
+        return "ok" if result.ok else "failed"
+    if state is not None and state.pending is not None:
+        return "pending"
+    return "failed"
+
+
 def _result_ok(state: AgentState | None, call_id: str) -> bool:
     result = _result(state, call_id)
     # A call with no recorded result is not a success. Defaulting it to True would
@@ -230,7 +258,17 @@ def _result_ok(state: AgentState | None, call_id: str) -> bool:
 
 def _result_error(state: AgentState | None, call_id: str) -> str:
     result = _result(state, call_id)
-    return result.error if result is not None else "no result was recorded"
+    if result is not None:
+        return str(result.error)
+    if state is not None and state.pending is not None:
+        return "awaiting human approval; not run yet"
+    return "no result was recorded"
+
+
+def _approved_for(state: AgentState | None, call_id: str) -> str:
+    """The human decision that authorised this call, if any."""
+    result = _result(state, call_id)
+    return result.approved_action_id if result is not None else ""
 
 
 def _result_hash(state: AgentState | None, call_id: str) -> str:
@@ -417,12 +455,18 @@ async def approve_action(
     )
     await session.commit()
 
+    # The action is applied here; the run then *continues* in the SSE stream.
+    # Running it inline meant this POST blocked for the length of a whole model run,
+    # so the operator watched "Applying…" indefinitely with no feedback and no
+    # stream to watch. Same fix as `POST /runs`.
+    # Unlike `start_run`, this one *does* need a model: applying the action goes
+    # through the tool runner, which embeds a memory note about what was approved.
     graph = AgentGraph(session=session, model=_model(settings), settings=settings, run=run)
     try:
-        outcome = await graph.approve(state, action_id=payload.action_id)
+        await graph.approve_only(state, action_id=payload.action_id)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return _run_payload(outcome.run, outcome.state)
+    return _run_payload(run, state)
 
 
 @router.post("/runs/{run_id}/reject")
@@ -457,10 +501,10 @@ async def reject_action(
 
     graph = AgentGraph(session=session, model=_model(settings), settings=settings, run=run)
     try:
-        outcome = await graph.reject(state, action_id=payload.action_id, reason=payload.reason)
+        await graph.reject_only(state, action_id=payload.action_id, reason=payload.reason)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    return _run_payload(outcome.run, outcome.state)
+    return _run_payload(run, state)
 
 
 @router.post("/runs/{run_id}/resume")

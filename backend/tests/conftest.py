@@ -34,6 +34,15 @@ def _settings(**overrides: object) -> Settings:
         "cookie_secure": False,
         "rate_limit_auth_max": 5,
         "rate_limit_auth_window": 60,
+        # Several endpoints resolve a model purely to reach the tool runner's
+        # embedding step -- `POST /agent/runs/{id}/approve` goes through it -- and
+        # without these they answer 503 before doing any work, so a test would end
+        # up asserting on the refusal instead of on the behaviour. Nothing here
+        # contacts a provider: the runner treats an embedding failure as a non-event
+        # and carries on, so the suite stays hermetic.
+        "llm_provider": "ollama",
+        "llm_model": "scripted-test-model",
+        "llm_base_url": "http://llm.invalid/v1",
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]

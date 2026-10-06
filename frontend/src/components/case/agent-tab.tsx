@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import type { AgentRunRead, EvidenceRead, PendingApproval } from "@/lib/types";
 import {
   startRunAction,
@@ -51,6 +52,7 @@ export function AgentTab({
   /** Runs already on this case, newest first. `null` means the list failed. */
   existingRuns: AgentRunRead[] | null;
 }) {
+  const router = useRouter();
   const [phase, setPhase] = useState<Phase>("idle");
   const [objective, setObjective] = useState("");
   const [run, setRun] = useState<AgentRunRead | null>(null);
@@ -139,24 +141,39 @@ export function AgentTab({
     };
   }
 
-  async function decide(actionId: string, approve: boolean) {
+  /**
+   * Approve or reject a parked action, then follow the run to its end.
+   *
+   * Takes the run id rather than reading it from the live run, because the history
+   * rows act on their own runs: answering a question left by a run started in an
+   * earlier session has to work, and that is exactly the case the buttons used to
+   * miss. The buttons only existed on the live panel, so a parked action became
+   * permanently unactionable once the operator reloaded — the run waited forever
+   * for a person who could no longer see the question.
+   *
+   * The stream is reconnected with `resume=0` so it continues from the checkpoint
+   * the decision just moved rather than re-running the step that was approved.
+   */
+  async function decide(runId: string, actionId: string, approve: boolean) {
     setDecisionBusy(true);
     setDecisionError(null);
+
     const result = approve
-      ? await approveActionAction(run!.run_id, actionId)
-      : await rejectActionAction(run!.run_id, actionId);
-    setDecisionBusy(false);
+      ? await approveActionAction(runId, actionId)
+      : await rejectActionAction(runId, actionId);
 
     if (!result.ok) {
+      setDecisionBusy(false);
       setDecisionError(result.error ?? "The decision was not applied.");
       return;
     }
     setPending(null);
-    // Reconnect with resume=false so the stream continues from the checkpoint the
-    // decision just moved, rather than re-running the step that was approved.
-    const source = new EventSource(`/api/agent/${run!.run_id}/stream?resume=0`);
+    router.refresh();
+
+    const source = new EventSource(`/api/agent/${runId}/stream?resume=0`);
     sourceRef.current = source;
     setPhase("streaming");
+
     source.onmessage = (e) => {
       let parsed: StreamEvent;
       try {
@@ -168,6 +185,7 @@ export function AgentTab({
       if (parsed.event === "done") {
         source.close();
         sourceRef.current = null;
+        router.refresh();
       }
     };
     source.onerror = () => {
@@ -175,6 +193,7 @@ export function AgentTab({
       sourceRef.current = null;
       setPhase((p) => (p === "streaming" ? "error" : p));
     };
+    setDecisionBusy(false);
   }
 
   const suggestions = [
@@ -279,44 +298,13 @@ export function AgentTab({
       ) : null}
 
       {pending ? (
-        <Card className="border-warn-border">
-          <CardHeader
-            title="Waiting for your decision"
-            subtitle="The agent asked to change something in this case. Nothing has happened yet."
-          />
-          <CardBody className="space-y-3">
-            <Notice tone="warn" title={`It wants to run: ${pending.tool}`}>
-              {pending.reason || "No reason was given for this action."}
-            </Notice>
-
-            <pre className="max-h-48 overflow-auto rounded border border-border-subtle bg-surface-0 p-3 font-mono text-[11px] leading-relaxed">
-              {JSON.stringify(pending.args, null, 2)}
-            </pre>
-
-            <div className="flex flex-wrap gap-2">
-              <Button
-                variant="success"
-                disabled={decisionBusy}
-                onClick={() => decide(pending.action_id, true)}
-              >
-                {decisionBusy ? "Applying…" : "Approve"}
-              </Button>
-              <Button
-                variant="danger"
-                disabled={decisionBusy}
-                onClick={() => decide(pending.action_id, false)}
-              >
-                Reject
-              </Button>
-            </div>
-
-            {decisionError ? (
-              <div role="alert">
-                <Notice tone="alert">{decisionError}</Notice>
-              </div>
-            ) : null}
-          </CardBody>
-        </Card>
+        <ApprovalGate
+          runId={run!.run_id}
+          approval={pending}
+          busy={decisionBusy}
+          error={decisionError}
+          onDecide={decide}
+        />
       ) : null}
 
       {run ? <AgentOutput run={run} evidence={evidence} /> : null}
@@ -331,6 +319,9 @@ export function AgentTab({
           runs={existingRuns}
           evidence={evidence}
           activeRunId={run?.run_id ?? null}
+          decisionBusy={decisionBusy}
+          decisionError={decisionError}
+          onDecide={decide}
         />
       ) : phase === "idle" && !run && !error ? (
         <Card>
@@ -346,6 +337,79 @@ export function AgentTab({
 }
 
 /**
+ * The human-in-the-loop gate.
+ *
+ * One component, used both by the live console and by the run history. That is the
+ * point: the buttons used to exist only on the live panel, so an action parked for
+ * approval became permanently unactionable the moment the operator closed the tab
+ * or reloaded — the run sat at `awaiting_approval` forever with no way to answer
+ * it. Two copies would drift; one component used twice cannot.
+ *
+ * It shows the parked action's exact arguments before anything happens, because
+ * approving a write is the one irreversible act in this interface and "approve
+ * whatever it wanted" is not consent.
+ */
+function ApprovalGate({
+  runId,
+  approval,
+  busy,
+  error,
+  onDecide,
+}: {
+  runId: string;
+  approval: PendingApproval;
+  busy: boolean;
+  error: string | null;
+  onDecide: (runId: string, actionId: string, approve: boolean) => void;
+}) {
+  return (
+    <Card className="border-warn-border">
+      <CardHeader
+        title="Waiting for your decision"
+        subtitle="The agent asked to change something in this case. Nothing has happened yet."
+      />
+      <CardBody className="space-y-3">
+        <Notice tone="warn" title={`It wants to run: ${approval.tool}`}>
+          {approval.reason || "No reason was given for this action."}
+        </Notice>
+
+        <div>
+          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-tertiary">
+            Exactly what it will do
+          </div>
+          <pre className="max-h-48 overflow-auto rounded border border-border-subtle bg-surface-0 p-3 font-mono text-[11px] leading-relaxed">
+            {JSON.stringify(approval.args, null, 2)}
+          </pre>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            variant="success"
+            disabled={busy}
+            onClick={() => onDecide(runId, approval.action_id, true)}
+          >
+            {busy ? "Applying…" : "Approve"}
+          </Button>
+          <Button
+            variant="danger"
+            disabled={busy}
+            onClick={() => onDecide(runId, approval.action_id, false)}
+          >
+            Reject
+          </Button>
+        </div>
+
+        {error ? (
+          <div role="alert">
+            <Notice tone="alert">{error}</Notice>
+          </div>
+        ) : null}
+      </CardBody>
+    </Card>
+  );
+}
+
+/**
  * Every run already on this case, newest first.
  *
  * A run is a durable record, so it is listed here and re-rendered on reload. Each
@@ -357,10 +421,16 @@ function RunHistory({
   runs,
   evidence,
   activeRunId,
+  decisionBusy,
+  decisionError,
+  onDecide,
 }: {
   runs: AgentRunRead[];
   evidence: EvidenceRead[];
   activeRunId: string | null;
+  decisionBusy: boolean;
+  decisionError: string | null;
+  onDecide: (runId: string, actionId: string, approve: boolean) => void;
 }) {
   return (
     <Card>
@@ -410,6 +480,25 @@ function RunHistory({
                     {r.error}
                   </Notice>
                 ) : null}
+
+                {/* A parked action stays answerable after a reload. This is the
+                    whole point of the HITL gate: the run waits for a person, and
+                    the person may not be the one who started it. */}
+                {r.status === "awaiting_approval" && r.pending_action_id ? (
+                  <ApprovalGate
+                    runId={r.run_id}
+                    approval={{
+                      action_id: r.pending_action_id,
+                      tool: r.pending_tool,
+                      args: r.pending_args,
+                      reason: "This tool changes case state, so it needs a human.",
+                    }}
+                    busy={decisionBusy}
+                    error={decisionError}
+                    onDecide={onDecide}
+                  />
+                ) : null}
+
                 <AgentOutput run={r} evidence={evidence} />
               </div>
             </details>
@@ -571,6 +660,17 @@ function AgentOutput({
  * wrong. `args_hash` and `result_hash` are shown because those are what make a
  * tool call auditable — the point of the log is that it can be checked later.
  */
+/** How a tool call reads. `pending` is not a flavour of `failed`. */
+const CALL_STATUS: Record<
+  AgentRunRead["tool_calls"][number]["status"],
+  { label: string; tone: "calm" | "alert" | "warn" }
+> = {
+  ok: { label: "ok", tone: "calm" },
+  failed: { label: "failed", tone: "alert" },
+  // The agent has not done anything wrong -- it is waiting for a person.
+  pending: { label: "awaiting approval", tone: "warn" },
+};
+
 function ToolCallLog({ calls }: { calls: AgentRunRead["tool_calls"] }) {
   return (
     <div>
@@ -578,36 +678,47 @@ function ToolCallLog({ calls }: { calls: AgentRunRead["tool_calls"] }) {
         Tool calls ({calls.length})
       </h3>
       <ul className="space-y-1.5">
-        {calls.map((call, i) => (
-          <li key={i}>
-            <details open={!call.ok} className="rounded border border-border-subtle">
-              <summary className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5">
-                <span className="font-mono text-xs font-medium">{call.tool}</span>
-                <Badge tone={call.ok ? "calm" : "alert"}>
-                  {call.ok ? "ok" : "failed"}
-                </Badge>
-                {call.approved_action_id ? (
-                  <Badge tone="warn">human-approved</Badge>
-                ) : null}
-                <span className="ml-auto font-mono text-[10px] text-tertiary">
-                  {call.result_hash.slice(0, 10)}
-                </span>
-              </summary>
-              <div className="space-y-1.5 border-t border-border-subtle px-2.5 py-2 text-[10px]">
-                {call.error ? (
-                  <p className="font-mono text-alert">{call.error}</p>
-                ) : null}
-                <pre className="max-h-40 overflow-auto font-mono leading-relaxed text-tertiary">
-                  {JSON.stringify(call.args, null, 1)}
-                </pre>
-                <p className="font-mono text-tertiary">
-                  args {call.args_hash.slice(0, 16)}… · result{" "}
-                  {call.result_hash.slice(0, 16)}…
-                </p>
-              </div>
-            </details>
-          </li>
-        ))}
+        {calls.map((call, i) => {
+          const status = CALL_STATUS[call.status] ?? CALL_STATUS.failed;
+          return (
+            <li key={i}>
+              {/* A failure opens itself; a pending call does not, because the gate
+                above it is already the thing that needs attention. */}
+              <details
+                open={call.status === "failed"}
+                className="rounded border border-border-subtle"
+              >
+                <summary className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5">
+                  <span className="font-mono text-xs font-medium">{call.tool}</span>
+                  <Badge tone={status.tone}>{status.label}</Badge>
+                  <span className="ml-auto font-mono text-[10px] text-tertiary">
+                    {call.result_hash ? call.result_hash.slice(0, 10) : "no result yet"}
+                  </span>
+                </summary>
+                <div className="space-y-1.5 border-t border-border-subtle px-2.5 py-2 text-[10px]">
+                  {call.error ? (
+                    <p
+                      className={
+                        call.status === "failed"
+                          ? "font-mono text-alert"
+                          : "font-mono text-warn"
+                      }
+                    >
+                      {call.error}
+                    </p>
+                  ) : null}
+                  <pre className="max-h-40 overflow-auto font-mono leading-relaxed text-tertiary">
+                    {JSON.stringify(call.args, null, 1)}
+                  </pre>
+                  <p className="font-mono text-tertiary">
+                    args {call.args_hash.slice(0, 16)}… · result{" "}
+                    {call.result_hash ? `${call.result_hash.slice(0, 16)}…` : "not run"}
+                  </p>
+                </div>
+              </details>
+            </li>
+          );
+        })}
       </ul>
     </div>
   );

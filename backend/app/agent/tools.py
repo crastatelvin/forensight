@@ -39,9 +39,21 @@ class NeedsApproval(Exception):
     something else.
     """
 
-    def __init__(self, tool: str, args: dict[str, Any], reason: str) -> None:
+    def __init__(self, call: ToolCall, reason: str) -> None:
+        """`action_id` *is* the originating call's id.
+
+        They used to be two unrelated random ids, and a third was minted again when
+        the approved action was actually executed. So one logical action had three
+        identities, nothing could be joined back together, and the audit display
+        showed an approved-and-applied write as **failed** — a false statement about
+        a write that had demonstrably happened.
+
+        One identity fixes it: the parked call, the pending action and the result of
+        executing it all share `call_id`, so `_run_payload`'s join finds the result
+        and reports what actually happened.
+        """
         self.action = PendingAction(
-            action_id=str(uuid.uuid4()), tool=tool, args=dict(args), reason=reason
+            action_id=call.call_id, tool=call.name, args=dict(call.args), reason=reason
         )
         super().__init__(reason)
 
@@ -159,7 +171,7 @@ class ToolRunner:
 
         if tool.state_changing:
             # Park for a human instead of acting. Arguments are frozen here.
-            raise NeedsApproval(call.name, call.args, f"{call.name} changes case state")
+            raise NeedsApproval(call, f"{call.name} changes case state")
 
         try:
             result.output = await tool(self._ctx, args)
@@ -179,10 +191,18 @@ class ToolRunner:
         cannot be replayed against different arguments or after the case moved
         on.
         """
-        call = ToolCall(name=action.tool, args=dict(action.args))
+        # The same call id as the parked one, so the result joins to it and the
+        # audit reads "ok" rather than reporting an applied write as a failure.
+        call = ToolCall(name=action.tool, args=dict(action.args), call_id=action.action_id)
         tool = get(action.tool)
         args = tool.args_model(**action.args)
-        result = ToolResult(call_id=call.call_id, name=call.name, ok=False, output=None)
+        result = ToolResult(
+            call_id=call.call_id,
+            name=call.name,
+            ok=False,
+            output=None,
+            approved_action_id=action.action_id,
+        )
         try:
             result.output = await tool(self._ctx, args)
             result.ok = True

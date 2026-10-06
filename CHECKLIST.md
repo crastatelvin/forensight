@@ -473,7 +473,7 @@ MinIO, a real worker — not by any test:
       modal, a popover with focus trapping. At that point shadcn's Radix primitive
       is cheaper than hand-rolling focus management, and this decision should flip.
 - [x] P7.B2 Auth flows + role dashboards (Admin/Officer/Expert/Reviewer)
-- [~] P7.B3 Agent console: streaming tokens, tool-call cards, citation chips, HITL buttons
+- [x] P7.B3 Agent console: streaming tokens, tool-call cards, citation chips, HITL buttons
       Verified live end to end against `qwen2.5:3b`. Observed run: the agent called
       `get_case`, then `run_analysis`, then **declined** — "no analyzer results
       exist for this case yet" — because the queued analysis had not landed when it
@@ -486,9 +486,9 @@ MinIO, a real worker — not by any test:
       HttpOnly. Tool calls render with their `args_hash` and `result_hash`; claims
       render with citation chips carrying the analyzer, the score against its own
       threshold, and the evidence it came from. **The HITL approve/reject round trip
-      has not yet been driven from the browser** — the backend covers it in
-      `test_agent_core.py`, but a mid-run reconnect after approving is exactly the
-      path where events could be lost, and that is unverified.
+      has now been driven from the browser, after a reload: the gate reappeared on
+      the parked run, showed the exact arguments, and approving returned in 37ms
+      with the finding on the case (`findings 0 -> 1`).
 - [x] P7.B4 Evidence viewer: image/audio/video/text + metadata + side-by-side + ELA overlay
 - [ ] P7.B5 Dashboards (Recharts) + MapLibre GL geospatial map
 - [x] P7.B6 Dark/light CSS vars; WCAG 2.1 AA (keyboard/ARIA/focus/contrast)
@@ -578,6 +578,27 @@ UI always has.
   That makes the agent's central contract — decline rather than assert what cannot
   be cited — unverifiable by any client, and a UI that renders the prose without
   the sources quietly undoes it. `_run_payload` now carries all four lists.
+- **Approving in the browser hung on "Applying…" forever.** `POST /runs/{id}/approve`
+  applied the action *and* ran the rest of the agent loop inline, so the click took
+  as long as a model run and the button sat disabled the whole time. Split into
+  `approve_only`/`reject_only` (apply, checkpoint, return) with the stream
+  continuing the run: **37ms** now, and the approved write has demonstrably landed
+  before the response — approving is the irreversible half.
+- **The approve/reject buttons only existed on the live panel**, so an action parked
+  for approval became permanently unactionable the moment the operator reloaded. The
+  run waited forever for a person who could no longer see the question. The gate is
+  now one component used by both the live console and the run history.
+- **An approved-and-applied write was reported as `failed`.** The parked
+  `ToolCall`, the `PendingAction.action_id` and the call re-executed on approval
+  were three unrelated random ids, so nothing could join them and the audit display
+  had no result to find. One identity now: `action_id` *is* the call id, and
+  `ToolResult.approved_action_id` records who authorised it — read from the result,
+  not from the pending action, because that is cleared as soon as the run continues.
+- **A parked action displayed as "failed".** `ok` was joined from the result, and a
+  parked call has no result, so waiting rendered as failure. Tool calls are now
+  three-state — `ok` / `failed` / `pending` — and "pending" says "awaiting human
+  approval; not run yet". Labelling a waiting action as a failure is a false
+  statement about the audit trail.
 - **No endpoint listed a case's agent runs**, so the console rendered "No run yet"
   on every fresh page load — the agent's report, its citations and its tool-call
   audit all vanished on reload. A run is a durable record; for a forensic tool,

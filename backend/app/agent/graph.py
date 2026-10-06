@@ -228,7 +228,24 @@ class AgentGraph:
         return GraphOutcome(state=state, run=self._run)
 
     async def approve(self, state: AgentState, *, action_id: str) -> GraphOutcome:
-        """Apply a pending action the human approved (T5.3)."""
+        """Apply a pending action the human approved, then continue (T5.3)."""
+        await self.approve_only(state, action_id=action_id)
+        return await self.run_until_pause(state)
+
+    async def approve_only(self, state: AgentState, *, action_id: str) -> None:
+        """Apply the approved action and checkpoint. Does not continue the run.
+
+        Split out of `approve` for the same reason `begin` was split out of `start`:
+        `POST /runs/{id}/approve` must return as soon as the decision is recorded,
+        or the UI sits on "Applying…" for the length of a whole model run with no
+        feedback and no stream to watch. The SSE stream then continues from the
+        checkpoint this writes.
+
+        The action *is* applied here rather than being deferred, because approving
+        is the irreversible half: the write has happened by the time the human is
+        told it did, and the run continuing afterwards must not be able to un-apply
+        it or run it twice.
+        """
         pending = state.pending
         if pending is None:
             raise ValueError("no action is awaiting approval")
@@ -267,10 +284,30 @@ class AgentGraph:
                 "name": pending.tool,
             }
         )
-        return await self.run_until_pause(state)
+        await self._checkpoint(state)
+        await update_run(
+            self._session,
+            self._run,
+            status=state.status.value,
+            step=state.step.value,
+        )
+        await self._session.commit()
 
     async def reject(self, state: AgentState, *, action_id: str, reason: str = "") -> GraphOutcome:
-        """Discard a pending action (T5.3). The refusal is recorded, not lost."""
+        """Discard a pending action, then continue (T5.3)."""
+        await self.reject_only(state, action_id=action_id, reason=reason)
+        return await self.run_until_pause(state)
+
+    async def reject_only(self, state: AgentState, *, action_id: str, reason: str = "") -> None:
+        """Discard the pending action and checkpoint. Does not continue the run.
+
+        Split for the same reason as `approve_only`: the decision must be recorded
+        and answered immediately, with the remaining model work left to the stream.
+
+        The refusal is recorded as a system message rather than dropped, so the
+        model can see that a human considered the action and said no. Silently
+        discarding it would let the agent simply try the same thing again.
+        """
         pending = state.pending
         if pending is None:
             raise ValueError("no action is awaiting approval")
@@ -286,7 +323,14 @@ class AgentGraph:
         )
         state.step = Step.REFLECTOR
         state.status = RunStatus.RUNNING
-        return await self.run_until_pause(state)
+        await self._checkpoint(state)
+        await update_run(
+            self._session,
+            self._run,
+            status=state.status.value,
+            step=state.step.value,
+        )
+        await self._session.commit()
 
     # --- steps ---
 

@@ -163,6 +163,15 @@ class ToolResult:
     output: Any
     result_hash: str = ""
     error: str = ""
+    #: The human decision that authorised this call, when it needed one.
+    #:
+    #: Recorded on the result rather than inferred later because after the run
+    #: continues there is nothing left to infer it *from* -- the pending action is
+    #: cleared, and the run's status only says where it ended up. A tool call that
+    #: was applied by human approval and one that was applied directly are
+    #: otherwise indistinguishable in the audit, which is the single distinction the
+    #: HITL gate exists to make.
+    approved_action_id: str = ""
 
     def compute_hash(self) -> str:
         self.result_hash = hashlib.sha256(
@@ -247,6 +256,7 @@ class AgentState:
                     "output": r.output,
                     "result_hash": r.result_hash,
                     "error": r.error,
+                    "approved_action_id": r.approved_action_id,
                 }
                 for r in self.tool_results
             ],
@@ -295,7 +305,23 @@ class AgentState:
                 for c in data.get("claims", [])
             ],
             tool_calls=[ToolCall(**t) for t in data.get("tool_calls", [])],
-            tool_results=[ToolResult(**r) for r in data.get("tool_results", [])],
+            tool_results=[
+                # `approved_action_id` defaults, so a checkpoint written before the
+                # field existed still loads — an audit field is not worth making old
+                # checkpoints unreadable.
+                ToolResult(
+                    **{
+                        "call_id": r["call_id"],
+                        "name": r["name"],
+                        "ok": r["ok"],
+                        "output": r.get("output"),
+                        "result_hash": r.get("result_hash", ""),
+                        "error": r.get("error", ""),
+                        "approved_action_id": r.get("approved_action_id", ""),
+                    }
+                )
+                for r in data.get("tool_results", [])
+            ],
             pending=pending,
             report=data.get("report", ""),
             refusal=data.get("refusal", ""),
