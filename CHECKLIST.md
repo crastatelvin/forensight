@@ -161,13 +161,42 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 - [x] T5.7 Checkpoint resume after a simulated process kill
 - [x] T5.8 run_analysis reuses cached result (ties to P4)
 - [x] T5.9 Insufficient-evidence path: agent declines, no fabrication
+- [x] T5.10 Live run against a real provider
+      `tests/test_agent_live.py`, skipped unless `FORENSIGHT_LLM_LIVE=1`. Every other
+      agent test drives `ScriptedModel`, which proves the graph *handles* tool calls;
+      this proves a model *makes* them. Covers both bugs above: the wire format, and
+      the tool result actually being legible to the model.
 **Exit**
 - [x] P5.E agent plans, cites provenance, respects HITL; memory scoped and resumable;
-      provider-agnostic. Verified end-to-end against a live Ollama model: the graph
-      ran to a recorded refusal rather than an unsourced report.
-      [!] Caveat: a 3B model did not reliably drive the tool-call loop — the tool
-      path is proven by tests with a scripted model, not by the live 3B run.
-      Expect to need a >=7B model (or a smaller tool set) for reliable tool use.
+      provider-agnostic. Verified end-to-end against a live model: the graph ran to a recorded
+      refusal rather than an unsourced report.
+      [x] Tool-loop gap CLOSED. It was never a model-size problem — `qwen2.5:3b`
+      drives the loop fine. Two real bugs, neither of which raised:
+      1. **Tools were sent in the wrong wire format.** `tool_catalog()` emits flat
+         entries; the OpenAI `/chat/completions` API needs
+         `{"type":"function","function":{...}}`. Flat entries are accepted without
+         error and *silently ignored* — the model is never told the tools exist, so
+         it answers in prose. Indistinguishable from "the 3B can't use tools".
+         Confirmed live: flat → `finish=stop, tool_calls=0`; wrapped →
+         `finish=tool_calls`. Fixed by `to_model_tools()` plus normalisation in
+         `OpenAICompatModel.complete` so no caller can reintroduce it.
+      2. **Tool results never reached the model.** Results were appended as a user
+         message with the payload in a `result` key that the message builder never
+         read, so the model received the literal string
+         `"Tool search_evidence returned:"` and nothing else. It had no way to learn
+         anything and repeated the same call until `MAX_TOOL_CALLS` stopped it — 20
+         identical calls observed live. The audit rows were correct throughout, so
+         every scripted test passed. Fixed to emit the assistant `tool_calls` turn
+         plus a `role: "tool"` turn with `tool_call_id`, matching the API.
+      Live proof: `tests/test_agent_live.py` (`FORENSIGHT_LLM_LIVE=1`) runs the
+      graph against a real provider and asserts the model itself made the call and
+      produced a *sourced* report — citation score 0.420, threshold 0.010, tier A,
+      evidence and result ids intact. Result: `completed`, 1 tool call.
+      [!] The 3B model's prose is still weak — it expanded ELA as "Evasion
+      Learning Algorithm" (it is Error Level Analysis). The citation and score are
+      correct because they are rebuilt from the stored row, not from model text,
+      which is the point of the provenance guard. A >=7B model is still worth using
+      for report readability, but tool use is no longer the blocker.
 
 ---
 
@@ -267,8 +296,8 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 **Exit**
 - [ ] P6.E three analyzers deterministic golden tests pass; agent uses end-to-end; no-simulation proven
       Two of three analyzers built (image forensics, object detection). Face
-      comparison remains. The `[!]` 3B tool-calling caveat from P5 is also still
-      open. Not earned.
+      comparison remains. The agent side is now met: a live 3B model drives the tool
+      loop and produces a sourced report (T5.10). Still not earned.
 
 ---
 

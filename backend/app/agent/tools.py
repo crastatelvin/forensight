@@ -236,7 +236,11 @@ def define_tool(
 
 
 def tool_catalog() -> list[dict[str, Any]]:
-    """Machine-readable tool list, so the model and the UI see the same schema."""
+    """Registry view of the tools: name, description, schema, approval flag.
+
+    This is what `/agent/tools` serves to the UI and what tests assert against.
+    It is *not* what goes on the wire to a model — see `to_model_tools`.
+    """
     out: list[dict[str, Any]] = []
     for name in sorted(_TOOLS):
         tool = _TOOLS[name]
@@ -249,3 +253,32 @@ def tool_catalog() -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def to_model_tools(catalog: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Convert the catalog into the OpenAI `tools` wire format.
+
+    Each entry must be `{"type": "function", "function": {...}}`. Sending the
+    catalog's flat entries instead does **not** error: the endpoint accepts the
+    request, the model is simply never told the tools exist, and it answers in
+    prose. That failure is invisible in tests -- a scripted model returns
+    whatever it was told to return regardless -- and it looks exactly like "the
+    model is too small to use tools". `test_model_tool_payload_is_openai_shaped`
+    pins the shape so it cannot regress.
+
+    `state_changing` is deliberately dropped: it is an internal routing fact, not
+    something a model should be reasoning about, and the tool body enforces it
+    regardless of what the model says.
+    """
+    entries = tool_catalog() if catalog is None else catalog
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": entry["name"],
+                "description": entry["description"],
+                "parameters": entry["parameters"],
+            },
+        }
+        for entry in entries
+    ]

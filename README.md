@@ -7,7 +7,8 @@ memory).
 > Build status: **Phase 5 complete; Phase 6 begun** (see `CHECKLIST.md`).
 > The agent core is real: it plans, calls typed and audited tools, refuses to
 > assert anything it cannot cite to an analyzer result, and pauses for human
-> approval before changing state.
+> approval before changing state. A live model (`qwen2.5:3b`) drives the tool loop
+> end to end and produces a sourced report — see `CHECKLIST.md` T5.10.
 >
 > Four analyzers ship. `byte-entropy` is a deterministic reference module.
 > `image-ela` and `image-exif` are the first real forensic techniques — ELA scores

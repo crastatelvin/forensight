@@ -88,6 +88,17 @@ jobs:
           MINIO_ROOT_USER: forensight
           MINIO_ROOT_PASSWORD: forensight
         ports: ["9000:9000"]
+      # T5.10: a real model, so the agent's tool loop is actually exercised.
+      # Every other agent test drives a scripted model, which cannot catch a tool
+      # that was never delivered to the provider.
+      ollama:
+        image: ollama/ollama:latest
+        ports: ["11434:11434"]
+        options: >-
+          --health-cmd "ollama list"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 20
     defaults:
       run:
         working-directory: backend
@@ -127,6 +138,11 @@ jobs:
       - name: Fetch pinned model weights
         run: ./scripts/fetch_models.sh .models
 
+      # P6.B2 weights are 257 MB and only needed by the detection tests, so they
+      # live outside the wheel cache that `uv sync` populates.
+      - name: Re-sync dependencies after fetching weights
+        run: uv sync
+
       # T2.6 + T3.3 + P6: the live-WORM, full-text-search and detection tests are
       # skipped unless these are set, which is why they never ran before.
       - name: Test (pytest, live Postgres + MinIO)
@@ -141,6 +157,33 @@ jobs:
           FORENSIGHT_MINIO_LIVE: "1"
           FORENSIGHT_YOLO_WEIGHTS: .models/yolov4.onnx
         run: uv run pytest -q
+
+      # T5.10: the agent against a real model. This is the only place a live
+      # provider is exercised, and it is what caught two silent bugs where tools
+      # were never actually delivered to the model. Runs against the Ollama
+      # service above; skip it and this silently stops proving anything about
+      # tool use.
+      - name: Pull the agent model
+        run: |
+          # 3B is deliberate: it is the model that exposed the wire-format bug.
+          # A larger model would have masked it.
+          ollama pull qwen2.5:3b
+          ollama pull bge-m3
+
+      - name: Test agent against a live model
+        env:
+          SECRET_KEY: ci-only-not-a-real-secret-0123456789
+          DATABASE_URL: postgresql+asyncpg://forensight:forensight@localhost:5432/forensight
+          REDIS_URL: redis://localhost:6379/0
+          MINIO_ENDPOINT: localhost:9000
+          MINIO_ACCESS_KEY: forensight
+          MINIO_SECRET_KEY: forensight
+          FORENSIGHT_LLM_LIVE: "1"
+          LLM_PROVIDER: ollama
+          LLM_BASE_URL: http://localhost:11434/v1
+          LLM_MODEL: qwen2.5:3b
+          LLM_EMBED_MODEL: bge-m3
+        run: uv run pytest tests/test_agent_live.py -q
 
   security-scan:
     name: Secrets & SAST (repo-wide)

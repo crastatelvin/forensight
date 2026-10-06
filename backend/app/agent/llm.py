@@ -115,7 +115,22 @@ class OpenAICompatModel:
             "stream": False,
         }
         if tools:
-            payload["tools"] = tools
+            # Normalise to the OpenAI wire format here rather than trusting the
+            # caller. A flat catalog is accepted by the endpoint without error
+            # and simply ignored, so the model is never told the tools exist.
+            payload["tools"] = [
+                entry
+                if entry.get("type") == "function" and "function" in entry
+                else {
+                    "type": "function",
+                    "function": {
+                        "name": entry["name"],
+                        "description": entry.get("description", ""),
+                        "parameters": entry.get("parameters", {"type": "object", "properties": {}}),
+                    },
+                }
+                for entry in tools
+            ]
             payload["tool_choice"] = "auto"
 
         try:

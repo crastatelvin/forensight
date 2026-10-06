@@ -23,6 +23,7 @@ re-calls the same tool forever is a denial-of-service against our own database.
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -40,7 +41,7 @@ from app.agent.repository import (
     write_memory,
 )
 from app.agent.security import build_system_prompt, wrap_untrusted
-from app.agent.tools import NeedsApproval, ToolRunner, tool_catalog
+from app.agent.tools import NeedsApproval, ToolRunner, to_model_tools
 from app.agent.types import (
     TERMINAL_STEPS,
     AgentState,
@@ -68,6 +69,11 @@ MAX_TOOL_CALLS = 20
 #: Where the agent's own reply must carry its citations. JSON keeps parsing
 #: unambiguous; a prose format would put the honesty guarantee at the mercy of
 # regex.
+#: Tool output longer than this is truncated before it reaches the model. A tool
+#: that returns a whole image's worth of base64 would otherwise blow the context
+#: window, and the run would fail for a reason that has nothing to do with the case.
+MAX_TOOL_OUTPUT_CHARS = 4000
+
 _RESPONSE_CONTRACT = """\
 Respond with JSON only, no prose, in exactly this shape:
 {"claims": [{"text": "<one specific, sourced statement>",
@@ -89,6 +95,44 @@ class GraphOutcome:
     @property
     def awaiting_approval(self) -> bool:
         return self.state.status is RunStatus.AWAITING_APPROVAL
+
+
+class _Failed:
+    """Minimal stand-in so `_render_tool_output` can render a tool that never ran."""
+
+    def __init__(self, error: str) -> None:
+        self.ok = False
+        self.output = None
+        self.error = error
+
+
+def _failed(error: str) -> _Failed:
+    return _Failed(error)
+
+
+def canonical_args(args: dict[str, Any]) -> str:
+    """Serialise tool arguments the way the API expects: one JSON string.
+
+    Not `str(dict)` — Python's repr uses single quotes and `True`, which is not
+    JSON. A model asked to echo that back produces malformed arguments, and the
+    failure looks like the model being unable to call tools.
+    """
+    return json.dumps(args, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _render_tool_output(result: Any) -> str:
+    """What the model sees as the tool's result.
+
+    Must be a string: the chat API rejects a non-string `content` on a tool turn.
+    JSON is used so structure survives, and an error is surfaced as one rather
+    than as an empty success — a tool that failed has to be legible to the model,
+    or it retries the same call forever.
+    """
+    payload = result.output if result.ok else {"error": result.error}
+    try:
+        return json.dumps(payload, default=str)[:MAX_TOOL_OUTPUT_CHARS]
+    except (TypeError, ValueError):
+        return str(payload)[:MAX_TOOL_OUTPUT_CHARS]
 
 
 class AgentGraph:
@@ -243,10 +287,24 @@ class AgentGraph:
 
     async def _reflector(self, state: AgentState) -> None:
         """Decide next action: run a tool, or produce a response."""
-        tools = tool_catalog()
+        # OpenAI wire format, not the flat catalog. Sending the catalog directly
+        # is silently ignored by the provider, so the model never sees the tools.
+        #
+        # Every message is rebuilt from the raw dicts rather than filtered from
+        # state.messages: a `tool` turn must carry its `tool_call_id`, and a turn
+        # holding tool_calls must carry them too. Selecting only role+content
+        # dropped exactly the fields that let the model match a result to the call
+        # it made.
         response = self._model.complete(
-            [ChatMessage(role=m["role"], content=m["content"]) for m in state.messages],
-            tools=tools,
+            [
+                ChatMessage(
+                    role=str(m["role"]),
+                    content=str(m.get("content", "")),
+                    tool_calls=list(m.get("tool_calls", [])),
+                )
+                for m in state.messages
+            ],
+            tools=to_model_tools(),
         )
 
         if response.tool_calls:
@@ -254,7 +312,26 @@ class AgentGraph:
             name = str(call.get("function", {}).get("name", ""))
             raw_args = call.get("function", {}).get("arguments", "{}")
             args = parse_json_block(raw_args) if isinstance(raw_args, str) else raw_args
-            await self._invoke(state, name, args or {})
+            if not isinstance(args, dict):
+                # A model that returned a JSON list or scalar for its arguments.
+                # Refusing here is better than passing it to the pydantic model,
+                # where it would surface as a validation error with no context.
+                state.messages.append(
+                    {
+                        "role": "tool",
+                        "content": _render_tool_output(
+                            _failed(
+                                f"arguments for {name!r} were not a JSON object: "
+                                f"{str(raw_args)[:200]}"
+                            )
+                        ),
+                        "tool_call_id": str(call.get("id", "")),
+                        "name": name,
+                    }
+                )
+                await self._enter(state, Step.REFLECTOR)
+                return
+            await self._invoke(state, name, args, call_id=str(call.get("id", "")))
             return
 
         parsed = parse_json_block(response.content) or {}
@@ -272,7 +349,9 @@ class AgentGraph:
         """
         await self._enter(state, Step.REFLECTOR)
 
-    async def _invoke(self, state: AgentState, name: str, args: dict[str, Any]) -> None:
+    async def _invoke(
+        self, state: AgentState, name: str, args: dict[str, Any], *, call_id: str = ""
+    ) -> None:
         if len(state.tool_calls) >= MAX_TOOL_CALLS:
             state.step = Step.INSUFFICIENT_EVIDENCE
             state.refusal = (
@@ -281,7 +360,14 @@ class AgentGraph:
             return
 
         runner = self._runner()
-        call = ToolCall(name=name, args=args)
+        # Reuse the provider's call id when it sent one: the model correlates the
+        # result it receives with the call it made by that id, so minting our own
+        # here would break the pairing on the next turn.
+        call = (
+            ToolCall(name=name, args=args, call_id=call_id)
+            if call_id
+            else ToolCall(name=name, args=args)
+        )
         state.tool_calls.append(call)
         await self._enter(state, Step.TOOL_EXEC)
 
@@ -294,11 +380,35 @@ class AgentGraph:
             return
 
         state.tool_results.append(result)
+        # The result must go back to the model in the shape the chat API expects:
+        # an assistant turn carrying the tool_calls, then a `tool` turn carrying the
+        # output and the originating call id.
+        #
+        # This was previously appended as a user message with the payload in a
+        # `result` key. `_reflector` only reads `role` and `content`, so the model
+        # received the literal string "Tool search_evidence returned:" and nothing
+        # else — no output, no error. It had no way to learn anything from the call
+        # and simply repeated it until the loop bound stopped it. The audit rows
+        # were correct the whole time, which is why the scripted tests passed.
         state.messages.append(
             {
-                "role": "user",
-                "content": f"Tool {name} returned:",
-                "result": result.output if result.ok else {"error": result.error},
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": call.call_id,
+                        "type": "function",
+                        "function": {"name": name, "arguments": canonical_args(args)},
+                    }
+                ],
+            }
+        )
+        state.messages.append(
+            {
+                "role": "tool",
+                "content": _render_tool_output(result),
+                "tool_call_id": call.call_id,
+                "name": name,
             }
         )
         # Remember what happened so a later turn can recall it (P5.B4).

@@ -306,6 +306,29 @@ curl localhost:8000/agent/runs/$RUN/checkpoints
 curl -N localhost:8000/agent/runs/$RUN/stream # SSE
 ```
 
+#### Testing the agent against a real model
+
+Every other agent test drives a scripted model, which proves the graph *handles*
+tool calls but not that a model *makes* them. That gap hid two real bugs, so it
+has its own test:
+
+```bash
+FORENSIGHT_LLM_LIVE=1 pytest tests/test_agent_live.py
+```
+
+It needs a reachable OpenAI-compatible provider and live Postgres. Defaults to
+`http://localhost:11434/v1` with `qwen2.5:3b`; set `LLM_BASE_URL`, `LLM_MODEL`
+and `LLM_API_KEY` to point at a cloud provider instead.
+
+The model must be told the tools exist. Two format requirements, both of which
+fail silently rather than raising, are handled in `app/agent/tools.py`
+(`to_model_tools`) and `app/agent/llm.py`:
+
+- tools go on the wire as `{"type": "function", "function": {...}}`; a flat
+  catalog is accepted and ignored
+- a tool result goes back as a `role: "tool"` turn carrying `tool_call_id`, not
+  as prose in a user turn
+
 ### Human approval
 
 A run that calls a state-changing tool stops with `status=awaiting_approval`
