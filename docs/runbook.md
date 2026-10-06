@@ -219,12 +219,40 @@ Three modules ship today. `byte-entropy` is the Phase 4 reference module;
 | `byte-entropy` | B | Shannon entropy in bits/byte | nothing |
 | `image-ela` | A | fraction of pixels with anomalously high error level | JPEG input |
 | `image-exif` | B | fraction of metadata indicators that fired | JPEG input |
+| `object-detect` | A | highest confidence among detections of the watchlist classes | pinned weights |
 
 ```bash
 curl -X POST localhost:8000/cases/$CASE/analyses \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"module":"image-ela","evidence_id":"'$EVID'"}'
 ```
+
+### Model-backed analyzers
+
+`object-detect` loads pinned weights from the MinIO `models` bucket under
+`models/<module>/<version>/<file>`. The executor verifies the SHA-256 against the
+value in the module's `ModuleSpec` **before** load and passes the verified bytes
+to the module; a mismatch fails the job rather than falling back to a different
+artifact. Upload an artifact once with `ModelStore.put_model`.
+
+To get the weights on a developer machine or in CI:
+
+```bash
+backend/scripts/fetch_models.sh          # fetches to backend/.models, verifies digest
+export FORENSIGHT_YOLO_WEIGHTS=.models/yolov4.onnx
+pytest tests/test_object_detect.py       # otherwise these tests skip
+```
+
+The weights are 257 MB and are never committed. `FORENSIGHT_YOLO_WEIGHTS` also
+bypasses MinIO entirely for local testing; in a deployed stack leave it unset and
+the artifact comes from the bucket.
+
+**Weapon detection does not work.** YOLOv4 is trained on COCO's 80 classes and
+COCO contains no firearm, rifle, or pistol class, so `object-detect` cannot find
+the objects this platform most often needs to find. The default watchlist is
+`knife` and `scissors` — the only edged objects COCO knows — and `0.0` means "no
+knife and no scissors", not "no weapon". Closing this needs a model trained on
+weapons, not a threshold change.
 
 ### Adding an analyzer
 
@@ -251,6 +279,14 @@ Two rules the image modules exist to demonstrate:
   not negative. The job lands in the `not_applicable` terminal state and writes no
   result row, so a report can never present "could not measure" as "measured
   nothing found".
+
+  The converse also holds, and it is easy to get backwards: for `object-detect`, a
+  0.0 *is* a real measurement. The model ran on valid input and looked. Judge each
+  technique on whether the question was well-posed, not on whether the number is
+  zero.
+- **A module that declares `model_key` must accept `model_bytes`** and score only
+  what it is handed. Fetching weights yourself means the pinned digest was checked
+  on an artifact you then ignored.
 
 ## Agent
 

@@ -9,13 +9,15 @@ memory).
 > assert anything it cannot cite to an analyzer result, and pauses for human
 > approval before changing state.
 >
-> Three analyzers ship. `byte-entropy` is a deterministic reference module.
+> Four analyzers ship. `byte-entropy` is a deterministic reference module.
 > `image-ela` and `image-exif` are the first real forensic techniques — ELA scores
 > compression anomalies against the image's own error baseline, EXIF scores
-> metadata-integrity indicators. **No ML model ships yet**: face comparison (P6.B1)
-> and object detection (P6.B2) are not built, so the planned Tier-A ML tier is
-> still ahead, as are the Next.js frontend (`frontend/` is a placeholder), signed
-> reports, and ops hardening.
+> metadata-integrity indicators. `object-detect` runs pinned YOLOv4 weights on
+> `onnxruntime`, digest-verified before load. **Face comparison (P6.B1) is not
+> built**, and **the object detector cannot find weapons**: COCO has no firearm
+> class, so its watchlist is `knife`/`scissors` and a nil result says nothing about
+> guns. The Next.js frontend (`frontend/` is a placeholder), signed reports, and
+> ops hardening are also still ahead.
 
 ## Monorepo layout
 
@@ -23,7 +25,7 @@ memory).
 |---|---|
 | `backend/` | FastAPI API gateway (auth, REST, WebSocket, OpenAPI) |
 | `backend/app/agent/` | Autonomous agent: graph, tools, provenance guard, memory, HITL |
-| `backend/workers/` | Analysis workers (Dramatiq; pipeline done in P4, ML analyzers in P6) |
+| `backend/workers/` | Analysis workers (Dramatiq; four analyzers registered, see `docs/runbook.md`) |
 | `frontend/` | Next.js (App Router, TypeScript, Tailwind, shadcn/ui) |
 | `infra/` | Docker Compose, deployment, observability configs |
 | `docs/` | Architecture, runbooks, threat model, admin guide |
@@ -117,6 +119,28 @@ Two independent layers, both required:
   reviewer see all (reviewer remains read-only). Knowing an id is not
   authorization, so a case the caller cannot see is reported as `404`, not
   `403` — a 403 would confirm the id exists.
+
+## Analyzers
+
+| Module | Tier | Score means |
+|---|---|---|
+| `byte-entropy` | B | Shannon entropy, bits/byte |
+| `image-ela` | A | fraction of pixels with anomalously high error levels |
+| `image-exif` | B | fraction of metadata indicators that fired |
+| `object-detect` | A | highest confidence among watchlist detections |
+
+All run on CPU; no GPU module has been written, so nothing depends on one.
+
+```bash
+backend/scripts/fetch_models.sh    # pinned weights, digest-verified (257 MB, not committed)
+```
+
+Every result carries its threshold, model version, tier and disclaimer. A
+technique that does not apply to an input (ELA on a PNG, detection without
+weights) is recorded as `not_applicable` with no result row, so "could not
+measure" is never rendered as "measured zero". Each module documents its own
+limitations in the result payload — notably that `object-detect` cannot detect
+firearms, because COCO has no firearm class.
 
 ## Honesty clause
 

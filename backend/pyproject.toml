@@ -26,6 +26,8 @@ dependencies = [
     "dramatiq[redis]==1.17.0",
     "pgvector==0.4.1",
     "pillow==11.1.0",
+    "onnxruntime==1.20.1",
+    "numpy<3",
 ]
 
 [dependency-groups]

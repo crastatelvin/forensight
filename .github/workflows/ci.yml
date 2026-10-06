@@ -121,8 +121,14 @@ jobs:
           uv run alembic downgrade base
           uv run alembic upgrade head
 
-      # T2.6 + T3.3: the live-WORM and full-text-search tests are skipped unless
-      # these are set, which is why they never ran before.
+      # P6.B2: the detection tests skip without the pinned weights, so a green CI
+      # would mean nothing about object detection. Fetch and digest-verify them;
+      # the script fails the job if the download does not match the pinned SHA-256.
+      - name: Fetch pinned model weights
+        run: ./scripts/fetch_models.sh .models
+
+      # T2.6 + T3.3 + P6: the live-WORM, full-text-search and detection tests are
+      # skipped unless these are set, which is why they never ran before.
       - name: Test (pytest, live Postgres + MinIO)
         env:
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
@@ -133,6 +139,7 @@ jobs:
           MINIO_SECRET_KEY: forensight
           FORENSIGHT_PG_LIVE: "1"
           FORENSIGHT_MINIO_LIVE: "1"
+          FORENSIGHT_YOLO_WEIGHTS: .models/yolov4.onnx
         run: uv run pytest -q
 
   security-scan:

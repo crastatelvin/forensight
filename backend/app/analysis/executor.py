@@ -71,19 +71,23 @@ async def execute_job(
         # is never partially executed (T4.4).
         registry.check_capability(module, gpu_available=gpu_available)
 
-        # Model checksum is verified before load (T4.B5/T4.3).
+        # Model checksum is verified before load (T4.B5/T4.3), and the verified
+        # bytes are handed to the module. Passing them matters: verifying and then
+        # discarding them would let a module fetch its own weights by a different
+        # route, so the check would attest to an artifact the module never used.
+        model_bytes: bytes | None = None
         if module.spec.model_key and module.spec.model_sha256:
             if model_store is None:
                 raise ModelChecksumError(
                     f"module {job.module!r} needs a verified model but no store " f"was provided"
                 )
-            model_store.load_verified(
+            model_bytes = model_store.load_verified(
                 key=module.spec.model_key, expected_sha256=module.spec.model_sha256
             )
 
         data = await _fetch_evidence(session, job, settings=settings, reader=evidence_reader)
         await mark_running(session, job)
-        payload = await _invoke(module, data, job.params)
+        payload = await _invoke(module, data, job.params, model_bytes=model_bytes)
         # Re-wrap through build_result so the stored payload always carries the
         # mandatory fields even if a module returned a partial dict (P4.B6).
         payload = build_result(
@@ -108,15 +112,28 @@ async def execute_job(
     return job
 
 
-async def _invoke(module: Any, data: bytes, params: dict[str, Any]) -> dict[str, Any]:
+async def _invoke(
+    module: Any,
+    data: bytes,
+    params: dict[str, Any],
+    *,
+    model_bytes: bytes | None = None,
+) -> dict[str, Any]:
     """Call a module, awaiting it if it is a coroutine function.
 
     Modules are declared `def __call__` but may be written `async def`; this
     keeps both working without forcing every author to care.
+
+    `model_bytes` is passed only to modules whose `__call__` declares the
+    keyword, so the two-argument signature stays valid and existing modules
+    (byte-entropy, image-ela, image-exif) need no change. A module that declares
+    `model_key` should accept it: that is the whole guarantee that it is scored
+    against the artifact whose checksum was pinned.
     """
     import inspect
 
-    outcome = module(data, params)
+    takes_model = "model_bytes" in inspect.signature(module.__call__).parameters
+    outcome = module(data, params, model_bytes=model_bytes) if takes_model else module(data, params)
     if inspect.isawaitable(outcome):
         outcome = await outcome
     if not isinstance(outcome, dict) or "score" not in outcome:

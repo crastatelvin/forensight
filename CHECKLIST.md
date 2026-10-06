@@ -174,7 +174,41 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 ## Phase 6 — First three real analyzers (proof of "no simulation")
 **Build**
 - [ ] P6.B1 Face comparison — InsightFace/ArcFace embeddings + cosine + calibrated threshold
-- [ ] P6.B2 Object/weapon detection — Ultralytics YOLO pinned weights
+- [~] P6.B2 Object detection — YOLOv4-tiny, pinned ONNX weights. **No weapon
+      detection, and this is a real limitation rather than a tuning gap.**
+      COCO has no firearm/rifle/pistol class at all, so this model cannot detect
+      the objects this platform most often needs to find. The default watchlist is
+      therefore `knife` + `scissors`, the only edged objects COCO knows, and both
+      the disclaimer and `known_limitations` state the gap. Weapon detection needs
+      a model trained on weapons.
+      - **Deviation: YOLOv4-tiny from the ONNX model zoo, not Ultralytics YOLO.**
+        Runs on `onnxruntime` (no torch, no ultralytics dependency) and pins the
+        official export by digest. The checklist named Ultralytics; the ONNX export
+        of the same architecture is defensible and installs in seconds rather than
+        pulling torch.
+      - Weights are 257 MB, so `backend/scripts/fetch_models.sh` fetches and
+        **digest-verifies** them. CI runs it; a local checkout without them skips
+        the detection tests rather than failing.
+      - The decode is written out in the module because the output is *already*
+        sigmoid-activated. A second sigmoid is the easy mistake: it still returns
+        boxes in plausible places and just flattens every confidence toward 0.5.
+        Golden confidences are pinned, plus a regression test that feeds 0..255
+        input and asserts the decoder produces near-zero-area boxes — that mistake
+        does not raise, it returns ~160 confident detections with no geometry.
+      - `intra_op_num_threads=1` is a determinism requirement, not a performance
+        choice: multi-threaded reduction order otherwise moves boxes between runs.
+      - `0.0` from this module **is** a real measurement (the model looked and found
+      nothing), which is the opposite of ELA-on-a-PNG. `is_zero_meaningful` in the
+      payload says so, and points at the COCO gap.
+      - **Honest test limitation:** object detection cannot be verified against a
+        generated fixture. `make_photo_of_objects` draws a rectangle with two discs
+        and the detector correctly reports nothing, because a drawing is not a bus.
+        Tuning a threshold until a synthetic shape registered would be tuning the
+        test to pass. So one 137 KB photograph is committed with a pinned SHA-256
+        (`tests/assets/bus.jpg`, the canonical YOLO test image) and the test asserts
+        against what it actually produces: `person` 0.987, `person` 0.975,
+        `bus` 0.965. The negative control (a flat grey frame yields zero
+        detections) is still generated.
 - [~] P6.B3 Image forensics — ELA + EXIF done; **noise/PRNU not built**
       Two modules rather than one, because the module contract requires a single
       scalar score and ELA (compression anomaly) and EXIF (metadata indicators) do
@@ -202,12 +236,23 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
       which writes **no result row**, so "cannot measure" can never render as
       "measured zero". Exercised end-to-end (ELA on PNG) and on live Postgres.
       The face-specific case remains unbuilt pending P6.B1.
-- [ ] T6.3 YOLO detects expected labels with stable confidences
+- [x] T6.3 Detects expected labels with stable confidences
+      `person` 0.987 / `person` 0.975 / `bus` 0.965 on a digest-pinned photo,
+      asserted as golden values. Flat-grey negative control yields zero detections.
+      Regression test pins the decoder's behaviour on wrongly-scaled input.
 - [x] T6.4 Tampered fixture flagged; clean not flagged; EXIF extracted
       Clean 0.0; tampered 0.0505 against a 0.01 threshold; stripped metadata 1.0.
       Golden scores pinned. Two candidate EXIF indicators were written and
       removed for firing on ordinary photos — a threshold that flags clean
       evidence is worse than no threshold.
+- [x] T6.4b Verified model bytes reach the module
+      Found while writing P6.B2: the executor called `load_verified(...)` and
+      **threw the bytes away**, then invoked `module(data, params)`. A module
+      needing weights would have had to fetch its own by another route, so the
+      checksum check would attest to an artifact nothing used. Fixed by passing
+      the verified bytes as a keyword, with two tests: one asserts the module
+      receives exactly the bytes whose digest was pinned, one asserts a
+      pure-algorithm module still runs with `model_bytes=None`.
 - [x] T6.5 Same input twice -> identical result (idempotency hit)
       Same submission returns the same job with `attempts == 0`, asserted through
       the HTTP API, plus byte-identical fixture generation.
@@ -221,7 +266,9 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
       `build_result` injects these, so no module can emit a result without them.
 **Exit**
 - [ ] P6.E three analyzers deterministic golden tests pass; agent uses end-to-end; no-simulation proven
-      One of three analyzers built. Not earned.
+      Two of three analyzers built (image forensics, object detection). Face
+      comparison remains. The `[!]` 3B tool-calling caveat from P5 is also still
+      open. Not earned.
 
 ---
 

@@ -131,8 +131,21 @@ class AnalysisModule(Protocol):
 
     spec: ModuleSpec
 
-    def __call__(self, data: bytes, params: dict[str, Any]) -> dict[str, Any]:
-        """Return at least `score` (float) and `detail` (dict)."""
+    def __call__(
+        self,
+        data: bytes,
+        params: dict[str, Any],
+        *,
+        model_bytes: bytes | None = None,
+    ) -> dict[str, Any]:
+        """Return at least `score` (float) and `detail` (dict).
+
+        `model_bytes` is the checksum-verified artifact for modules that declare
+        a `model_key`, and is None otherwise. It is keyword-only with a default so
+        that a pure-algorithm module needs no knowledge of it, and so a module
+        which does need weights cannot quietly fetch its own on some other route
+        and bypass the pinned digest.
+        """
         ...
 
 

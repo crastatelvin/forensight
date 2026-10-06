@@ -1151,3 +1151,99 @@ async def test_same_image_twice_hits_the_idempotency_key(
     await client.post(f"/analyses/jobs/{first['id']}/run", headers=officer)
     results = (await client.get(f"/cases/{cid}/results", headers=officer)).json()
     assert len(results) == 1
+
+
+async def test_verified_model_bytes_reach_the_module(
+    client: AsyncClient, seed_users, fake_store, app, sessionmaker_fixture
+) -> None:
+    """P6: the checksum-verified artifact must be handed to the module.
+
+    Verifying a digest and then discarding the bytes would leave the guarantee
+    hollow: the module would have to fetch its own weights by some other route,
+    and the check would attest to an artifact nothing used. This asserts the
+    module receives exactly the bytes whose digest was pinned.
+    """
+    registry.reset()
+
+    received: dict[str, object] = {}
+
+    class _WeightsModule:
+        spec = ModuleSpec(
+            name="weights-user",
+            version="1.0.0",
+            tier=Tier.A,
+            threshold=0.5,
+            model_key="m/1/w",
+            model_sha256="deadbeef",
+        )
+
+        def __call__(self, data: bytes, params: dict, *, model_bytes: bytes | None = None) -> dict:
+            received["model_bytes"] = model_bytes
+            received["data"] = data
+            return build_result(self.spec, score=0.5, detail={})
+
+    registry.register(_WeightsModule())
+
+    from app.analysis.repository import get_job
+    from app.config import Settings
+
+    class _GoodStore:
+        def load_verified(self, *, key: str, expected_sha256: str) -> bytes:
+            received["key"] = key
+            received["expected_sha256"] = expected_sha256
+            return b"THE-VERIFIED-WEIGHTS"
+
+    settings = Settings(secret_key="s" * 30, minio_endpoint="")
+    officer = await _auth(client, seed_users["officer"])
+    cid, eid = await _case_with_evidence(client, officer, fake_store, "MW-1")
+    job_id = (
+        await client.post(
+            f"/cases/{cid}/analyses",
+            headers=officer,
+            json={"module": "weights-user", "evidence_id": eid},
+        )
+    ).json()["id"]
+
+    async with sessionmaker_fixture() as session:
+        job = await get_job(session, uuid.UUID(job_id))
+        assert job is not None
+        await execute_job(
+            session,
+            job,
+            settings=settings,
+            gpu_available=False,
+            model_store=_GoodStore(),
+        )
+        assert job.status == "done", job.error
+
+    assert received["model_bytes"] == b"THE-VERIFIED-WEIGHTS"
+    assert received["key"] == "m/1/w"
+    assert received["expected_sha256"] == "deadbeef"
+    assert received["data"] is not None
+
+
+async def test_module_without_weights_still_runs(
+    client: AsyncClient, seed_users, fake_store, app
+) -> None:
+    """A pure-algorithm module gets `model_bytes=None` and is unaffected.
+
+    Adding the keyword to the call site must not break the modules that have no
+    weights, or every existing analyzer would need editing for no reason.
+    """
+    registry.reset()
+    registry.register_all()
+
+    officer = await _auth(client, seed_users["officer"])
+    cid, eid = await _case_with_evidence(client, officer, fake_store, "MW-2")
+    job_id = (
+        await client.post(
+            f"/cases/{cid}/analyses",
+            headers=officer,
+            json={"module": "byte-entropy", "evidence_id": eid},
+        )
+    ).json()["id"]
+
+    ran = await client.post(f"/analyses/jobs/{job_id}/run", headers=officer)
+    assert ran.json()["status"] == "done", ran.text
+    results = (await client.get(f"/cases/{cid}/results", headers=officer)).json()
+    assert [r["module"] for r in results] == ["byte-entropy"]

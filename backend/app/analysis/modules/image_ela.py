@@ -199,7 +199,14 @@ class _ElaModule:
     def __init__(self) -> None:
         self.spec = spec
 
-    def __call__(self, data: bytes, params: dict[str, Any]) -> dict[str, Any]:
+    def __call__(
+        self,
+        data: bytes,
+        params: dict[str, Any],
+        *,
+        model_bytes: bytes | None = None,
+    ) -> dict[str, Any]:
+        # This module is a pure algorithm: no weights, so model_bytes is unused.
         return run(data, params)
 
 

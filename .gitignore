@@ -40,6 +40,10 @@ yarn-error.log*
 *.sqlite3
 data/
 models/
+# Model weights fetched by backend/scripts/fetch_models.sh (257 MB, digest-pinned).
+# Never commit these: the digest lives in the module's ModuleSpec, which is what
+# makes a committed weight file pointless and a large one a liability.
+backend/.models/
 *.pem
 *.key
 secrets/

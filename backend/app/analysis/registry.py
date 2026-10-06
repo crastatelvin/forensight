@@ -60,9 +60,9 @@ def register_all() -> None:
     tests do) must not explode on a duplicate name. `register()` stays strict
     for Phase 6 plugins, where a duplicate name is a real bug worth surfacing.
     """
-    from app.analysis.modules import entropy, image_ela, image_exif
+    from app.analysis.modules import entropy, image_ela, image_exif, object_detect
 
-    for module in (entropy.module, image_ela.module, image_exif.module):
+    for module in (entropy.module, image_ela.module, image_exif.module, object_detect.module):
         if not is_registered(module.spec.name):
             register(module)
 

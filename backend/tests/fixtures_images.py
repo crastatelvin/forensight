@@ -9,6 +9,14 @@ golden score is meaningful.
 The "tampered" fixture reproduces the canonical ELA-visible manipulation: a region
 re-encoded at a different quality than the rest of the image, giving it a
 different compression history. That is what ELA is built to surface.
+
+One exception to "generate, don't commit": `tests/assets/bus.jpg`, a 137 KB
+photograph pinned by SHA-256. Object detection cannot be tested against synthetic
+images — `make_photo_of_objects` draws a rectangle with two discs and the
+detector correctly reports nothing, because a drawing is not a bus. Tuning a
+threshold until a flat synthetic shape registered would be tuning the test to
+pass rather than the detector to work. Detection needs a photograph, so the test
+asserts against one whose digest is recorded here.
 """
 
 from __future__ import annotations
@@ -126,6 +134,43 @@ def make_tiny_jpeg(width: int = 8, height: int = 8) -> bytes:
     image = Image.fromarray(_gradient(width, height), mode="RGB")
     buffer = io.BytesIO()
     image.save(buffer, format="JPEG", quality=90)
+    return buffer.getvalue()
+
+
+def make_photo_of_objects(width: int = 416, height: int = 416) -> bytes:
+    """A simple scene with an obvious object silhouette.
+
+    Generated, so the detection test asserts against a fixture whose contents are
+    known rather than a downloaded photo's provenance. Kept deliberately plain:
+    a synthetic image is a weaker detection challenge than a photograph, which is
+    why the golden test also pins the real-photo numbers separately.
+    """
+    ys, xs = np.mgrid[0:height, 0:width]
+    image = np.full((height, width, 3), 210, dtype=np.uint8)
+    # Sky / ground split, then a dark rounded "vehicle" body with two wheels.
+    image[: height // 2, :] = (150, 175, 205)
+    cy, cx = height // 2 + 30, width // 2
+    body_w, body_h = width // 3, height // 5
+    image[cy - body_h : cy + body_h, cx - body_w : cx + body_w] = (40, 55, 90)
+    image[cy - body_h : cy - body_h // 2, cx - body_w // 2 : cx + body_w // 2] = (35, 45, 70)
+    for offset in (-body_w // 2, body_w // 2):
+        wy, wx = cy + body_h, cx + offset
+        disc = (ys - wy) ** 2 + (xs - wx) ** 2 <= (height // 22) ** 2
+        image[disc] = (20, 20, 25)
+    buffer = io.BytesIO()
+    Image.fromarray(image, mode="RGB").save(buffer, format="JPEG", quality=92)
+    return buffer.getvalue()
+
+
+def make_empty_scene(width: int = 416, height: int = 416) -> bytes:
+    """A near-featureless image: no COCO object is actually present.
+
+    The negative control for detection. A detector that reports objects here has
+    learned to hallucinate, and its confidence means nothing anywhere else.
+    """
+    image = np.full((height, width, 3), 128, dtype=np.uint8)
+    buffer = io.BytesIO()
+    Image.fromarray(image, mode="RGB").save(buffer, format="JPEG", quality=92)
     return buffer.getvalue()
 
 
