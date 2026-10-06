@@ -10,15 +10,18 @@ memory).
 > approval before changing state. A live model (`qwen2.5:3b`) drives the tool loop
 > end to end and produces a sourced report — see `CHECKLIST.md` T5.10.
 >
-> Four analyzers ship. `byte-entropy` is a deterministic reference module.
-> `image-ela` and `image-exif` are the first real forensic techniques — ELA scores
+> Five analyzers ship. `byte-entropy` is a deterministic reference module.
+> `image-ela` and `image-exif` are real forensic techniques — ELA scores
 > compression anomalies against the image's own error baseline, EXIF scores
 > metadata-integrity indicators. `object-detect` runs pinned YOLOv4 weights on
-> `onnxruntime`, digest-verified before load. **Face comparison (P6.B1) is not
-> built**, and **the object detector cannot find weapons**: COCO has no firearm
-> class, so its watchlist is `knife`/`scissors` and a nil result says nothing about
-> guns. The Next.js frontend (`frontend/` is a placeholder), signed reports, and
-> ops hardening are also still ahead.
+> `onnxruntime`, and `face-compare` runs pinned YuNet + SFace for one-to-one face
+> verification; both are digest-verified before load and the agent invokes them
+> through `run_analysis`. **Two capabilities are honestly missing**: the object
+> detector cannot find weapons (COCO has no firearm class, so its watchlist is
+> `knife`/`scissors` and a nil result says nothing about guns), and the face
+> threshold is the model vendor's published operating point, not one calibrated on
+> this deployment. The Next.js frontend (`frontend/` is a placeholder), signed
+> reports, and ops hardening are also still ahead.
 
 ## Monorepo layout
 
@@ -129,19 +132,21 @@ Two independent layers, both required:
 | `image-ela` | A | fraction of pixels with anomalously high error levels |
 | `image-exif` | B | fraction of metadata indicators that fired |
 | `object-detect` | A | highest confidence among watchlist detections |
+| `face-compare` | B | cosine similarity between two faces' embeddings |
 
 All run on CPU; no GPU module has been written, so nothing depends on one.
 
 ```bash
-backend/scripts/fetch_models.sh    # pinned weights, digest-verified (257 MB, not committed)
+backend/scripts/fetch_models.sh    # pinned weights, digest-verified (~300 MB, not committed)
 ```
 
 Every result carries its threshold, model version, tier and disclaimer. A
-technique that does not apply to an input (ELA on a PNG, detection without
-weights) is recorded as `not_applicable` with no result row, so "could not
-measure" is never rendered as "measured zero". Each module documents its own
-limitations in the result payload — notably that `object-detect` cannot detect
-firearms, because COCO has no firearm class.
+technique that does not apply to an input (ELA on a PNG, an image with no face in
+it) is recorded as `not_applicable` with no result row, so "could not measure" is
+never rendered as "measured zero". Each module documents its own limitations in the
+result payload — that `object-detect` cannot detect firearms because COCO has no
+firearm class, and that `face-compare` verifies (1:1) but never identifies (1:N),
+against a vendor threshold not calibrated on this deployment.
 
 ## Honesty clause
 

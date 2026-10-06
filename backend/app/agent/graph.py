@@ -57,10 +57,19 @@ from app.analysis.types import Tier
 
 
 def _ensure_tools() -> None:
-    """Populate the tool registry. Idempotent."""
+    """Populate both registries. Idempotent.
+
+    The *analysis* modules matter as much as the agent's own tools: `run_analysis`
+    looks the module up in that registry, and without it every call fails with
+    `KeyError: unknown analysis module`. Registering only the tool registry was a
+    real bug — the agent could be given the tool and still be unable to use it,
+    with a plausible "the model chose badly" explanation for every failure.
+    """
     from app.agent.builtin import register_all
+    from app.analysis.registry import register_all as register_analyzers
 
     register_all()
+    register_analyzers()
 
 
 #: Cap on tool calls per run. Bounds the damage from a looping or injected model.

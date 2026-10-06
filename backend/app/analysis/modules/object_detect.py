@@ -387,7 +387,11 @@ class _DetectModule:
         params: dict[str, Any],
         *,
         model_bytes: bytes | None = None,
+        aux_models: dict[str, bytes] | None = None,
+        reference_bytes: bytes | None = None,
     ) -> dict[str, Any]:
+        # No second image and no auxiliary model for this technique.
+        _ = aux_models, reference_bytes
         if model_bytes is None:
             raise ModelChecksumError(
                 "object-detect requires verified weights; refusing to run without them"

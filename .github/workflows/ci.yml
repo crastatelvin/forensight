@@ -138,13 +138,13 @@ jobs:
       - name: Fetch pinned model weights
         run: ./scripts/fetch_models.sh .models
 
-      # P6.B2 weights are 257 MB and only needed by the detection tests, so they
-      # live outside the wheel cache that `uv sync` populates.
+      # The weights (~300 MB) are only needed by the detection and face tests, so
+      # they land outside the wheel cache that `uv sync` populates.
       - name: Re-sync dependencies after fetching weights
         run: uv sync
 
-      # T2.6 + T3.3 + P6: the live-WORM, full-text-search and detection tests are
-      # skipped unless these are set, which is why they never ran before.
+      # T2.6 + T3.3 + P6: the live-WORM, full-text-search, detection and face
+      # tests are skipped unless these are set, which is why they never ran before.
       - name: Test (pytest, live Postgres + MinIO)
         env:
           SECRET_KEY: ci-only-not-a-real-secret-0123456789

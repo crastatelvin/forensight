@@ -205,6 +205,8 @@ class _ElaModule:
         params: dict[str, Any],
         *,
         model_bytes: bytes | None = None,
+        aux_models: dict[str, bytes] | None = None,
+        reference_bytes: bytes | None = None,
     ) -> dict[str, Any]:
         # This module is a pure algorithm: no weights, so model_bytes is unused.
         return run(data, params)

@@ -106,6 +106,16 @@ class ModuleSpec:
     model_key: str | None = None
     #: Expected SHA-256 of `model_key`. Verified before the module runs.
     model_sha256: str | None = None
+    #: Additional pinned artifacts, keyed by the logical name the module will
+    #: receive them under. Fetched as `<model_key>#<name>` and verified against
+    #: the digest given here.
+    #:
+    #: A pipeline of two models is normal — face comparison is detect then embed —
+    #: and a single `model_key` cannot express that. Bundling them into one archive
+    #: would work but makes the pinned digest cover a container format as well as
+    #: the weights, and a zip whose bytes depend on timestamps is not reproducible.
+    #: Two named keys keep each artifact digest meaningful on its own.
+    aux_models: dict[str, str] = field(default_factory=dict)
     #: Input content types the module accepts, e.g. ("image/jpeg",).
     accepts: tuple[str, ...] = ()
     #: Params the module understands, for validation and documentation.
@@ -137,6 +147,8 @@ class AnalysisModule(Protocol):
         params: dict[str, Any],
         *,
         model_bytes: bytes | None = None,
+        aux_models: dict[str, bytes] | None = None,
+        reference_bytes: bytes | None = None,
     ) -> dict[str, Any]:
         """Return at least `score` (float) and `detail` (dict).
 
@@ -145,6 +157,15 @@ class AnalysisModule(Protocol):
         that a pure-algorithm module needs no knowledge of it, and so a module
         which does need weights cannot quietly fetch its own on some other route
         and bypass the pinned digest.
+
+        `aux_models` carries the artifacts named in `spec.aux_models`, each
+        verified against its own pinned digest.
+
+        `reference_bytes` is a second evidence item from the same case, supplied
+        only when `params["reference_evidence_id"]` is set. A comparison needs two
+        things to compare; this is how the second one arrives, and the executor
+        resolves it case-scoped so a job cannot name a reference from a case the
+        caller cannot see.
         """
         ...
 

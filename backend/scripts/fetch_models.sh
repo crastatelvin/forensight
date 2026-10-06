@@ -7,7 +7,10 @@
 # match -- and a test that trusts an unverified download is not a test.
 #
 # Usage:  scripts/fetch_models.sh [dest_dir]     (default: .models)
-# Then:   FORENSIGHT_YOLO_WEIGHTS=.models/yolov4.onnx pytest tests/test_object_detect.py
+# Then:   FORENSIGHT_YOLO_WEIGHTS=$DEST/yolov4.onnx pytest tests/test_object_detect.py
+#         pytest tests/test_face_compare.py       (defaults to $DEST, no env needed)
+#
+# Total ~300 MB. YOLOv4 dominates; the two face models are 39 MB between them.
 #
 # In production the artifacts live in the MinIO `models` bucket under
 # `models/<module>/<version>/<file>`, uploaded via `ModelStore.put_model`. This
@@ -44,11 +47,25 @@ fetch() {
   echo "ok       $name"
 }
 
+# Object detection (P6.B2): YOLOv4-tiny, official ONNX model zoo export.
 fetch "yolov4.onnx" \
   "https://media.githubusercontent.com/media/onnx/models/main/validated/vision/object_detection_segmentation/yolov4/model/yolov4.onnx" \
   "1881fe9c506c970d7866cb4bfc33bda791ce46951a3c39c45ace2ff2b9daf369"
 
+# Face comparison (P6.B1): YuNet detector + SFace embedder, both Apache-2.0 from
+# the OpenCV model zoo. Apache-2.0 rather than InsightFace's ArcFace weights,
+# which are released for non-commercial research only -- not a licence a forensic
+# platform can ship under.
+fetch "yunet.onnx" \
+  "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx" \
+  "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4"
+
+fetch "sface.onnx" \
+  "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx" \
+  "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
+
 echo
 echo "Done. Weights verified by digest."
-echo "To run the detection tests:"
+echo "To run the model-backed tests:"
 echo "  FORENSIGHT_YOLO_WEIGHTS=$DEST/yolov4.onnx pytest tests/test_object_detect.py"
+echo "  pytest tests/test_face_compare.py"

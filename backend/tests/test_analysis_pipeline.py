@@ -697,7 +697,14 @@ def test_entropy_of_known_input() -> None:
 #: Modules whose *own* behaviour is nondeterministic. `numpy` is deliberately
 #: absent: numpy arithmetic is fully deterministic and is required for real image
 #: work. What matters is that none of its random entry points are used.
-NONDETERMINISTIC_MODULES = {"random", "time", "uuid", "secrets", "os", "socket"}
+#: Modules that can make a result vary between runs on identical input.
+#:
+#: `os` was on this list and had to come off. It is only `os.urandom` that varies,
+#: and banning the whole module meant a module could not delete a temp file --
+#: which pushed `face_compare` toward `Path.unlink(missing_ok=True)` and would
+#: have pushed the next author toward something worse. `NONDETERMINISTIC_CALLS`
+#: still catches `os.urandom` where it actually matters.
+NONDETERMINISTIC_MODULES = {"random", "time", "uuid", "secrets", "socket"}
 
 #: Fully-qualified paths whose result varies between runs on identical input.
 NONDETERMINISTIC_CALLS = {
@@ -1247,3 +1254,209 @@ async def test_module_without_weights_still_runs(
     assert ran.json()["status"] == "done", ran.text
     results = (await client.get(f"/cases/{cid}/results", headers=officer)).json()
     assert [r["module"] for r in results] == ["byte-entropy"]
+
+
+# --- face-compare: reference plumbing (P6.B1) -------------------------------
+
+
+class _CompareModule:
+    """Records what the executor handed it, without loading real models."""
+
+    spec = ModuleSpec(
+        name="cmp-user",
+        version="1.0.0",
+        tier=Tier.B,
+        threshold=0.5,
+        model_key="cmp/1.0.0/m.onnx",
+        model_sha256="a" * 64,
+        aux_models={"detector": "b" * 64},
+    )
+
+    seen: dict[str, object] = {}
+
+    def __call__(
+        self,
+        data: bytes,
+        params: dict,
+        *,
+        model_bytes: bytes | None = None,
+        aux_models: dict[str, bytes] | None = None,
+        reference_bytes: bytes | None = None,
+    ) -> dict:
+        type(self).seen = {
+            "model_bytes": model_bytes,
+            "aux_models": aux_models,
+            "reference_bytes": reference_bytes,
+        }
+        return build_result(self.spec, score=0.5, detail={})
+
+
+class _Store:
+    def __init__(self) -> None:
+        self.requested: list[tuple[str, str]] = []
+
+    def load_verified(self, *, key: str, expected_sha256: str) -> bytes:
+        self.requested.append((key, expected_sha256))
+        return f"bytes-for-{key}".encode()
+
+
+async def test_aux_models_and_reference_reach_the_module(
+    client: AsyncClient, seed_users, fake_store, app, sessionmaker_fixture
+) -> None:
+    """Both new plumbing paths, in one go.
+
+    A comparison needs two models (detect, then embed) and two images. Without
+    `aux_models` a module would have to fetch its detector itself and bypass the
+    pinned digest; without `reference_bytes` it could not compare at all.
+    """
+    from app.analysis.repository import get_job
+    from app.config import Settings
+
+    registry.reset()
+    registry.register(_CompareModule())
+    settings = Settings(secret_key="s" * 40, minio_endpoint="")
+
+    officer = await _auth(client, seed_users["officer"])
+    cid = (
+        await client.post("/cases", headers=officer, json={"number": "CMP-1", "title": "T"})
+    ).json()["id"]
+    ids = []
+    for name in ("a.jpg", "b.jpg"):
+        up = await client.post(
+            f"/cases/{cid}/evidence",
+            headers=officer,
+            files={"file": (name, _PNG, "application/octet-stream")},
+        )
+        assert up.status_code == 201, up.text
+        ids.append(up.json()["id"])
+
+    job_id = (
+        await client.post(
+            f"/cases/{cid}/analyses",
+            headers=officer,
+            json={
+                "module": "cmp-user",
+                "evidence_id": ids[0],
+                "params": {"reference_evidence_id": ids[1]},
+            },
+        )
+    ).json()["id"]
+
+    store = _Store()
+    async with sessionmaker_fixture() as session:
+        job = await get_job(session, uuid.UUID(job_id))
+        assert job is not None
+        await execute_job(session, job, settings=settings, gpu_available=False, model_store=store)
+        assert job.status == "done", job.error
+
+    seen = _CompareModule.seen
+    assert seen["model_bytes"] == b"bytes-for-cmp/1.0.0/m.onnx"
+    assert seen["aux_models"] == {"detector": b"bytes-for-cmp/1.0.0/m.onnx#detector"}
+    assert seen["reference_bytes"] is not None, "the reference image never arrived"
+
+    # Both artifacts were verified against their own pinned digests.
+    assert store.requested == [
+        ("cmp/1.0.0/m.onnx", "a" * 64),
+        ("cmp/1.0.0/m.onnx#detector", "b" * 64),
+    ]
+
+
+async def test_reference_cannot_cross_cases(
+    client: AsyncClient, seed_users, fake_store, app, sessionmaker_fixture
+) -> None:
+    """A job in case A must not be able to name evidence from case B.
+
+    The reference is resolved with a case_id predicate rather than by primary key
+    alone. Without that predicate the id would be a cross-case read of image bytes,
+    which is the exact boundary object-level authorization exists to hold.
+    """
+    from app.analysis.repository import get_job
+    from app.config import Settings
+
+    registry.reset()
+    _CompareModule.seen = {}  # the class attribute outlives the previous test
+    registry.register(_CompareModule())
+    settings = Settings(secret_key="s" * 40, minio_endpoint="")
+
+    officer = await _auth(client, seed_users["officer"])
+    case_a = (
+        await client.post("/cases", headers=officer, json={"number": "CMP-A", "title": "A"})
+    ).json()["id"]
+    case_b = (
+        await client.post("/cases", headers=officer, json={"number": "CMP-B", "title": "B"})
+    ).json()["id"]
+
+    up_a = await client.post(
+        f"/cases/{case_a}/evidence",
+        headers=officer,
+        files={"file": ("a.png", _PNG, "application/octet-stream")},
+    )
+    evidence_in_b = up_a.json()["id"]
+    # Move it: the same officer creates both cases, so create fresh evidence in B.
+    up_b = await client.post(
+        f"/cases/{case_b}/evidence",
+        headers=officer,
+        files={"file": ("b.png", _PNG, "application/octet-stream")},
+    )
+    ids_a = evidence_in_b
+    ids_b = up_b.json()["id"]
+
+    job_id = (
+        await client.post(
+            f"/cases/{case_a}/analyses",
+            headers=officer,
+            json={
+                "module": "cmp-user",
+                "evidence_id": ids_a,
+                "params": {"reference_evidence_id": ids_b},
+            },
+        )
+    ).json()["id"]
+
+    async with sessionmaker_fixture() as session:
+        job = await get_job(session, uuid.UUID(job_id))
+        assert job is not None
+        await execute_job(
+            session, job, settings=settings, gpu_available=False, model_store=_Store()
+        )
+        assert job.status == "failed"
+        assert "does not exist in case" in job.error
+        assert _CompareModule.seen.get("reference_bytes") is None
+
+
+async def test_missing_detector_artifact_fails_the_job(
+    client: AsyncClient, seed_users, fake_store, app, sessionmaker_fixture
+) -> None:
+    """An unverified auxiliary model is a refusal, not a fallback."""
+
+    from app.analysis.repository import get_job
+    from app.config import Settings
+
+    registry.reset()
+    registry.register(_CompareModule())
+    settings = Settings(secret_key="s" * 40, minio_endpoint="")
+
+    officer = await _auth(client, seed_users["officer"])
+    cid, eid = await _case_with_evidence(client, officer, fake_store, "CMP-2")
+    job_id = (
+        await client.post(
+            f"/cases/{cid}/analyses",
+            headers=officer,
+            json={"module": "cmp-user", "evidence_id": eid},
+        )
+    ).json()["id"]
+
+    class _PartialStore:
+        def load_verified(self, *, key: str, expected_sha256: str) -> bytes:
+            if "#" in key:
+                raise ModelChecksumError(f"model {key!r} checksum mismatch")
+            return b"primary"
+
+    async with sessionmaker_fixture() as session:
+        job = await get_job(session, uuid.UUID(job_id))
+        assert job is not None
+        await execute_job(
+            session, job, settings=settings, gpu_available=False, model_store=_PartialStore()
+        )
+        assert job.status == "failed"
+        assert "checksum mismatch" in job.error

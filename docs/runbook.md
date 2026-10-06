@@ -220,6 +220,7 @@ Three modules ship today. `byte-entropy` is the Phase 4 reference module;
 | `image-ela` | A | fraction of pixels with anomalously high error level | JPEG input |
 | `image-exif` | B | fraction of metadata indicators that fired | JPEG input |
 | `object-detect` | A | highest confidence among detections of the watchlist classes | pinned weights |
+| `face-compare` | B | cosine similarity between two faces' embeddings | pinned weights + 2 images |
 
 ```bash
 curl -X POST localhost:8000/cases/$CASE/analyses \
@@ -241,6 +242,7 @@ To get the weights on a developer machine or in CI:
 backend/scripts/fetch_models.sh          # fetches to backend/.models, verifies digest
 export FORENSIGHT_YOLO_WEIGHTS=.models/yolov4.onnx
 pytest tests/test_object_detect.py       # otherwise these tests skip
+pytest tests/test_face_compare.py        # defaults to .models, no env needed
 ```
 
 The weights are 257 MB and are never committed. `FORENSIGHT_YOLO_WEIGHTS` also
@@ -253,6 +255,39 @@ the objects this platform most often needs to find. The default watchlist is
 `knife` and `scissors` — the only edged objects COCO knows — and `0.0` means "no
 knife and no scissors", not "no weapon". Closing this needs a model trained on
 weapons, not a threshold change.
+
+### Face comparison
+
+`face-compare` does **verification** (1:1), never identification (1:N): it
+compares two images you name and cannot search a face against a database. That
+distinction is also a legal boundary — one-to-many biometric search is restricted
+or prohibited in several jurisdictions.
+
+It needs a second image, named by the job's params:
+
+```bash
+curl -X POST localhost:8000/cases/$CASE/analyses \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"module":"face-compare","evidence_id":"'$EVID'",
+       "params":{"reference_evidence_id":"'"$REF_EVID"'"}}'
+```
+
+The reference must belong to the same case. It is resolved case-scoped in the
+executor, so a job cannot name evidence from a case the caller cannot see, and
+both images are hash-verified before anything is compared.
+
+Two things to know before trusting a number:
+
+- **The 0.593 threshold is SFace's published operating point, not one calibrated
+  here.** A defensible threshold needs a validation set of thousands of labelled
+  pairs from your own population. Every result says
+  `calibrated_on_this_deployment: false`.
+- **No liveness or presentation-attack check.** A photograph of a photograph will
+  produce a confident result. Treat any match as a lead for a trained examiner.
+
+Models are Apache-2.0 (YuNet detects, SFace embeds), chosen because InsightFace's
+ArcFace weights are licensed for non-commercial research only. SFace is the weaker
+model; see `CHECKLIST.md` P6.B1.
 
 ### Adding an analyzer
 
@@ -286,7 +321,11 @@ Two rules the image modules exist to demonstrate:
   zero.
 - **A module that declares `model_key` must accept `model_bytes`** and score only
   what it is handed. Fetching weights yourself means the pinned digest was checked
-  on an artifact you then ignored.
+  on an artifact you then ignored. A second artifact goes in `spec.aux_models` and
+  arrives as `aux_models`; fetch it as `<model_key>#<name>`.
+- **A module needing a second image takes `reference_bytes`**, resolved from
+  `params["reference_evidence_id"]`. The executor enforces the case scope, so the
+  module does not re-implement it.
 
 ## Agent
 

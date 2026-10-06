@@ -9,8 +9,10 @@ running broker, which is where the real bugs live.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis import registry
@@ -85,9 +87,32 @@ async def execute_job(
                 key=module.spec.model_key, expected_sha256=module.spec.model_sha256
             )
 
+        # Additional pinned artifacts (e.g. a detector alongside an embedder),
+        # each verified against its own digest.
+        aux_models: dict[str, bytes] = {}
+        for aux_name, aux_sha in module.spec.aux_models.items():
+            if model_store is None:
+                raise ModelChecksumError(
+                    f"module {job.module!r} needs pinned model {aux_name!r} but no store "
+                    f"was provided"
+                )
+            aux_models[aux_name] = model_store.load_verified(
+                key=f"{module.spec.model_key}#{aux_name}", expected_sha256=aux_sha
+            )
+
         data = await _fetch_evidence(session, job, settings=settings, reader=evidence_reader)
+        reference_bytes = await _fetch_reference(
+            session, job, settings=settings, reader=evidence_reader
+        )
         await mark_running(session, job)
-        payload = await _invoke(module, data, job.params, model_bytes=model_bytes)
+        payload = await _invoke(
+            module,
+            data,
+            job.params,
+            model_bytes=model_bytes,
+            aux_models=aux_models,
+            reference_bytes=reference_bytes,
+        )
         # Re-wrap through build_result so the stored payload always carries the
         # mandatory fields even if a module returned a partial dict (P4.B6).
         payload = build_result(
@@ -112,28 +137,84 @@ async def execute_job(
     return job
 
 
+async def _fetch_reference(
+    session: AsyncSession,
+    job: AnalysisJob,
+    *,
+    settings: Settings,
+    reader: Any | None = None,
+) -> bytes | None:
+    """Load the second image for a comparison, scoped to the job's own case.
+
+    `params["reference_evidence_id"]` names the image to compare against. It is
+    resolved with an explicit `case_id` predicate rather than by primary key
+    alone: a job in case A must not be able to name evidence from case B, and
+    without that predicate the id would be a cross-case read.
+
+    The bytes are hash-verified on the same rule as the primary evidence — the
+    comparison must not run against bytes that no longer match what was recorded.
+
+    Returns None when no reference was requested, which is not an error: most
+    modules compare against nothing.
+    """
+    reference_id = job.params.get("reference_evidence_id") if job.params else None
+    if not reference_id:
+        return None
+    try:
+        wanted = uuid.UUID(str(reference_id))
+    except (ValueError, AttributeError, TypeError) as exc:
+        raise AnalysisError(
+            f"reference_evidence_id {reference_id!r} is not a valid evidence id"
+        ) from exc
+
+    from app.domain.ingest import sha256_hex
+    from app.domain.models import Evidence
+
+    found = await session.execute(
+        select(Evidence).where(Evidence.id == wanted, Evidence.case_id == job.case_id)
+    )
+    evidence = found.scalar_one_or_none()
+    if evidence is None:
+        raise AnalysisError(f"reference evidence {wanted} does not exist in case {job.case_id}")
+
+    data = reader(evidence) if reader is not None else _read_from_object_store(evidence, settings)
+    if sha256_hex(data) != evidence.sha256:
+        raise AnalysisError(
+            f"reference evidence {evidence.id} failed hash verification; refusing to compare"
+        )
+    return data
+
+
 async def _invoke(
     module: Any,
     data: bytes,
     params: dict[str, Any],
     *,
     model_bytes: bytes | None = None,
+    aux_models: dict[str, bytes] | None = None,
+    reference_bytes: bytes | None = None,
 ) -> dict[str, Any]:
     """Call a module, awaiting it if it is a coroutine function.
 
     Modules are declared `def __call__` but may be written `async def`; this
     keeps both working without forcing every author to care.
 
-    `model_bytes` is passed only to modules whose `__call__` declares the
-    keyword, so the two-argument signature stays valid and existing modules
-    (byte-entropy, image-ela, image-exif) need no change. A module that declares
-    `model_key` should accept it: that is the whole guarantee that it is scored
-    against the artifact whose checksum was pinned.
+    The optional keywords are passed only to modules whose `__call__` declares
+    them, so the two-argument signature stays valid and existing modules
+    (byte-entropy, image-ela, image-exif, object-detect) need no change.
     """
     import inspect
 
-    takes_model = "model_bytes" in inspect.signature(module.__call__).parameters
-    outcome = module(data, params, model_bytes=model_bytes) if takes_model else module(data, params)
+    accepted = inspect.signature(module.__call__).parameters
+    extra: dict[str, Any] = {}
+    if "model_bytes" in accepted:
+        extra["model_bytes"] = model_bytes
+    if "aux_models" in accepted:
+        extra["aux_models"] = aux_models or {}
+    if "reference_bytes" in accepted:
+        extra["reference_bytes"] = reference_bytes
+
+    outcome = module(data, params, **extra)
     if inspect.isawaitable(outcome):
         outcome = await outcome
     if not isinstance(outcome, dict) or "score" not in outcome:

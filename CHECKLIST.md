@@ -202,7 +202,29 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 
 ## Phase 6 — First three real analyzers (proof of "no simulation")
 **Build**
-- [ ] P6.B1 Face comparison — InsightFace/ArcFace embeddings + cosine + calibrated threshold
+- [x] P6.B1 Face comparison — **verification (1:1), not identification**
+      Two pinned Apache-2.0 models: YuNet detects, SFace embeds, cosine compared
+      against SFace's published 0.593 operating point. Tier B.
+      - **Deviation: SFace from the OpenCV model zoo, not InsightFace/ArcFace.**
+        InsightFace's pretrained weights are released for **non-commercial research
+        only**, which a forensic platform cannot ship under. YuNet and SFace are
+        both Apache-2.0. SFace is the weaker model and that is a real cost.
+      - Two models, so `ModuleSpec.aux_models` was added: additional pinned
+        artifacts, each verified against its own digest, fetched as
+        `<model_key>#<name>`. Bundling into one archive would make the pinned
+        digest cover a container format too.
+      - A comparison needs two images, so `params["reference_evidence_id"]` names
+        the second one. Resolved **case-scoped** — without the `case_id` predicate
+        it would be a cross-case read of image bytes. Both images are
+        hash-verified on the same rule as the primary evidence.
+      - **The threshold is the vendor's, not ours, and the payload says so.**
+        Calibrating an operating point needs thousands of labelled pairs from the
+        deployment's own population; four same-identity pairs catch a broken
+        decoder and nothing more. `calibrated_on_this_deployment: false` ships in
+        every result.
+      - Verification only, and that is also the legal boundary: one-to-many search
+        against a face database is restricted or prohibited in several
+        jurisdictions, so this module deliberately cannot do it.
 - [~] P6.B2 Object detection — YOLOv4-tiny, pinned ONNX weights. **No weapon
       detection, and this is a real limitation rather than a tuning gap.**
       COCO has no firearm/rifle/pistol class at all, so this model cannot detect
@@ -258,13 +280,29 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
       Registered in `register_all()`, which the Dramatiq worker calls at import.
       NOTE: the checklist said Celery; the project uses Dramatiq (see Phase 4).
 **Test cases**
-- [ ] T6.1 Face same-id above / different-id below threshold; deterministic
-- [~] T6.2 No-face image -> explicit "no face detected", not fake score
-      The *mechanism* is built and proven for the image analyzers: new
+- [x] T6.1 Face same-id above / different-id below threshold; deterministic
+      Turing 1936 vs 1951 = **0.7377**, Obama portraits = **0.8128**, three
+      different-identity pairs = **-0.093, -0.046, -0.025**. A separate test
+      asserts the whole same-id population outranks the whole different-id
+      population — if they ever overlap, no threshold exists and the test says so.
+      Fixtures are real public-domain photographs (two per subject, so the
+      same-identity case is two *different* photographs, not one file against
+      itself), digest-pinned in `tests/assets/`. Synthetic faces are useless here:
+      a model scores a drawing as confidently as a photograph.
+      **Bug this caught:** the YuNet export returns `[box, kps(10), score]` — score
+      *last*. OpenCV's docs say score at index 4. Trusting the docs made
+      `alignCrop` warp from a score value, producing blank white crops (std=0.0)
+      and embeddings with no same/different structure at all — every pair landed
+      near 0.78–0.99. `row_layout_is_landmarks_then_score` now asserts the
+      anatomy (landmarks inside the box, eyes level, nose and mouth below) plus the
+      score's 0..1 range, and there is a test that the *documented* layout is
+      rejected.
+- [x] T6.2 No-face image -> explicit "no face detected", not fake score
+      Mechanism built and proven for the image analyzers: new
       `AnalysisNotApplicable` exception + `not_applicable` terminal job status,
       which writes **no result row**, so "cannot measure" can never render as
-      "measured zero". Exercised end-to-end (ELA on PNG) and on live Postgres.
-      The face-specific case remains unbuilt pending P6.B1.
+      "measured zero". Exercised end-to-end (ELA on PNG), on live Postgres, and for
+      faces (featureless image, and a missing reference image).
 - [x] T6.3 Detects expected labels with stable confidences
       `person` 0.987 / `person` 0.975 / `bus` 0.965 on a digest-pinned photo,
       asserted as golden values. Flat-grey negative control yields zero detections.
@@ -294,10 +332,37 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 - [x] T6.7 Threshold + model_version present in every result
       `build_result` injects these, so no module can emit a result without them.
 **Exit**
-- [ ] P6.E three analyzers deterministic golden tests pass; agent uses end-to-end; no-simulation proven
-      Two of three analyzers built (image forensics, object detection). Face
-      comparison remains. The agent side is now met: a live 3B model drives the tool
-      loop and produces a sourced report (T5.10). Still not earned.
+- [~] P6.E three analyzers deterministic golden tests pass; agent uses end-to-end; no-simulation proven
+      Three analyzers exist and pass deterministic golden tests, and the agent
+      drives `run_analysis` end to end: a live model calls the tool, the real
+      executor scores real JPEG bytes, and the stored score is the analyzer's own
+      (asserted equal to a direct `image_ela.run`). Not yet earned, honestly:
+      - **PRNU is still absent** from P6.B3 (ELA + EXIF only).
+      - **The agent's run declines rather than citing its own analysis**, because
+        `run_analysis` is fire-and-forget and no worker runs in the test. The
+        refusal is *correct* — the provenance guard will not let the agent cite a
+        result that does not exist yet — but it means "agent produces a report
+        citing its own analysis" is not yet demonstrated in one pass.
+      - **A 3B model invents `evidence_id="attached_image"`** rather than copying
+        the UUID it was shown. A model-capability limit, not a plumbing fault, so
+        the test performs the call itself and asserts the model's failed attempt was
+        rejected at the typed-args boundary. A production path needs either a
+        >=7B model or a tool that takes an evidence *index* rather than an id.
+      What is proven: no analyzer simulates. Five analyzers, real pinned weights,
+      real scores, refusals where a technique does not apply, and a real model
+      driving the tool that invokes them.
+
+**Bugs found in this phase, all by running the stack**
+Three of these were invisible to the test suite and none of them raised:
+- `_ensure_tools()` registered the *agent* tool registry but not the *analysis*
+  registry, so `run_analysis` raised `KeyError: unknown analysis module` for every
+  module. The agent was handed a tool it could never use, and every failure looked
+  like the model choosing badly.
+- YuNet's row layout is `[box, kps(10), score]` — score **last**. OpenCV's docs
+  say index 4. Trusting the docs produced blank white crops (std=0.0) and
+  embeddings with no same/different structure at all.
+- The determinism guard banned the whole `os` module, so a module could not delete
+  a temp file. `os.urandom` is still banned; the module is not.
 
 ---
 
