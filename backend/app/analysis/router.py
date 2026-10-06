@@ -224,11 +224,17 @@ async def run_job_now(
         raise HTTPException(status_code=404, detail="Analysis job not found")
     case = await _scoped_case(session, job.case_id, user)
 
+    from app.analysis.models_registry import ModelStore
+
     await execute_job(
         session,
         job,
         settings=settings,
         gpu_available=settings.gpu_available,
+        # A ModelStore, so the inline path can load pinned weights. Same reason as
+        # the worker: without it every model-backed module failed here with "needs a
+        # verified model but no store was provided".
+        model_store=ModelStore(settings),
     )
     await append_audit(
         session,

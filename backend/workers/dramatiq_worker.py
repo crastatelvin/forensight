@@ -22,8 +22,9 @@ from app.analysis.executor import execute_job
 from app.analysis.registry import register_all
 from app.analysis.repository import get_job
 from app.config import get_settings
-from app.db import SessionLocal
+from app.db import create_engine
 from dramatiq.brokers.redis import RedisBroker
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 settings = get_settings()
 
@@ -55,22 +56,49 @@ def run_analysis_job(job_id: str) -> None:
 def _run_job_sync(job_id: str) -> None:
     """Bridge the sync worker to the async data layer.
 
-    A fresh event loop per job rather than a shared one: the worker is
-    single-threaded, and a per-job loop stops a poisoned connection from leaking
-    into the next job's session.
+    A fresh event loop *and a fresh engine* per job.
+
+    The engine part is load-bearing, and it was a live bug: `app.db.engine` is a
+    module-level pool, and a pooled asyncpg connection is bound to the event loop
+    that first used it. Running `asyncio.run()` per job creates a new loop each
+    time, so every job after the first checked out a connection belonging to a
+    dead loop and died with `got Future ... attached to a different loop`. The
+    first job succeeded, which is what made it look intermittent.
+
+    Two costs, stated rather than hidden:
+    - A TCP+TLS handshake per job to Postgres. At this workload that is irrelevant;
+      a long-lived loop with `NullPool` would be the fix if it ever were not.
+    - Re-creating the engine means a fresh pool each time, so there is no
+      connection reuse across jobs. That is the trade for correctness, and the
+      alternative (`NullPool` on the shared engine) would silently do the same
+      thing more confusingly.
     """
 
     async def _main() -> None:
-        async with SessionLocal() as session:
-            job = await get_job(session, uuid.UUID(job_id))
-            if job is None:
-                # Job was removed (case cascade delete). Acking is correct.
-                return
-            await execute_job(
-                session,
-                job,
-                settings=get_settings(),
-                gpu_available=get_settings().gpu_available,
-            )
+        engine = create_engine()
+        maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+        job_settings = get_settings()
+        try:
+            async with maker() as session:
+                job = await get_job(session, uuid.UUID(job_id))
+                if job is None:
+                    # Job was removed (case cascade delete). Acking is correct.
+                    return
+                # A ModelStore, so modules with pinned weights can load them. Without
+                # this every `object-detect` and `face-compare` job failed with
+                # "needs a verified model but no store was provided" -- the modules
+                # worked in tests and were unusable in the deployed worker, because
+                # nothing passed a store.
+                from app.analysis.models_registry import ModelStore
+
+                await execute_job(
+                    session,
+                    job,
+                    settings=job_settings,
+                    gpu_available=job_settings.gpu_available,
+                    model_store=ModelStore(job_settings),
+                )
+        finally:
+            await engine.dispose()
 
     asyncio.run(_main())

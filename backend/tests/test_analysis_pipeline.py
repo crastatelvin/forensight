@@ -1460,3 +1460,114 @@ async def test_missing_detector_artifact_fails_the_job(
         )
         assert job.status == "failed"
         assert "checksum mismatch" in job.error
+
+
+# --- every execution path must be able to load pinned weights (P6) ----------
+
+
+def test_worker_passes_a_model_store() -> None:
+    """The worker must construct a ModelStore.
+
+    Without it every model-backed module fails in the deployed worker with
+    "needs a verified model but no store was provided" -- so `object-detect` and
+    `face-compare` worked in tests and were unusable in production. Found by
+    running the real stack, not by the suite.
+    """
+    from pathlib import Path
+
+    source = Path("workers/dramatiq_worker.py").read_text()
+    assert "ModelStore(" in source, "the worker never constructs a ModelStore"
+    assert "model_store=" in source, "the worker does not pass one to execute_job"
+
+
+def test_inline_run_path_passes_a_model_store() -> None:
+    """Same for the operator-triggered inline path (`POST /analyses/jobs/{id}/run`)."""
+    from pathlib import Path
+
+    source = Path("app/analysis/router.py").read_text()
+    assert "ModelStore(" in source, "the inline path never constructs a ModelStore"
+
+
+async def test_worker_creates_a_fresh_engine_per_job() -> None:
+    """A pooled connection is bound to the loop that first used it.
+
+    `app.db.engine` is a module-level pool and `asyncio.run` makes a new loop per
+    job, so reusing it means every job after the first checks out a connection from
+    a dead loop and dies with "got Future ... attached to a different loop". The
+    first job succeeds, which is what made this look intermittent.
+    """
+    from pathlib import Path
+
+    source = Path("workers/dramatiq_worker.py").read_text()
+    assert "create_engine()" in source, "the worker reuses the module-level engine"
+    assert "await engine.dispose()" in source, "the per-job engine is never disposed"
+    assert "SessionLocal" not in source, (
+        "the worker still uses the module-level sessionmaker, whose pool is bound "
+        "to whichever loop created it"
+    )
+
+
+# --- capabilities must describe the analyzers that actually ship ------------
+
+
+def test_capabilities_come_from_the_module_registry(settings) -> None:
+    """A capability list that has drifted from the code is a promise the system
+    does not keep.
+
+    The static list it replaced advertised three GPU capabilities — ArcFace
+    embeddings, deepfake detection, speaker embeddings — that no shipped analyzer
+    implements, while omitting the five that do. `face-compare` runs on CPU and was
+    reported as `face-recognition-gpu: unavailable`, which is the exact opposite of
+    the truth. Found by reading `/capabilities` against a running stack.
+    """
+    from app.analysis import registry as analysis_registry
+    from app.capabilities import get_capabilities
+
+    analysis_registry.register_all()
+    reported = {c.name for c in get_capabilities(settings)}
+    shipped = {s.name for s in analysis_registry.all_specs()}
+    assert reported == shipped, (
+        f"capabilities {sorted(reported)} do not match shipped modules " f"{sorted(shipped)}"
+    )
+
+
+def test_capabilities_never_promise_an_unimplemented_gpu_module(settings) -> None:
+    from app.capabilities import get_capabilities
+
+    for cap in get_capabilities(settings):
+        assert "deepfake" not in cap.name
+        assert "speaker-embedding" not in cap.name
+
+
+def test_face_compare_is_reported_available_on_cpu(settings) -> None:
+    """It needs no GPU. Reporting it unavailable was a false negative that would
+    make a UI hide a working feature."""
+    from app.capabilities import get_capabilities
+
+    by_name = {c.name: c for c in get_capabilities(settings)}
+    assert by_name["face-compare"].available is True
+    assert by_name["face-compare"].requires_gpu is False
+
+
+def test_capability_reports_version_so_results_are_comparable(settings) -> None:
+    """A capability list without versions cannot answer 'are these results
+    comparable?', which is the question a reviewer actually has."""
+    from app.capabilities import get_capabilities
+
+    for cap in get_capabilities(settings):
+        assert cap.version, f"{cap.name} reported with no version"
+
+
+def test_unprovisioned_weights_are_reported_distinctly(settings) -> None:
+    """ "This host cannot run it" and "you have not finished installing it" need
+    different fixes, so they must not read the same."""
+    from app.capabilities import get_capabilities
+
+    caps = {c.name: c for c in get_capabilities(settings, weights_available=False)}
+    with_weights = caps["object-detect"]
+    assert with_weights.available is False
+    assert "weights" in with_weights.reason.lower()
+    assert "gpu" not in with_weights.reason.lower()
+
+    # A pure-algorithm module is unaffected: it needs no artifacts.
+    assert caps["image-ela"].available is True

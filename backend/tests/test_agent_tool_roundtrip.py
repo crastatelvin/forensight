@@ -34,6 +34,7 @@ from app.agent.builtin import register_all as register_agent_tools
 from app.agent.graph import AgentGraph
 from app.agent.llm import ChatMessage, ChatResponse, OpenAICompatModel, ScriptedModel
 from app.agent.tools import NeedsApproval, ToolContext, ToolError, to_model_tools, tool_catalog
+from app.agent.types import ToolCall, ToolResult
 from httpx import AsyncClient
 
 _PNG = (
@@ -534,3 +535,61 @@ def test_canonical_args_is_json_not_python_repr() -> None:
 
     rendered = canonical_args({"query": "it's here", "limit": 3, "flag": True})
     assert json.loads(rendered) == {"query": "it's here", "limit": 3, "flag": True}
+
+
+# --- The audit row must be written, or refuse to write it (P6.E) -----------
+
+
+async def test_record_tool_call_refuses_a_mis_typed_call(sessionmaker_fixture) -> None:
+    """A type check here must survive `python -O`.
+
+    `assert` is stripped from optimised bytecode. If `record_tool_call` used one
+    to narrow its arguments, then under `-O` the check would vanish and a
+    mis-typed call would fall through to an `AttributeError` — in a function whose
+    entire job is writing a trustworthy audit row. Bandit flagged exactly this, and
+    it was a real defect rather than a lint nit.
+    """
+    import uuid as _uuid
+
+    from app.agent.repository import record_tool_call
+
+    async with sessionmaker_fixture() as session:
+        with pytest.raises(TypeError, match="ToolCall"):
+            await record_tool_call(
+                session,
+                run_id=_uuid.uuid4(),
+                call=object(),  # type: ignore[arg-type]
+                result=ToolResult(call_id="c", name="t", ok=True, output=None),
+                case_id=_uuid.uuid4(),
+            )
+        with pytest.raises(TypeError, match="ToolResult"):
+            await record_tool_call(
+                session,
+                run_id=_uuid.uuid4(),
+                call=ToolCall(name="t", args={}),
+                result=object(),  # type: ignore[arg-type]
+                case_id=_uuid.uuid4(),
+            )
+
+
+async def test_record_tool_call_computes_a_missing_hash(sessionmaker_fixture) -> None:
+    """An unhashed result must be hashed before it is stored.
+
+    This is the whole point of the audit row: a call recorded with an empty
+    result_hash cannot be used to prove what happened.
+    """
+    import uuid as _uuid
+
+    from app.agent.repository import record_tool_call
+    from app.agent.types import ToolResult
+
+    async with sessionmaker_fixture() as session:
+        row = await record_tool_call(
+            session,
+            run_id=_uuid.uuid4(),
+            call=ToolCall(name="get_case", args={}),
+            result=ToolResult(call_id="c1", name="get_case", ok=True, output={"a": 1}),
+            case_id=_uuid.uuid4(),
+        )
+    assert row.result_hash, "a tool call was recorded with no result hash"
+    assert row.args_hash, "a tool call was recorded with no argument hash"

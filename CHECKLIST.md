@@ -229,8 +229,9 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
       - Verification only, and that is also the legal boundary: one-to-many search
         against a face database is restricted or prohibited in several
         jurisdictions, so this module deliberately cannot do it.
-- [~] P6.B2 Object detection — YOLOv4-tiny, pinned ONNX weights. **No weapon
-      detection, and this is a real limitation rather than a tuning gap.**
+- [!] P6.B2 Object detection — YOLOv4-tiny, pinned ONNX weights. Built and
+      tested; **no weapon detection, and that is a real capability gap rather than
+      a tuning problem.**
       COCO has no firearm/rifle/pistol class at all, so this model cannot detect
       the objects this platform most often needs to find. The default watchlist is
       therefore `knife` + `scissors`, the only edged objects COCO knows, and both
@@ -264,11 +265,10 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
         against what it actually produces: `person` 0.987, `person` 0.975,
         `bus` 0.965. The negative control (a flat grey frame yields zero
         detections) is still generated.
-- [~] P6.B3 Image forensics — ELA + EXIF done; **noise/PRNU not built**
-      Two modules rather than one, because the module contract requires a single
-      scalar score and ELA (compression anomaly) and EXIF (metadata indicators) do
-      not share a scale. PRNU is a third technique with its own requirements and
-      is genuinely absent, not stubbed.
+- [x] P6.B3 Image forensics — ELA + EXIF + PRNU, three modules
+      Three rather than one, because the module contract requires a single scalar
+      score and these three do not share a scale: ELA scores a compression anomaly,
+      EXIF a metadata-integrity ratio, PRNU a fingerprint correlation.
       - `image-ela` — Tier A. Anomaly detection uses median + MAD, not mean + std:
         the regions ELA hunts for are exactly the ones that would inflate the mean.
         `model_version` embeds `libjpeg-turbo`, because a codec upgrade silently
@@ -394,7 +394,9 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
       to transcribe one.
 
 **Bugs found in this phase, all by running the stack**
-Six of these were invisible to the test suite and none of them raised:
+Ten of these were invisible to the test suite and none of them raised. The last
+five were found by running the deployed stack — compose, real Postgres, real
+MinIO, a real worker — not by any test:
 - `_ensure_tools()` registered the *agent* tool registry but not the *analysis*
   registry, so `run_analysis` raised `KeyError: unknown analysis module` for every
   module. The agent was handed a tool it could never use, and every failure looked
@@ -409,6 +411,36 @@ Six of these were invisible to the test suite and none of them raised:
   received the literal string "Tool search_evidence returned:" and nothing else. It
   repeated the same call 20 times against a live provider.
 - A cache hit returned a different response shape from a cold run.
+- **The worker reused the module-level engine pool.** A pooled asyncpg connection
+  is bound to the event loop that first used it, and Dramatiq's per-job
+  `asyncio.run` makes a new loop each time, so every job after the first died with
+  `got Future ... attached to a different loop`. The first job succeeded, which is
+  exactly what made it look intermittent.
+- **No execution path passed a `ModelStore`.** `object-detect` and `face-compare`
+  worked in tests and were unusable in the deployed worker *and* in the inline run
+  endpoint — both failed with "needs a verified model but no store was provided".
+  The `models` bucket also had to be provisioned by hand; there is now
+  `scripts/provision_models.py`, idempotent, and a missing bucket is reported as an
+  operator-facing refusal instead of a raw S3 stack.
+- **A duplicate case number returned 500, not 409**, blaming the server for the
+  caller's duplicate and leaking a stack trace through the body. The suite generates
+  a fresh case number per test, so nothing ever collided. Now handled app-wide, and
+  the message names the violated constraint where the driver exposes one.
+- **`/capabilities` had drifted from the code**: it advertised three GPU analyzers
+  that do not exist (ArcFace, deepfake, speaker embeddings) and omitted the five
+  that do — including reporting CPU-runnable `face-compare` as
+  `face-recognition-gpu: unavailable`. The two tests that "covered" it asserted the
+  stale list, so they passed while the endpoint lied. Now built from the analysis
+  registry, with versions.
+- **Security**: Pillow 11.1.0 carried **17 known CVEs** on the image-decoding path
+  every untrusted upload takes; pytest 8.3.4 had one more. Both upgraded. The
+  pip-audit gate was `|| true` with a comment about an uncleared CVE backlog — that
+  backlog is clear, so `|| true` is gone. It is `scripts/audit_deps.py`, which
+  extracts direct requirements (pip-audit cannot resolve this project, installed
+  editable and unpublished) and was verified to fail on a deliberately downgraded
+  Pillow, so the gate has teeth. Bandit also only scanned `app`, never `workers` —
+  which is why the `assert`-stripped-under-`-O` checks in the audit writer went
+  unflagged; those are now real `TypeError`s.
 - YuNet's row layout is `[box, kps(10), score]` — score **last**. OpenCV's docs
   say index 4. Trusting the docs produced blank white crops (std=0.0) and
   embeddings with no same/different structure at all.

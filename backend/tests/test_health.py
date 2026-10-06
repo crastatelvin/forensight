@@ -76,28 +76,43 @@ def test_readyz_returns_200_when_all_up(monkeypatch: pytest.MonkeyPatch) -> None
     assert resp.json()["ready"] is True
 
 
-def test_capabilities_gpu_unavailable_reports_degraded() -> None:
-    # T0.5: with GPU absent, GPU modules are reported unavailable (not faked).
+def test_capabilities_reflect_the_analyzers_that_ship() -> None:
+    """The list is the registry, not a hand-maintained copy.
+
+    These two tests previously asserted on a static list that had drifted: they
+    passed while `/capabilities` advertised three GPU analyzers that do not exist
+    and omitted the five that do. The contract they actually wanted -- "the list
+    reflects what can run here" -- is now stated directly, and the per-capability
+    detail lives in tests/test_analysis_pipeline.py.
+    """
     app = create_app(_settings(gpu_available=False))
     with TestClient(app) as client:
         resp = client.get("/capabilities")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["gpu_available"] is False
-    gpu_caps = [c for c in body["capabilities"] if c["requires_gpu"]]
-    cpu_caps = [c for c in body["capabilities"] if not c["requires_gpu"]]
-    assert gpu_caps, "expected at least one GPU-requiring capability"
-    assert all(c["available"] is False for c in gpu_caps)
-    assert all("reason" in c for c in gpu_caps)
-    # CPU analyzers remain available on a CPU-only host.
-    assert cpu_caps and all(c["available"] is True for c in cpu_caps)
+
+    from app.analysis import registry
+
+    registry.register_all()
+    shipped = {s.name for s in registry.all_specs()}
+    reported = {c["name"] for c in body["capabilities"]}
+    assert reported == shipped, f"{sorted(reported)} != {sorted(shipped)}"
 
 
-def test_capabilities_gpu_available_enables_modules() -> None:
-    app = create_app(_settings(gpu_available=True))
+def test_every_unavailable_capability_states_a_reason() -> None:
+    """An unavailable capability that does not say why is just a lie.
+
+    This is the T0.5 degradation contract, now stated against real analyzers
+    rather than placeholder names. Every shipped analyzer is CPU-only today, so
+    nothing should be gated -- and that is worth asserting, because it is what
+    caught the stale list: it claimed three GPU analyzers that do not exist.
+    """
+    app = create_app(_settings(gpu_available=False))
     with TestClient(app) as client:
-        resp = client.get("/capabilities")
-    body = resp.json()
-    assert body["gpu_available"] is True
-    gpu_caps = [c for c in body["capabilities"] if c["requires_gpu"]]
-    assert gpu_caps and all(c["available"] is True for c in gpu_caps)
+        body = client.get("/capabilities").json()
+
+    for cap in body["capabilities"]:
+        if cap["available"]:
+            continue
+        assert cap.get("reason"), f"unavailable without a reason: {cap}"
+    assert all(c["available"] for c in body["capabilities"]), body["capabilities"]

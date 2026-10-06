@@ -139,6 +139,7 @@ against `evidence.sha256` after any restore.
 | MinIO | Uploads/downloads fail; `/readyz` reports `minio: false`. |
 | Postgres | Everything DB-backed fails. Nothing degrades silently. |
 | GPU absent | `/capabilities` reports GPU modules unavailable with a reason. Never faked. |
+| Model weights not provisioned | Model-backed jobs fail with "pinned weights are not provisioned"; `/capabilities` marks them unavailable. Never falls back to an unpinned model. |
 
 A job also ends in a terminal state other than `done`/`failed` when the technique
 does not apply or the host cannot run the module. These are distinct from failure
@@ -168,6 +169,29 @@ Then either wait for a worker (the `core` profile runs one) or run it inline:
 curl -X POST localhost:8000/analyses/jobs/$JOB/run -H "Authorization: Bearer $TOKEN"
 curl localhost:8000/cases/$CASE/results -H "Authorization: Bearer $TOKEN"
 ```
+
+### Provisioning model weights
+
+Modules with pinned weights load their artifacts from the MinIO `models` bucket
+at run time, verified against the SHA-256 in the module's `ModuleSpec`. Nothing
+creates that bucket or uploads anything automatically — that is a deliberate
+provisioning step, and a deployment that skips it gets every model-backed job
+failing with a clear message rather than a silent fallback.
+
+```bash
+backend/scripts/fetch_models.sh          # fetch + digest-verify (~300 MB)
+cd backend && python scripts/provision_models.py .models
+```
+
+`provision_models.py` is idempotent: an artifact already present with the right
+digest is left alone, so re-running after a version bump uploads only what
+changed.
+
+`GET /capabilities` is built from the analysis registry rather than a
+hand-maintained list, so it always describes the analyzers this build actually
+ships. An analyzer with a `model_key` and no provisioned artifact is reported
+unavailable with the reason "pinned weights are not provisioned", which is a
+different problem from "no GPU on this host" and needs a different fix.
 
 ### Job status
 
@@ -246,16 +270,16 @@ curl -X POST localhost:8000/cases/$CASE/analyses \
 
 ### Model-backed analyzers
 
-`object-detect` loads pinned weights from the MinIO `models` bucket under
-`models/<module>/<version>/<file>`. The executor verifies the SHA-256 against the
-value in the module's `ModuleSpec` **before** load and passes the verified bytes
-to the module; a mismatch fails the job rather than falling back to a different
-artifact. Upload an artifact once with `ModelStore.put_model`.
+`object-detect` and `face-compare` load pinned weights from the MinIO `models`
+bucket under `models/<module>/<version>/<file>`. The executor verifies the
+SHA-256 against the value in the module's `ModuleSpec` **before** load and passes
+the verified bytes to the module; a mismatch fails the job rather than falling
+back to a different artifact.
 
 To get the weights on a developer machine or in CI:
 
 ```bash
-backend/scripts/fetch_models.sh          # fetches to backend/.models, verifies digest
+backend/scripts/fetch_models.sh          # fetch + digest-verify (~300 MB)
 export FORENSIGHT_YOLO_WEIGHTS=.models/yolov4.onnx
 pytest tests/test_object_detect.py       # otherwise these tests skip
 pytest tests/test_face_compare.py        # defaults to .models, no env needed
@@ -263,7 +287,7 @@ pytest tests/test_face_compare.py        # defaults to .models, no env needed
 
 The weights are 257 MB and are never committed. `FORENSIGHT_YOLO_WEIGHTS` also
 bypasses MinIO entirely for local testing; in a deployed stack leave it unset and
-the artifact comes from the bucket.
+the artifact comes from the bucket — see "Provisioning model weights" above.
 
 **Weapon detection does not work.** YOLOv4 is trained on COCO's 80 classes and
 COCO contains no firearm, rifle, or pistol class, so `object-detect` cannot find

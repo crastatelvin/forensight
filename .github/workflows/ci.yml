@@ -41,8 +41,10 @@ jobs:
       - name: Format check (Ruff)
         run: uv run ruff format --check .
 
+      # `scripts` too: the dependency-audit gate lives there and a broken gate is
+      # worse than no gate, because it fails open.
       - name: Type-check (mypy, strict)
-        run: uv run mypy app workers
+        run: uv run mypy app workers scripts
 
       # SQLite-only suite: fast, hermetic, no services needed.
       - name: Test (pytest, SQLite)
@@ -50,13 +52,22 @@ jobs:
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
         run: uv run pytest -q
 
-      - name: SAST (Bandit)
-        run: uv run bandit -r app -ll
+      - name: SAST (Bandit, app + workers)
+        # Scans `workers` too: it was missed here, so the `assert`-stripped-under
+        # `-O` type checks in the audit writer were never flagged.
+        run: uv run bandit -r app workers -ll
 
-      # Advisory until the transitive-CVE backlog is cleared; `--strict` would
-      # fail today on transitive deps we do not control directly.
+      # Was `|| true` with a comment about an uncleared CVE backlog. That backlog is
+      # clear now, so the advisory is removed: `|| true` on a security gate reads as
+      # passing in the UI while checking nothing.
+      #
+      # `pip-audit --strict` against the environment fails on this project itself,
+      # because it is installed editable and is not on PyPI, and there is no flag to
+      # skip one named package. The script extracts the direct requirements and
+      # audits from there. It was verified to fail on a deliberately
+      # downgraded Pillow, so the gate has teeth.
       - name: Dependency audit (pip-audit)
-        run: uv run pip-audit --strict || true
+        run: uv run python scripts/audit_deps.py
 
   integration:
     name: Integration (Postgres + MinIO, real schemas)

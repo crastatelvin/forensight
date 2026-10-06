@@ -141,8 +141,14 @@ Two independent layers, both required:
 All run on CPU; no GPU module has been written, so nothing depends on one.
 
 ```bash
-backend/scripts/fetch_models.sh    # pinned weights, digest-verified (~300 MB, not committed)
+backend/scripts/fetch_models.sh                    # pinned weights, digest-verified (~300 MB, not committed)
+cd backend && python scripts/provision_models.py .models   # upload them to the MinIO `models` bucket
 ```
+
+Provisioning is a deliberate step, not automatic: a deployment that skips it gets
+every model-backed job failing with "pinned weights are not provisioned", and
+`/capabilities` reporting those analyzers unavailable with that reason. Nothing
+falls back to an unpinned model.
 
 Every result carries its threshold, model version, tier and disclaimer. A
 technique that does not apply to an input (ELA on a PNG, an image with no face in

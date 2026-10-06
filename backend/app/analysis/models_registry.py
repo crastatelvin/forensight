@@ -59,7 +59,26 @@ class ModelStore:
         return key
 
     def get_model(self, key: str) -> bytes:
-        resp = self._minio().get_object(MODEL_BUCKET, key)
+        """Fetch one artifact.
+
+        A missing bucket is reported as a `ModelChecksumError` rather than
+        propagating an S3 error. The distinction matters: "the model store has not
+        been provisioned" is an operator problem with a known fix, and surfacing it
+        as a raw S3 exception puts an SDK string in front of the person who has to
+        solve it. It also keeps the failure inside the executor's existing refusal
+        path, so the job lands in `failed` with a sentence rather than a stack.
+        """
+        try:
+            resp = self._minio().get_object(MODEL_BUCKET, key)
+        except Exception as exc:  # noqa: BLE001 - every S3 failure is a refusal
+            name = type(exc).__name__
+            if "NoSuchBucket" in name or "NoSuchKey" in name:
+                raise ModelChecksumError(
+                    f"model store is not provisioned: {name} for "
+                    f"{MODEL_BUCKET}/{key}. Run scripts/fetch_models.sh and upload "
+                    f"the artifact with ModelStore.put_model."
+                ) from exc
+            raise ModelChecksumError(f"could not read model {key!r}: {exc}") from exc
         try:
             data: bytes = resp.read()
             return data

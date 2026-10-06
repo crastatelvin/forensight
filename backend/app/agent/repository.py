@@ -319,8 +319,15 @@ async def record_tool_call(
 ) -> AgentToolCall:
     from app.agent.types import ToolCall, ToolResult
 
-    assert isinstance(call, ToolCall)
-    assert isinstance(result, ToolResult)
+    # TypeError rather than assert: `assert` is stripped under `python -O`, so a
+    # mis-typed call would slip through to an AttributeError several lines later,
+    # in a function whose entire job is writing a trustworthy audit row. A missing
+    # check here is worse than a crash -- it means a tool call could be recorded
+    # without the arguments or result hash the audit depends on.
+    if not isinstance(call, ToolCall):
+        raise TypeError(f"call must be a ToolCall, got {type(call).__name__}")
+    if not isinstance(result, ToolResult):
+        raise TypeError(f"result must be a ToolResult, got {type(result).__name__}")
     if not result.result_hash:
         result.compute_hash()
     row = AgentToolCall(

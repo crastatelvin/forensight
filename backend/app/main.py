@@ -12,9 +12,10 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.agent.router import router as agent_router
 from app.analysis.router import router as analysis_router
@@ -32,6 +33,32 @@ from app.health import gather_readiness
 from app.observability import MetricsMiddleware, configure_logging, metrics_router
 
 logger = logging.getLogger("forensight")
+
+
+def _constraint_detail(exc: IntegrityError) -> str:
+    """The violated constraint's name, when the driver exposes one.
+
+    Naming the constraint tells the caller what collided — case number, evidence
+    id, idempotency key — instead of only that "something did".
+
+    asyncpg puts the name on its own error, but SQLAlchemy wraps that in its own
+    `IntegrityError`, so it is reached by unwrapping `.orig` first. SQLite exposes
+    no name at all, hence the generic fallback — better than echoing a driver
+    exception class back to the client.
+    """
+    seen: list[Any] = []
+    node: Any = exc
+    # Walk the cause chain rather than checking one level: asyncpg's error may be
+    # the `.orig` of SQLAlchemy's wrapper, or wrapped again depending on version.
+    for _ in range(5):
+        node = getattr(node, "orig", None) or getattr(node, "__cause__", None)
+        if node is None or node in seen:
+            break
+        seen.append(node)
+        name = getattr(node, "constraint_name", None)
+        if name:
+            return str(name)
+    return "a unique constraint"
 
 
 class MissingSecretKeyError(RuntimeError):
@@ -158,6 +185,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agent_router)
     app.include_router(metrics_router)
 
+    # A unique-constraint violation is a client mistake, not a server fault.
+    #
+    # Without this, creating a case whose number already existed returned **500**,
+    # which is wrong twice over: it blames the server for the caller's duplicate,
+    # and it leaks a stack trace through the 500 body. Found by creating the same
+    # case number twice against the running stack.
+    #
+    # Registered app-wide rather than per-route so every unique constraint gets
+    # the same treatment, including ones added by later phases.
+    @app.exception_handler(IntegrityError)
+    async def _integrity_error(request: Request, exc: IntegrityError) -> JSONResponse:
+        detail = _constraint_detail(exc)
+        logger.warning(
+            "integrity constraint violated on %s %s: %s", request.method, request.url.path, detail
+        )
+        return JSONResponse(
+            status_code=409,
+            content={"detail": f"conflicts with an existing record: {detail}"},
+        )
+
     @app.get("/healthz", tags=["health"])
     async def healthz() -> dict[str, str]:
         """Liveness: process is up. No dependency checks."""
@@ -178,7 +225,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/capabilities", tags=["health"])
     async def capabilities() -> dict[str, object]:
-        """Report analyzer capabilities; GPU modules degrade cleanly (T0.5)."""
+        """Report analyzer capabilities; GPU modules degrade cleanly (T0.5).
+
+        Built from the analysis registry, so the list is the shipped analyzers
+        rather than a hand-maintained copy that can drift from the code.
+        """
         caps = get_capabilities(app.state.settings)
         return {
             "gpu_available": app.state.settings.gpu_available,
@@ -187,6 +238,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     "name": c.name,
                     "available": c.available,
                     "requires_gpu": c.requires_gpu,
+                    "version": c.version,
                     **({"reason": c.reason} if c.reason else {}),
                 }
                 for c in caps
