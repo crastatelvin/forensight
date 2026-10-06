@@ -186,17 +186,21 @@ export interface ToolCallRead {
 }
 
 /**
- * A citation the agent attached to a claim, from the stored checkpoint.
+ * A citation the agent attached to a claim.
  *
- * This is the honesty mechanism: a claim without a resolvable citation is not
- * rendered as an assertion. See `Citation` in `app/agent/types.py`.
+ * Mirrors `Citation.as_dict` on the backend — deliberately delegated there rather
+ * than hand-written in two places. These fields were originally invented as
+ * `module`/`locator`/`quote`, none of which exist, so a client typed against the
+ * invention rather than the contract and would have rendered nothing.
  */
 export interface CitationRead {
-  evidence_id: string;
   result_id: string;
-  module: string;
-  locator: string;
-  quote: string;
+  evidence_id: string;
+  analyzer: string;
+  score: number;
+  threshold: number;
+  model_version: string;
+  tier: string;
 }
 
 /** A claim and the results it rests on. */
@@ -205,31 +209,48 @@ export interface ClaimRead {
   citations: CitationRead[];
 }
 
+/** One tool call as recorded in the run's checkpoint state. */
+export interface AgentToolCallRead {
+  tool: string;
+  call_id: string;
+  args: Record<string, unknown>;
+  args_hash: string;
+  /** Joined from the matching result; a call with no result is never `true`. */
+  ok: boolean;
+  error: string;
+  result_hash: string;
+  approved_action_id: string;
+}
+
 /**
- * `RunRead` from the agent router, plus the checkpoint fields the console renders.
+ * An agent run, as the API serves it.
  *
- * The SSE stream's `start` and `done` events both carry this shape, so the console
- * renders identically whether it connected mid-run or watched it from the start.
+ * The identifier is `run_id`, not `id` — the run payload is flat and predates the
+ * REST convention, so the frontend follows it rather than the frontend wishing it
+ * were different. Note also that the pending action is three flat fields
+ * (`pending_action_id`, `pending_tool`, `pending_args`) rather than a nested
+ * object, and `claims`/`citations`/`tool_calls`/`messages` were absent entirely
+ * until Phase 7, which meant the agent's provenance was invisible to every client.
  */
 export interface AgentRunRead {
-  id: string;
+  run_id: string;
   case_id: string;
+  thread_id: string;
   status: string;
   step: string;
   objective: string;
   report: string;
   refusal: string;
   error: string;
-  pending: {
-    action_id: string;
-    tool: string;
-    args: Record<string, unknown>;
-    reason: string;
-    requested_at: string;
-  } | null;
+  model: string;
+  pending_action_id: string;
+  pending_tool: string;
+  pending_args: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
   claims: ClaimRead[];
-  tool_calls: ToolCallRead[];
   citations: CitationRead[];
+  tool_calls: AgentToolCallRead[];
   messages: Array<{ role: string; content: string }>;
 }
 

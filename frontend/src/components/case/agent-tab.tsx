@@ -1,12 +1,13 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { EvidenceRead, AgentRunRead, PendingApproval } from "@/lib/types";
+import type { AgentRunRead, EvidenceRead, PendingApproval } from "@/lib/types";
 import {
   startRunAction,
   approveActionAction,
   rejectActionAction,
 } from "@/app/cases/[caseId]/agent-actions";
+import { formatDateTime } from "@/lib/format";
 import {
   Button,
   Card,
@@ -43,9 +44,12 @@ interface StreamEvent {
 export function AgentTab({
   caseId,
   evidence,
+  existingRuns,
 }: {
   caseId: string;
   evidence: EvidenceRead[];
+  /** Runs already on this case, newest first. `null` means the list failed. */
+  existingRuns: AgentRunRead[] | null;
 }) {
   const [phase, setPhase] = useState<Phase>("idle");
   const [objective, setObjective] = useState("");
@@ -139,8 +143,8 @@ export function AgentTab({
     setDecisionBusy(true);
     setDecisionError(null);
     const result = approve
-      ? await approveActionAction(run!.id, actionId)
-      : await rejectActionAction(run!.id, actionId);
+      ? await approveActionAction(run!.run_id, actionId)
+      : await rejectActionAction(run!.run_id, actionId);
     setDecisionBusy(false);
 
     if (!result.ok) {
@@ -150,7 +154,7 @@ export function AgentTab({
     setPending(null);
     // Reconnect with resume=false so the stream continues from the checkpoint the
     // decision just moved, rather than re-running the step that was approved.
-    const source = new EventSource(`/api/agent/${run!.id}/stream?resume=0`);
+    const source = new EventSource(`/api/agent/${run!.run_id}/stream?resume=0`);
     sourceRef.current = source;
     setPhase("streaming");
     source.onmessage = (e) => {
@@ -315,18 +319,104 @@ export function AgentTab({
         </Card>
       ) : null}
 
-      {run ? (
-        <AgentOutput run={run} evidence={evidence} />
-      ) : phase === "idle" && !error ? (
+      {run ? <AgentOutput run={run} evidence={evidence} /> : null}
+
+      {existingRuns === null ? (
+        <Notice tone="alert" title="Could not load this case's agent runs">
+          Runs already on this case exist and are not shown. That is a failed load, not
+          an empty history.
+        </Notice>
+      ) : existingRuns.length > 0 ? (
+        <RunHistory
+          runs={existingRuns}
+          evidence={evidence}
+          activeRunId={run?.run_id ?? null}
+        />
+      ) : phase === "idle" && !run && !error ? (
         <Card>
           <EmptyState
             icon="◈"
-            title="No run yet"
+            title="No runs yet"
             hint="Give the agent an objective. It will read the case, call analyzers, and cite every result it relies on — or decline if it cannot."
           />
         </Card>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Every run already on this case, newest first.
+ *
+ * A run is a durable record, so it is listed here and re-rendered on reload. Each
+ * row states its outcome in words — "completed", "declined" — rather than relying
+ * on a colour, and a declined run is marked as a considered refusal rather than a
+ * failure, because the difference matters to whoever reads the case afterwards.
+ */
+function RunHistory({
+  runs,
+  evidence,
+  activeRunId,
+}: {
+  runs: AgentRunRead[];
+  evidence: EvidenceRead[];
+  activeRunId: string | null;
+}) {
+  return (
+    <Card>
+      <CardHeader
+        title={`Runs on this case (${runs.length})`}
+        subtitle="Newest first. Every run is kept with its citations and tool-call audit."
+      />
+      <CardBody className="space-y-2">
+        {runs.map((r) => {
+          const declined = r.status === "declined";
+          const failed = r.status === "failed";
+          return (
+            <details
+              key={r.run_id}
+              open={r.run_id === activeRunId}
+              className="rounded-md border border-border-subtle"
+            >
+              <summary className="flex cursor-pointer flex-wrap items-center gap-2 px-3 py-2">
+                <Badge
+                  tone={failed ? "alert" : declined ? "warn" : "calm"}
+                  title={declined ? r.refusal : r.error}
+                >
+                  {r.status}
+                </Badge>
+                <span className="text-xs font-medium">{r.objective}</span>
+                <span className="ml-auto flex items-center gap-2 text-[11px] text-tertiary">
+                  {r.claims.length > 0 ? (
+                    <span className="text-accent">
+                      {r.claims.length} claim{r.claims.length === 1 ? "" : "s"}
+                    </span>
+                  ) : null}
+                  {r.tool_calls.length > 0 ? (
+                    <span>{r.tool_calls.length} tool calls</span>
+                  ) : null}
+                  <span className="font-mono">{r.model}</span>
+                  <time dateTime={r.created_at}>{formatDateTime(r.created_at)}</time>
+                </span>
+              </summary>
+              <div className="border-t border-border-subtle px-3 py-2.5">
+                {declined && r.refusal ? (
+                  <Notice tone="warn" title="Declined to answer">
+                    {r.refusal}
+                  </Notice>
+                ) : null}
+                {failed && r.error ? (
+                  <Notice tone="alert" title="The run failed">
+                    {r.error}
+                  </Notice>
+                ) : null}
+                <AgentOutput run={r} evidence={evidence} />
+              </div>
+            </details>
+          );
+        })}
+      </CardBody>
+    </Card>
   );
 }
 
@@ -353,6 +443,7 @@ function AgentOutput({
     const node = transcriptRef.current;
     if (node) node.scrollTop = node.scrollHeight;
   }, [run.report]);
+
   const filename = (id: string) =>
     evidence.find((e) => e.id === id)?.filename ?? `${id.slice(0, 8)}…`;
 
@@ -408,12 +499,21 @@ function AgentOutput({
                   <div className="mt-2 flex flex-wrap gap-1.5">
                     {claim.citations?.length ? (
                       claim.citations.map((c, j) => (
+                        /* The chip carries the analyzer, the score against its
+                           own threshold, and the evidence it came from — because
+                           a citation that names a file without saying what was
+                           measured leaves the reader to guess at the claim. */
                         <span
                           key={j}
-                          title={c.quote}
+                          title={
+                            `${c.analyzer} scored ${c.score.toFixed(4)} against a ` +
+                            `threshold of ${c.threshold} · Tier ${c.tier} · ` +
+                            `${c.model_version}`
+                          }
                           className="inline-flex items-center gap-1 rounded border border-accent-border bg-accent-subtle px-1.5 py-0.5 text-[10px] text-accent"
                         >
-                          <span className="font-mono font-medium">{c.module}</span>
+                          <span className="font-mono font-medium">{c.analyzer}</span>
+                          <span className="tabular-nums">{c.score.toFixed(3)}</span>
                           <span className="opacity-70">{filename(c.evidence_id)}</span>
                         </span>
                       ))

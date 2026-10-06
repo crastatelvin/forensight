@@ -151,9 +151,9 @@ class AgentGraph:
         self,
         *,
         session: AsyncSession,
-        model: ChatModel,
         settings: Any,
         run: AgentRun,
+        model: ChatModel | None = None,
         case_number: str = "",
         case_title: str = "",
     ) -> None:
@@ -168,8 +168,35 @@ class AgentGraph:
     # --- entry points ---
 
     async def start(self, state: AgentState) -> GraphOutcome:
-        await self._enter(state, Step.INTAKE)
+        await self.begin(state)
         return await self.run_until_pause(state)
+
+    async def begin(self, state: AgentState) -> None:
+        """Enter the first step and persist a checkpoint. No model call.
+
+        Split out of `start` so `POST /agent/cases/{id}/runs` can create a run and
+        return immediately, leaving the model work to the SSE stream.
+
+        That split is not cosmetic. `start_run`'s own docstring promised to
+        "return immediately", but it called `start`, which ran the whole agent loop
+        inline -- every LLM round trip -- before answering. On a local 3B model
+        that is tens of seconds, during which the browser sat on a pending request
+        and the console showed "Starting..." forever, with no stream attached and
+        nothing to attach one to yet. Found by driving the UI, not by a test: the
+        backend suite always called the endpoint and waited for it happily.
+
+        The checkpoint written here is what the stream resumes from, so nothing is
+        lost by the split -- the graph still starts at INTAKE either way.
+        """
+        await self._enter(state, Step.INTAKE)
+        await self._checkpoint(state)
+        await update_run(
+            self._session,
+            self._run,
+            status=RunStatus.PENDING.value,
+            step=state.step.value,
+        )
+        await self._session.commit()
 
     async def resume(self, state: AgentState) -> GraphOutcome:
         """Continue from a checkpoint after a process death (T5.7)."""
@@ -177,6 +204,10 @@ class AgentGraph:
 
     async def run_until_pause(self, state: AgentState) -> GraphOutcome:
         """Drive the graph until it terminates or needs a human."""
+        # Refused here rather than at first use, so a graph built only to `begin` a
+        # run cannot be driven and a `None` dereference three steps in — a far worse
+        # thing to debug — is impossible.
+        self._require_model  # noqa: B018 - call the property to assert, discard the value
         while state.step not in TERMINAL_STEPS:
             if state.status is RunStatus.AWAITING_APPROVAL:
                 break
@@ -321,7 +352,7 @@ class AgentGraph:
         # holding tool_calls must carry them too. Selecting only role+content
         # dropped exactly the fields that let the model match a result to the call
         # it made.
-        response = self._model.complete(
+        response = self._require_model.complete(
             [
                 ChatMessage(
                     role=str(m["role"]),
@@ -516,7 +547,7 @@ class AgentGraph:
                 + f"\n\n{_RESPONSE_CONTRACT}",
             }
         )
-        response = self._model.complete(
+        response = self._require_model.complete(
             [ChatMessage(role=m["role"], content=m["content"]) for m in state.messages]
         )
         parsed = parse_json_block(response.content) or {}
@@ -541,13 +572,28 @@ class AgentGraph:
         state.claims = claims
         return claims
 
+    @property
+    def _require_model(self) -> ChatModel:
+        """The model, or a refusal.
+
+        Accessing this rather than `self._model` everywhere means the "cannot
+        drive without a model" rule is enforced in one place, and mypy still knows
+        the value is non-optional at every use.
+        """
+        if self._model is None:
+            raise RuntimeError(
+                "this AgentGraph was constructed without a model; it can begin a "
+                "run but cannot drive one"
+            )
+        return self._model
+
     async def _recall(self, state: AgentState) -> list[str]:
         from app.agent.repository import recall_memory
 
         actor = uuid.UUID(str(self._run.requested_by))
         query = state.objective
         try:
-            vector = self._model.embed([query])[0]
+            vector = self._require_model.embed([query])[0]
         except Exception:  # noqa: BLE001 - recall is an optimisation, not a gate
             vector = []
         rows = await recall_memory(
@@ -561,7 +607,7 @@ class AgentGraph:
 
     async def _remember(self, state: AgentState, summary: str) -> None:
         try:
-            vector = self._model.embed([summary])[0]
+            vector = self._require_model.embed([summary])[0]
         except Exception:  # noqa: BLE001
             vector = []
         content = f"{state.step.value}: {summary}"
@@ -605,7 +651,7 @@ class AgentGraph:
             run_id=str(self._run.id),
             actor_id=uuid.UUID(str(self._run.requested_by)),
             settings=self._settings,
-            services={"model": self._model},
+            services={"model": self._require_model},
         )
 
     @staticmethod

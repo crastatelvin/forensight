@@ -360,6 +360,29 @@ async def list_tool_calls(session: AsyncSession, run_id: uuid.UUID) -> list[Agen
     return list(result.scalars().all())
 
 
+async def list_runs(
+    session: AsyncSession, case_id: uuid.UUID, *, limit: int = 50
+) -> list[AgentRun]:
+    """Every run on a case, newest first.
+
+    Needed because a run's output is durable and must stay readable after the
+    browser that started it is closed. Without this the console showed "No run yet"
+    on every fresh page load, which for a forensic tool means the agent's report,
+    its citations and its tool-call audit trail all disappeared the moment you
+    reloaded — the worst possible behaviour for a record that is meant to be
+    evidence of what was done.
+    """
+    from sqlalchemy import select
+
+    result = await session.execute(
+        select(AgentRun)
+        .where(AgentRun.case_id == case_id)
+        .order_by(AgentRun.created_at.desc())
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
 # --- Memory (P5.B4/T5.6) ---
 
 

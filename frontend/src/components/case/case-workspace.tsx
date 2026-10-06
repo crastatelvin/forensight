@@ -106,7 +106,11 @@ export function CaseWorkspace({
           />
         ) : null}
         {tab === "agent" ? (
-          <AgentTab caseId={bundle.case.id} evidence={bundle.evidence ?? []} />
+          <AgentTab
+            caseId={bundle.case.id}
+            evidence={bundle.evidence ?? []}
+            existingRuns={bundle.runs}
+          />
         ) : null}
         {tab === "findings" ? (
           <FindingsTab

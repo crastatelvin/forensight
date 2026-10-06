@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { apiGet, ApiError } from "@/lib/api";
 import { requireSession } from "@/lib/session";
 import type {
+  AgentRunRead,
   AnalysisJobRead,
   AnalysisResultRead,
   AuditEntryRead,
@@ -37,6 +38,15 @@ export interface CaseBundle {
   findings: FindingRead[] | null;
   timeline: TimelineEventRead[] | null;
   audit: AuditEntryRead[] | null;
+  /**
+   * Agent runs on this case, newest first.
+   *
+   * Fetched here rather than on tab selection so a reload does not present the
+   * console as empty. A run's report, citations and tool-call audit are durable
+   * records of what was done; showing "no run yet" because the browser that
+   * started it is closed would be the wrong default for a forensic tool.
+   */
+  runs: AgentRunRead[] | null;
 }
 
 export async function generateMetadata({
@@ -85,7 +95,7 @@ export default async function CasePage({
     throw error;
   }
 
-  const [evidence, jobs, results, findings, timeline, audit, modules] =
+  const [evidence, jobs, results, findings, timeline, audit, runs, modules] =
     await Promise.all([
       safe<EvidenceRead[]>(`/cases/${caseId}/evidence`),
       safe<AnalysisJobRead[]>(`/cases/${caseId}/analyses`),
@@ -96,6 +106,7 @@ export default async function CasePage({
       // The analyzer catalogue is fetched here rather than by the picker on mount,
       // because a `<select>` that fills in after hydration renders as an empty
       // form first — which reads as broken rather than as loading.
+      safe<AgentRunRead[]>(`/agent/cases/${caseId}/runs`),
       safe<ModuleRead[]>("/modules"),
     ]);
 
@@ -107,6 +118,7 @@ export default async function CasePage({
     findings,
     timeline,
     audit,
+    runs,
   };
 
   return (

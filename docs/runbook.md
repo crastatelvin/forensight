@@ -128,6 +128,14 @@ against `evidence.sha256` after any restore.
 - Multiple API replicas need `FORWARDED_ALLOW_IPS` set to the real proxy, and
   rate limiting stays correct because it is Redis-backed rather than per-process.
 - `WEB_CONCURRENCY` sets gunicorn workers per container.
+- `WEB_TIMEOUT` sets the gunicorn worker timeout (default 900s). **It must exceed
+  the longest agent run.** `GET /agent/runs/{id}/stream` holds a worker open for
+  as long as the model works, and gunicorn SIGKILLs a worker that exceeds this —
+  while logging *"Perhaps out of memory?"*, which points at the wrong thing
+  entirely (the container's cgroup records zero OOM kills). A stream that stops
+  after roughly 30s with no `done` event is this, not a memory problem. Lowering
+  the timeout trades a tight reap for streams that get killed; a deployment that
+  wants both should serve SSE from a separate process.
 - Audit appends serialize on a Postgres advisory lock, so concurrent writers
   across replicas do not fork the chain.
 

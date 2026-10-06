@@ -26,12 +26,13 @@ from app.agent.repository import (
     get_run,
     latest_checkpoint,
     list_checkpoints,
+    list_runs,
     list_tool_calls,
     update_run,
 )
 from app.agent.security import InjectionDetected, validate_operator_instruction
 from app.agent.tools import tool_catalog
-from app.agent.types import AgentState, Decision, RunStatus, Step
+from app.agent.types import AgentState, Citation, Decision, RunStatus, Step
 from app.auth.rbac import CurrentUser, get_current_user, require_roles
 from app.auth.roles import MUTATING_ROLES
 from app.config import Settings, get_settings
@@ -67,6 +68,25 @@ def _model(settings: Settings) -> Any:  # returns the ChatModel protocol
         return resolve_model(settings)
     except ModelError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def _model_name(settings: Settings) -> str:
+    """The configured model, named without building a client for it.
+
+    `start_run` records which model produced a run — real provenance — but no
+    longer *uses* the model, since the SSE stream drives the graph. Resolving one
+    anyway made the endpoint 503 whenever no LLM was configured, which is wrong: a
+    deployment can legitimately create and checkpoint a run while the model service
+    is down, and the refusal should come from the call that actually needs it.
+
+    Falls back to the configured name when the provider cannot be resolved, so a
+    run is never recorded against an unnamed model.
+    """
+    try:
+        return resolve_model(settings).name
+    except ModelError:
+        configured = str(getattr(settings, "llm_model", "") or "").strip()
+        return configured or "unconfigured"
 
 
 # --- schemas ---
@@ -116,7 +136,36 @@ class CheckpointRead(BaseModel):
     created_at: str
 
 
+def _citation(c: Citation) -> dict[str, Any]:
+    """A citation, serialised via its own `as_dict`.
+
+    Delegated rather than field-by-field: hand-writing this is how it came to be
+    wrong the first time (it read `module`, `locator` and `quote`, none of which
+    exist on `Citation`), and `as_dict` is the canonical shape the report builder
+    already uses. One definition of what a citation looks like, not two.
+    """
+    return c.as_dict()
+
+
 def _run_payload(run: Any, state: AgentState | None) -> dict[str, Any]:
+    """A run, plus everything in the state that a client has to be shown.
+
+    The provenance fields are the reason this function is shaped this way. The
+    agent's contract is that it declines rather than asserting what it cannot
+    source -- and that contract is worthless to a reader if the claims, their
+    citations and the tool calls behind them are not in the payload. They were
+    stored in the checkpoint the entire time and simply never serialised, so the
+    only way to check whether a claim was sourced was to query the database
+    directly. A client that renders the agent's prose without showing its sources
+    also quietly undoes the contract, which is the whole reason it exists.
+
+    A claim with an empty `citations` list is emitted *as such*: the UI has to be
+    able to show that an assertion was unsourced, rather than have the claim
+    vanish and leave the reader assuming everything shown is backed.
+
+    Every list field is always present, never omitted, so a client never has to
+    distinguish "no claims" from "an older payload that did not have claims".
+    """
     pending = state.pending if state else None
     return {
         "run_id": str(run.id),
@@ -134,7 +183,59 @@ def _run_payload(run: Any, state: AgentState | None) -> dict[str, Any]:
         "pending_args": pending.args if pending else {},
         "created_at": run.created_at.isoformat(),
         "updated_at": run.updated_at.isoformat(),
+        "claims": [
+            {"text": claim.text, "citations": [_citation(c) for c in claim.citations]}
+            for claim in (state.claims if state else [])
+        ],
+        "citations": [_citation(c) for c in (state.citations if state else [])],
+        "tool_calls": [
+            {
+                "tool": call.name,
+                "call_id": call.call_id,
+                "args": call.args,
+                "args_hash": call.args_hash(),
+                # `ok` is not on ToolCall; a call's success is the result's. Taken
+                # from the matching result so the audit row and the displayed status
+                # cannot disagree.
+                "ok": _result_ok(state, call.call_id),
+                "error": _result_error(state, call.call_id),
+                "result_hash": _result_hash(state, call.call_id),
+                "approved_action_id": "",
+            }
+            for call in (state.tool_calls if state else [])
+        ],
+        "messages": [
+            {"role": m.get("role", ""), "content": m.get("content", "")}
+            for m in (list(state.messages) if state else [])
+            if isinstance(m, dict)
+        ],
     }
+
+
+def _result(state: AgentState | None, call_id: str) -> Any:
+    if state is None:
+        return None
+    for result in state.tool_results:
+        if result.call_id == call_id:
+            return result
+    return None
+
+
+def _result_ok(state: AgentState | None, call_id: str) -> bool:
+    result = _result(state, call_id)
+    # A call with no recorded result is not a success. Defaulting it to True would
+    # render an unexecuted call as a clean one.
+    return bool(result.ok) if result is not None else False
+
+
+def _result_error(state: AgentState | None, call_id: str) -> str:
+    result = _result(state, call_id)
+    return result.error if result is not None else "no result was recorded"
+
+
+def _result_hash(state: AgentState | None, call_id: str) -> str:
+    result = _result(state, call_id)
+    return result.result_hash if result is not None else ""
 
 
 # --- routes ---
@@ -151,6 +252,27 @@ async def list_agent_tools(
     base, geospatial) are absent, not stubbed.
     """
     return tool_catalog()
+
+
+@router.get("/cases/{case_id}/runs")
+async def list_case_runs(
+    case_id: uuid.UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[dict[str, Any]]:
+    """Every agent run on this case, newest first, with its provenance.
+
+    Scoped by the same visibility rule as the case itself, so a run on someone
+    else's case is a 404 rather than a filtered list — a partial list would still
+    tell you that runs exist.
+
+    Each entry carries the full run payload including claims, citations and tool
+    calls, so a report built from this does not need a second round trip per run.
+    """
+    case = await _scoped_case(session, case_id, user)
+    runs = await list_runs(session, case.id, limit=limit)
+    return [_run_payload(run, await load_state(session, run.id)) for run in runs]
 
 
 @router.post("/cases/{case_id}/runs", status_code=201)
@@ -171,7 +293,6 @@ async def start_run(
     except InjectionDetected as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    model = _model(settings)
     thread_id = payload.thread_id or f"case-{case.id}"
     run = await create_run(
         session,
@@ -179,14 +300,18 @@ async def start_run(
         thread_id=thread_id,
         objective=objective,
         actor_id=uuid.UUID(user.id),
-        model=model.name,
+        model=_model_name(settings),
     )
     await append_audit(
         session,
         actor_id=uuid.UUID(user.id),
         action="agent.run.start",
         target=str(run.id),
-        payload={"case_id": str(case.id), "model": model.name, "thread_id": thread_id},
+        payload={
+            "case_id": str(case.id),
+            "model": _model_name(settings),
+            "thread_id": thread_id,
+        },
     )
     await session.commit()
 
@@ -196,16 +321,18 @@ async def start_run(
         thread_id=thread_id,
         objective=objective,
     )
-    graph = AgentGraph(
+    # The first step and a checkpoint only -- no model is resolved and none is
+    # needed. The SSE stream drives the graph, and running it inline meant this
+    # request blocked for every LLM round trip before answering, which is precisely
+    # what the docstring above says this endpoint does not do.
+    await AgentGraph(
         session=session,
-        model=model,
         settings=settings,
         run=run,
         case_number=case.number,
         case_title=case.title,
-    )
-    outcome = await graph.start(state)
-    return _run_payload(outcome.run, outcome.state)
+    ).begin(state)
+    return _run_payload(run, await load_state(session, run.id))
 
 
 @router.get("/runs/{run_id}")

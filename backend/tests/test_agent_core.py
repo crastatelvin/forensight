@@ -13,6 +13,7 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from app.agent.graph import AgentGraph, load_state
@@ -30,6 +31,7 @@ from app.agent.repository import (
     recall_memory,
     write_memory,
 )
+from app.agent.router import _run_payload
 from app.agent.security import (
     InjectionDetected,
     sanitize,
@@ -1107,3 +1109,370 @@ async def test_tool_call_loop_is_bounded(
 
     assert outcome.state.step is Step.INSUFFICIENT_EVIDENCE
     assert "tool calls" in outcome.state.refusal
+
+
+async def test_start_run_returns_before_the_model_runs(
+    client: AsyncClient, seed_users, sessionmaker_fixture
+) -> None:
+    """`POST /runs` must return before the model is called.
+
+    The endpoint's docstring promised to "return immediately" while the
+    implementation ran the whole agent loop inline — every LLM round trip — before
+    answering. In the browser the console sat on "Starting…" with no stream attached
+    and nothing to attach one to yet. Nothing caught it: every backend test calls
+    this endpoint and then waits for it, which is fine when the model replies
+    instantly and is exactly the wrong thing when it does not.
+
+    Asserted on the run's *status*, not on a mock: after a real start the run must be
+    `pending` at step `intake` — entered and checkpointed, but not advanced. If this
+    regresses, the status comes back terminal and the assertion fails.
+    """
+    officer = await _auth(client, seed_users["officer"])
+    cid = (
+        await client.post(
+            "/cases", headers=officer, json={"number": "ASRT-1", "title": "Early return"}
+        )
+    ).json()["id"]
+
+    resp = await client.post(
+        f"/agent/cases/{cid}/runs", headers=officer, json={"objective": "Summarise."}
+    )
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+
+    assert body["status"] == "pending", f"the graph already ran: {body}"
+    assert body["step"] == "intake", f"unexpected step {body}"
+
+    async with sessionmaker_fixture() as session:
+        from app.agent.repository import AgentRun
+
+        row = await session.get(AgentRun, uuid.UUID(body["run_id"]))
+        assert row is not None and row.status == "pending"
+
+        # And the checkpoint exists, because the stream resumes from it. Without it
+        # the split would lose the first step entirely and the console would hang
+        # on a run that can never be resumed.
+        state = await load_state(session, row.id)
+        assert state is not None, "no checkpoint: the stream has nothing to resume"
+        assert state.step.value == "intake"
+
+
+async def test_the_stream_drives_a_run_that_was_never_run_inline(
+    client: AsyncClient, seed_users, sessionmaker_fixture
+) -> None:
+    """The stream is now the only thing that drives a fresh run.
+
+    Moving the first step out of the POST means that if this path broke, a run
+    would sit at `pending` forever and the console would show a spinner with
+    nothing behind it. So this drives the graph the way the stream does — `resume`
+    from the stored checkpoint — and asserts it actually advances.
+    """
+    officer = await _auth(client, seed_users["officer"])
+    cid = (
+        await client.post(
+            "/cases", headers=officer, json={"number": "ASRT-2", "title": "Stream drives"}
+        )
+    ).json()["id"]
+
+    run_id = (
+        await client.post(
+            f"/agent/cases/{cid}/runs", headers=officer, json={"objective": "Summarise."}
+        )
+    ).json()["run_id"]
+
+    async with sessionmaker_fixture() as session:
+        from app.agent.repository import AgentRun
+
+        run = await session.get(AgentRun, uuid.UUID(run_id))
+        assert run is not None
+        state = await load_state(session, run.id)
+        assert state is not None
+
+        graph = AgentGraph(
+            session=session,
+            model=ScriptedModel([ChatResponse(content="Anything at all")]),
+            settings=_settings(),
+            run=run,
+        )
+        outcome = await graph.resume(state)
+
+        # Whatever the scripted model decides, the graph must have left `pending`
+        # and written a final status. A run still `pending` here is the exact
+        # failure the split could have introduced.
+        assert outcome.state.status.value != "pending", "the stream drove nothing"
+        row = await session.get(AgentRun, uuid.UUID(run_id))
+        assert row is not None
+        assert row.status == outcome.state.status.value
+
+
+async def test_a_run_payload_carries_its_claims_and_their_citations(
+    client: AsyncClient, seed_users, fake_store, sessionmaker_fixture
+) -> None:
+    """A claim's sources must travel with it.
+
+    The provenance fields were stored in the checkpoint the whole time and never
+    serialised, so the only way to check whether an assertion was sourced was to
+    query the database. That makes the agent's core contract — decline rather than
+    assert what cannot be cited — unverifiable by any client, and a UI that renders
+    the prose without the sources quietly undoes it.
+
+    Asserted on a real sourced claim, and on the *shape* of the unsourced case: a
+    claim with no citations must still be present with an empty list, so a client
+    can show "this was asserted without evidence" rather than have it disappear.
+    """
+    officer = await _auth(client, seed_users["officer"])
+    # Order is (case_id, evidence_id, result_id) -- a citation names a *result*.
+    cid, _evidence_id, result_id = await _case_with_analysed_evidence(
+        client, officer, fake_store, "PROV-1"
+    )
+    actor = uuid.UUID((await client.get("/auth/me", headers=officer)).json()["id"])
+    run_id = await _make_run(sessionmaker_fixture, case_id=cid, actor=actor, objective="summarise")
+
+    async with sessionmaker_fixture() as session:
+        from app.agent.repository import AgentRun
+
+        run = await session.get(AgentRun, run_id)
+        assert run is not None
+        graph = AgentGraph(
+            session=session,
+            model=ScriptedModel(
+                [
+                    # Reflector prose first, then the claim block -- the same
+                    # shape as the existing passing tests. Getting the sequence
+                    # wrong here would make this test assert on a graph that never
+                    # reached the report step.
+                    ChatResponse(content="I have reviewed the case and the results."),
+                    ChatResponse(content=_claim_json(result_id, "The file is compressed.")),
+                ]
+            ),
+            settings=_settings(),
+            run=run,
+        )
+        outcome = await graph.start(
+            AgentState(
+                run_id=str(run.id),
+                case_id=cid,
+                thread_id=run.thread_id,
+                objective="summarise",
+            )
+        )
+        assert outcome.state.claims, (
+            f"the scripted model produced no claims: {outcome.state.step} "
+            f"{outcome.state.refusal}"
+        )
+
+        payload = _run_payload(outcome.run, outcome.state)
+    # The four list fields are always present, so a client never has to tell
+    # "nothing here" apart from "this payload predates the field".
+    for key in ("claims", "citations", "tool_calls", "messages"):
+        assert isinstance(payload[key], list), f"{key} missing from the payload"
+
+    assert payload["claims"], "claims did not reach the payload"
+    for claim in payload["claims"]:
+        assert "text" in claim and "citations" in claim
+        # Every claim here cites a real result, so each must carry it.
+        assert claim["citations"], f"a sourced claim lost its citation: {claim}"
+        for citation in claim["citations"]:
+            # Exactly the fields `Citation.as_dict` defines. Asserting the shape
+            # rather than "some keys exist" is what catches a serialiser that
+            # silently drops the score or the tier -- which would make a citation
+            # that no longer says how far it can be pushed.
+            for key in (
+                "result_id",
+                "evidence_id",
+                "analyzer",
+                "score",
+                "threshold",
+                "model_version",
+                "tier",
+            ):
+                assert citation.get(key) not in (None, ""), f"citation lost {key}"
+
+
+async def test_tool_calls_in_a_payload_carry_their_hashes(
+    client: AsyncClient, seed_users, fake_store, sessionmaker_fixture
+) -> None:
+    """A tool call is only auditable if its hashes travel with it.
+
+    `args_hash` is what lets someone verify afterwards that the arguments were not
+    edited, and `result_hash` that the outcome was not. A UI showing a tool call
+    without them is displaying something that cannot be checked — which is the
+    difference between an audit trail and a log.
+
+    Also pins the `ok` semantics: a call whose result was never recorded is *not*
+    reported as successful, because "it did not run" and "it ran and worked" are
+    different facts.
+    """
+    from app.agent.repository import AgentRun
+
+    officer = await _auth(client, seed_users["officer"])
+    cid, _, _ = await _case_with_analysed_evidence(client, officer, fake_store, "PROV-2")
+    actor = uuid.UUID((await client.get("/auth/me", headers=officer)).json()["id"])
+    run_id = await _make_run(sessionmaker_fixture, case_id=cid, actor=actor)
+
+    async with sessionmaker_fixture() as session:
+        run = await session.get(AgentRun, run_id)
+        assert run is not None
+        graph = AgentGraph(
+            session=session,
+            model=ScriptedModel(
+                [
+                    ChatResponse(
+                        tool_calls=[
+                            {
+                                "id": "c1",
+                                "type": "function",
+                                "function": {
+                                    "name": "get_case",
+                                    "arguments": json.dumps({"case_id": cid}),
+                                },
+                            }
+                        ]
+                    ),
+                    ChatResponse(content="Anything"),
+                ]
+            ),
+            settings=_settings(),
+            run=run,
+        )
+        outcome = await graph.start(
+            AgentState(
+                run_id=str(run.id),
+                case_id=cid,
+                thread_id=run.thread_id,
+                objective="summarise",
+            )
+        )
+        payload = _run_payload(outcome.run, outcome.state)
+
+    calls = payload["tool_calls"]
+    assert calls, "no tool call reached the payload"
+    for call in calls:
+        assert len(call["args_hash"]) == 64, call
+        assert call["tool"], "a call has no tool name"
+        if call["ok"]:
+            # A successful call must have a result hash, or the audit is a claim.
+            assert len(call["result_hash"]) == 64, call
+        else:
+            assert call["error"], "a failed call must say why"
+
+
+async def test_a_call_with_no_recorded_result_is_not_reported_as_successful() -> None:
+    """The `ok` default is the point of the previous test.
+
+    `ToolCall` carries no success flag of its own — success lives on the result —
+    so joining the two is a lookup. Getting the default wrong would render an
+    unexecuted call as a clean one, which is the exact shape of a false audit.
+    """
+    from app.agent.router import _run_payload as payload_of
+    from app.agent.types import AgentState, ToolCall, ToolResult
+
+    class _Run:
+        """The minimal surface `_run_payload` reads off an AgentRun."""
+
+        id = uuid.uuid4()
+        case_id = uuid.uuid4()
+        thread_id = "t"
+        status = "completed"
+        step = "done"
+        objective = "o"
+        report = ""
+        refusal = ""
+        error = ""
+        model = "scripted"
+        created_at = datetime(2026, 1, 1, tzinfo=UTC)
+        updated_at = datetime(2026, 1, 1, tzinfo=UTC)
+
+    state = AgentState(
+        run_id="r",
+        case_id="c",
+        thread_id="t",
+        objective="o",
+    )
+    state.tool_calls = [ToolCall(name="get_case", args={}, call_id="c1")]
+    # No tool_results entry for c1 at all.
+
+    payload = payload_of(_Run(), state)
+    assert payload["tool_calls"][0]["ok"] is False
+    assert payload["tool_calls"][0]["result_hash"] == ""
+    assert "no result" in payload["tool_calls"][0]["error"]
+
+    # And once a result exists, the join picks it up.
+    state.tool_results = [ToolResult(call_id="c1", name="get_case", ok=True, output={})]
+    state.tool_results[0].compute_hash()
+    payload = payload_of(_Run(), state)
+    assert payload["tool_calls"][0]["ok"] is True
+    assert len(payload["tool_calls"][0]["result_hash"]) == 64
+
+
+async def test_a_cases_runs_are_listed_with_their_provenance(
+    client: AsyncClient, seed_users
+) -> None:
+    """A run's output must survive the browser that started it.
+
+    There was no endpoint to list a case's runs, so the console rendered "No run
+    yet" on every fresh page load — meaning the agent's report, its citations and
+    its tool-call audit trail all vanished on reload. For a record that is meant to
+    be evidence of what was done, that is about the worst default available.
+
+    Asserted three things: the runs come back, they come back newest-first, and
+    each carries the provenance fields rather than just a status.
+    """
+    officer = await _auth(client, seed_users["officer"])
+    cid = (
+        await client.post("/cases", headers=officer, json={"number": "RLIST-1", "title": "Runs"})
+    ).json()["id"]
+
+    empty = await client.get(f"/agent/cases/{cid}/runs", headers=officer)
+    assert empty.status_code == 200
+    assert empty.json() == []
+
+    made: list[str] = []
+    for objective in ("First look.", "Second look.", "Third look."):
+        resp = await client.post(
+            f"/agent/cases/{cid}/runs", headers=officer, json={"objective": objective}
+        )
+        assert resp.status_code == 201, resp.text
+        made.append(resp.json()["run_id"])
+
+    listing = (await client.get(f"/agent/cases/{cid}/runs", headers=officer)).json()
+    assert len(listing) == 3, listing
+
+    # Newest first, so a reader opening the case sees the most recent work.
+    assert [r["run_id"] for r in listing] == list(reversed(made)), listing
+
+    for entry in listing:
+        # The provenance lists, not just the status.
+        for key in ("claims", "citations", "tool_calls", "messages"):
+            assert isinstance(entry[key], list), f"{key} missing from a listed run"
+        assert entry["objective"] in {"First look.", "Second look.", "Third look."}
+
+
+async def test_another_officers_runs_are_a_404_not_a_filtered_list(
+    client: AsyncClient, seed_users
+) -> None:
+    """A partial answer still leaks that runs exist.
+
+    Returning an empty list for a case you cannot see would be a smaller leak than
+    the rows, but it would also be a lie — "this case has no agent runs" is a
+    different statement from "you may not look", and a reviewer acting on the first
+    is worse off than one told nothing.
+    """
+    officer = await _auth(client, seed_users["officer"])
+    mine = (
+        await client.post("/cases", headers=officer, json={"number": "RLIST-2", "title": "Mine"})
+    ).json()["id"]
+    await client.post(f"/agent/cases/{mine}/runs", headers=officer, json={"objective": "Look."})
+
+    # A genuinely distinct peer officer, not the same user twice.
+    admin = await _auth(client, seed_users["admin"])
+    creds = {"email": "officer-peer@example.com", "password": "OfficerPeer12!"}
+    reg = await client.post("/auth/register", headers=admin, json={**creds, "role": "officer"})
+    assert reg.status_code == 201, reg.text
+    peer = await _auth(client, creds)
+
+    resp = await client.get(f"/agent/cases/{mine}/runs", headers=peer)
+    assert resp.status_code == 404, resp.text
+    # And the body must not be an empty list: "no runs" is a different statement
+    # from "you may not look", and a reviewer acting on the first is worse off.
+    assert resp.json() != [], resp.text

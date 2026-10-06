@@ -474,16 +474,21 @@ MinIO, a real worker — not by any test:
       is cheaper than hand-rolling focus management, and this decision should flip.
 - [x] P7.B2 Auth flows + role dashboards (Admin/Officer/Expert/Reviewer)
 - [~] P7.B3 Agent console: streaming tokens, tool-call cards, citation chips, HITL buttons
-      Built and rendering live data: SSE is proxied through a route handler (the
-      browser cannot add an `Authorization` header to an `EventSource`, and the
-      access cookie is HttpOnly), tool calls render with their `args_hash` and
-      `result_hash`, claims render with citation chips, and the HITL gate shows the
-      parked action's arguments before approving it. **Not yet verified against a
-      live LLM end to end through the browser** — the backend path is covered by
-      `test_agent_live.py`, but that exercise stops at the API. What is unverified
-      is the browser's handling of a real multi-turn stream, and specifically
-      whether a mid-run reconnect after approve/resume loses events. Do that
-      before ticking this.
+      Verified live end to end against `qwen2.5:3b`. Observed run: the agent called
+      `get_case`, then `run_analysis`, then **declined** — "no analyzer results
+      exist for this case yet" — because the queued analysis had not landed when it
+      looked. That refusal is the honesty contract working: it declined rather than
+      asserting something it could not cite, and it is what this tab renders most
+      prominently.
+
+      SSE is proxied through a route handler, because the browser cannot add an
+      `Authorization` header to an `EventSource` and the access cookie is
+      HttpOnly. Tool calls render with their `args_hash` and `result_hash`; claims
+      render with citation chips carrying the analyzer, the score against its own
+      threshold, and the evidence it came from. **The HITL approve/reject round trip
+      has not yet been driven from the browser** — the backend covers it in
+      `test_agent_core.py`, but a mid-run reconnect after approving is exactly the
+      path where events could be lost, and that is unverified.
 - [x] P7.B4 Evidence viewer: image/audio/video/text + metadata + side-by-side + ELA overlay
 - [ ] P7.B5 Dashboards (Recharts) + MapLibre GL geospatial map
 - [x] P7.B6 Dark/light CSS vars; WCAG 2.1 AA (keyboard/ARIA/focus/contrast)
@@ -556,6 +561,34 @@ UI always has.
   rejects with 409 — or render nothing. `CaseRead` now carries
   `allowed_transitions`, filled in by one `case_to_read` helper because there are
   eight call sites and one that forgets it claims a case is closed.
+- **The gunicorn worker timeout was 30s, which kills every agent run.**
+  `GET /agent/runs/{id}/stream` is an SSE response whose purpose is to stay open
+  while the model works, so any run over 30s had its worker SIGKILLed mid-stream.
+  Gunicorn reports that as *"Perhaps out of memory?"* — and the container's cgroup
+  recorded zero OOM kills, so the message sends you looking at the wrong thing.
+  Raised to 900s and configurable via `WEB_TIMEOUT`. No test could have caught it:
+  every backend test drives the graph in-process and never goes through gunicorn.
+- **`POST /agent/cases/{id}/runs` ran the whole agent loop inline** despite its docstring
+  promising to "return immediately", so it blocked for every LLM round trip before
+  answering — 36ms now. The first step and its checkpoint are written by the POST
+  and the SSE stream drives the graph, which is where the work belonged.
+- **The agent's provenance was never serialised.** Claims, citations and tool calls
+  were stored in the checkpoint the whole time and absent from every API response,
+  so the only way to check whether a claim was sourced was to query the database.
+  That makes the agent's central contract — decline rather than assert what cannot
+  be cited — unverifiable by any client, and a UI that renders the prose without
+  the sources quietly undoes it. `_run_payload` now carries all four lists.
+- **No endpoint listed a case's agent runs**, so the console rendered "No run yet"
+  on every fresh page load — the agent's report, its citations and its tool-call
+  audit all vanished on reload. A run is a durable record; for a forensic tool,
+  showing an empty console because the browser that started it is closed is about
+  the worst default available. `GET /agent/cases/{id}/runs` now serves every run
+  with its provenance, scoped by the same visibility rule as the case.
+- **The frontend's agent types were invented, not derived.** They said `id`,
+  `module`, `locator` and `quote`; the real payload has `run_id`, `analyzer`, and
+  no such things. Typed against the contract as wished-for rather than as served,
+  so the console would have rendered nothing. Every one was corrected against a
+  live response.
 - **`safe<T>()` returned `null as T` in the case page.** The dishonest cast
   silenced the compiler, and three components later a list was `.filter`ed without
   a check and crashed the page — which had passed every check, because there were
