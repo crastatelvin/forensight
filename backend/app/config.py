@@ -63,6 +63,11 @@ class Settings(BaseSettings):
     rate_limit_auth_window: int = Field(default=60)  # seconds
     rate_limit_mutation_max: int = Field(default=60)
     rate_limit_mutation_window: int = Field(default=60)
+    #: Reads get their own, much larger budget. One case page renders seven reads
+    #: in parallel, so the write budget was being spent on navigation and the UI
+    #: returned 429 on ordinary use.
+    rate_limit_read_max: int = Field(default=600)
+    rate_limit_read_window: int = Field(default=60)
 
     # Initial admin seed (password MUST come from env; never hardcoded — T1.7).
     seed_admin_email: str = Field(default="")

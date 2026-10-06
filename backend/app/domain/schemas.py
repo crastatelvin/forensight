@@ -8,6 +8,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.domain.models import Case
+
 # Case numbers are quoted into a Content-Disposition header on export, so they
 # must not contain quotes, CR/LF, or path separators. Keeping this a validation
 # (not just sanitization) means the stored value stays the value the user typed.
@@ -52,10 +54,38 @@ class CaseRead(BaseModel):
     due_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    #: The status values this case may legally move to, given where it is now.
+    #:
+    #: Served rather than recomputed by clients: the workflow lives in one place
+    #: (`CASE_TRANSITIONS`), and a UI that hard-codes its own copy will offer a
+    #: move the API then rejects with 409 -- which is exactly the kind of
+    #: disagreement that makes a tool untrustworthy during a live investigation.
+    #: Empty for a terminal status, which is what makes "no moves available" a
+    #: real answer rather than a missing one.
+    allowed_transitions: list[str] = Field(default_factory=list)
 
 
 class CaseTransition(BaseModel):
     target: str = Field(min_length=1, max_length=32)
+
+
+def case_to_read(case: Case) -> CaseRead:
+    """Serialise a Case, filling in the transitions it may legally make.
+
+    One function rather than eight inline `model_validate` calls, because the
+    derived field has to be filled in every time. A call site that forgets it would
+    return a case claiming there are no moves, and a reviewer would conclude the
+    case is closed when it is not.
+    """
+    from app.domain.state_machine import CASE_TRANSITIONS
+
+    return CaseRead.model_validate(case).model_copy(
+        update={
+            "allowed_transitions": sorted(
+                str(s) for s in CASE_TRANSITIONS.get(case.status, frozenset())
+            )
+        }
+    )
 
 
 class EvidenceRead(BaseModel):

@@ -12,6 +12,7 @@ role set.
 from __future__ import annotations
 
 import contextlib
+import logging
 import uuid
 from typing import Annotated, Any
 
@@ -30,7 +31,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.models import User
 from app.auth.rbac import CurrentUser, get_current_user, require_roles
 from app.auth.roles import MUTATING_ROLES, Role
-from app.auth.service import mutation_rate_limit
+from app.auth.service import mutation_rate_limit, read_rate_limit
 from app.config import Settings, get_settings
 from app.db import get_session
 from app.domain.access import visible_case
@@ -66,6 +67,7 @@ from app.domain.schemas import (
     FindingUpdate,
     TimelineEventCreate,
     TimelineEventRead,
+    case_to_read,
 )
 from app.domain.service import IngestService
 from app.domain.state_machine import IllegalTransitionError, assert_transition
@@ -89,8 +91,10 @@ from app.domain.workflow_repo import (
 router = APIRouter(
     prefix="/cases",
     tags=["cases"],
-    dependencies=[Depends(mutation_rate_limit)],
+    dependencies=[Depends(read_rate_limit)],
 )
+
+logger = logging.getLogger("forensight")
 
 # Notifier is wired by the app factory (RedisNotifier in prod, InMemoryNotifier
 # in tests). None means notifications are a no-op.
@@ -157,7 +161,9 @@ async def _notify(*, case_id: uuid.UUID, event: str, payload: dict[str, Any]) ->
 # --- Cases ---
 
 
-@router.post("", response_model=CaseRead, status_code=201)
+@router.post(
+    "", response_model=CaseRead, status_code=201, dependencies=[Depends(mutation_rate_limit)]
+)
 async def create_case(
     payload: CaseCreate,
     user: Annotated[CurrentUser, Depends(require_roles(*MUTATING_ROLES))],
@@ -180,7 +186,7 @@ async def create_case(
         payload={"number": case.number},
     )
     await session.commit()
-    return CaseRead.model_validate(case)
+    return case_to_read(case)
 
 
 @router.get("/audit", response_model=list[AuditEntryRead])
@@ -222,7 +228,7 @@ async def list_all_cases(
 ) -> list[CaseRead]:
     """Cases visible to the caller, newest first (T3.1)."""
     cases = await list_cases(session, limit=limit, offset=offset, user=user)
-    return [CaseRead.model_validate(c) for c in cases]
+    return [case_to_read(c) for c in cases]
 
 
 @router.get("/{case_id}", response_model=CaseRead)
@@ -232,10 +238,10 @@ async def read_case(  # noqa: D401 - must stay after the literal paths above
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CaseRead:
     case = await _scoped_case(session, case_id, user)
-    return CaseRead.model_validate(case)
+    return case_to_read(case)
 
 
-@router.patch("/{case_id}", response_model=CaseRead)
+@router.patch("/{case_id}", response_model=CaseRead, dependencies=[Depends(mutation_rate_limit)])
 async def update_case(
     case_id: uuid.UUID,
     payload: CaseUpdate,
@@ -245,7 +251,7 @@ async def update_case(
     case = await _scoped_case(session, case_id, user)
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
-        return CaseRead.model_validate(case)
+        return case_to_read(case)
     for field, value in changes.items():
         setattr(case, field, value)
     await append_audit(
@@ -256,10 +262,12 @@ async def update_case(
         payload={"fields": sorted(changes)},
     )
     await session.commit()
-    return CaseRead.model_validate(case)
+    return case_to_read(case)
 
 
-@router.post("/{case_id}/transition", response_model=CaseRead)
+@router.post(
+    "/{case_id}/transition", response_model=CaseRead, dependencies=[Depends(mutation_rate_limit)]
+)
 async def transition_case(
     case_id: uuid.UUID,
     payload: CaseTransition,
@@ -289,13 +297,18 @@ async def transition_case(
         payload={"to": payload.target},
     )
     await session.commit()
-    return CaseRead.model_validate(case)
+    return case_to_read(case)
 
 
 # --- Evidence ---
 
 
-@router.post("/{case_id}/evidence", response_model=EvidenceRead, status_code=201)
+@router.post(
+    "/{case_id}/evidence",
+    response_model=EvidenceRead,
+    status_code=201,
+    dependencies=[Depends(mutation_rate_limit)],
+)
 async def upload_evidence(
     case_id: uuid.UUID,
     user: Annotated[CurrentUser, Depends(require_roles(*MUTATING_ROLES))],
@@ -369,7 +382,20 @@ async def download_evidence(
     user: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
+    disposition: Annotated[str, Query(pattern="^(attachment|inline)$")] = "attachment",
 ) -> Response:
+    """Serve the original bytes of one piece of evidence.
+
+    `disposition=inline` exists for the in-app viewer, which has to render the
+    image rather than save it -- `attachment` alone makes every `<img>` in the UI a
+    failed load, which is a viewer that silently shows nothing. Download stays the
+    default, because that is what the endpoint is for and because rendering
+    untrusted bytes inline is the less safe of the two.
+
+    The bytes are the original file, hash-verified in `service.download` before
+    they are returned; a mismatch is a 409 with an audit row, never a subtly
+    altered image.
+    """
     # T2.2: object-id only; no path input is ever accepted.
     evidence = await _scoped_evidence(session, evidence_id, user)
     service = _ingest_service(settings)
@@ -378,7 +404,12 @@ async def download_evidence(
             session, evidence_id=evidence.id, actor_id=uuid.UUID(user.id)
         )
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail="Evidence not found") from exc
+        # 410, not 404. The record exists and the bytes do not, which is an
+        # integrity incident -- and answering 404 would make it indistinguishable
+        # from a mistyped id, so nobody would go looking. 410 says "this was here
+        # and is now permanently unavailable", which is the truth.
+        logger.error("evidence %s has a record but no stored bytes: %s", evidence_id, exc)
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
     except ValueError as exc:
         # The integrity-failure audit row was flushed but not committed; without
         # this commit the one event that most needs to be durable is rolled back.
@@ -388,7 +419,12 @@ async def download_evidence(
     return Response(
         content=data,
         media_type=evidence.content_type,
-        headers={"Content-Disposition": f'attachment; filename="{evidence.filename}"'},
+        headers={
+            "Content-Disposition": f'{disposition}; filename="{evidence.filename}"',
+            # Evidence is immutable, so the bytes for a given id never change.
+            # Caching them is safe and makes the viewer instant on re-open.
+            "Cache-Control": "private, max-age=3600, immutable",
+        },
     )
 
 
@@ -409,7 +445,9 @@ async def evidence_custody(
 # --- Assignment (T3.2) ---
 
 
-@router.post("/{case_id}/assign", response_model=CaseRead)
+@router.post(
+    "/{case_id}/assign", response_model=CaseRead, dependencies=[Depends(mutation_rate_limit)]
+)
 async def assign_case(
     case_id: uuid.UUID,
     payload: CaseAssign,
@@ -434,13 +472,18 @@ async def assign_case(
         event="case.assigned",
         payload={"assigned_to": str(payload.assigned_to), "by": user.id},
     )
-    return CaseRead.model_validate(case)
+    return case_to_read(case)
 
 
 # --- Findings ---
 
 
-@router.post("/{case_id}/findings", response_model=FindingRead, status_code=201)
+@router.post(
+    "/{case_id}/findings",
+    response_model=FindingRead,
+    status_code=201,
+    dependencies=[Depends(mutation_rate_limit)],
+)
 async def add_finding(
     case_id: uuid.UUID,
     payload: FindingCreate,
@@ -479,7 +522,11 @@ async def get_findings(
     return [FindingRead.model_validate(f) for f in rows]
 
 
-@router.patch("/{case_id}/findings/{finding_id}", response_model=FindingRead)
+@router.patch(
+    "/{case_id}/findings/{finding_id}",
+    response_model=FindingRead,
+    dependencies=[Depends(mutation_rate_limit)],
+)
 async def edit_finding(
     case_id: uuid.UUID,
     finding_id: uuid.UUID,
@@ -506,7 +553,9 @@ async def edit_finding(
     return FindingRead.model_validate(finding)
 
 
-@router.delete("/{case_id}/findings/{finding_id}", status_code=204)
+@router.delete(
+    "/{case_id}/findings/{finding_id}", status_code=204, dependencies=[Depends(mutation_rate_limit)]
+)
 async def remove_finding(
     case_id: uuid.UUID,
     finding_id: uuid.UUID,
@@ -532,7 +581,12 @@ async def remove_finding(
 # --- Entities ---
 
 
-@router.post("/{case_id}/entities", response_model=EntityRead, status_code=201)
+@router.post(
+    "/{case_id}/entities",
+    response_model=EntityRead,
+    status_code=201,
+    dependencies=[Depends(mutation_rate_limit)],
+)
 async def add_entity(
     case_id: uuid.UUID,
     payload: EntityCreate,
@@ -571,7 +625,9 @@ async def get_entities(
     return [EntityRead.model_validate(e) for e in rows]
 
 
-@router.delete("/{case_id}/entities/{entity_id}", status_code=204)
+@router.delete(
+    "/{case_id}/entities/{entity_id}", status_code=204, dependencies=[Depends(mutation_rate_limit)]
+)
 async def remove_entity(
     case_id: uuid.UUID,
     entity_id: uuid.UUID,
@@ -597,7 +653,12 @@ async def remove_entity(
 # --- Timeline ---
 
 
-@router.post("/{case_id}/timeline", response_model=TimelineEventRead, status_code=201)
+@router.post(
+    "/{case_id}/timeline",
+    response_model=TimelineEventRead,
+    status_code=201,
+    dependencies=[Depends(mutation_rate_limit)],
+)
 async def add_timeline_event(
     case_id: uuid.UUID,
     payload: TimelineEventCreate,
@@ -649,7 +710,7 @@ async def search(
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[CaseRead]:
     results = await search_cases(session, q, limit=limit, user=user)
-    return [CaseRead.model_validate(c) for c in results[offset : offset + limit]]
+    return [case_to_read(c) for c in results[offset : offset + limit]]
 
 
 # --- Exports (T3.4) ---

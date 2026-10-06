@@ -141,3 +141,60 @@ def test_constraint_detail_prefers_the_driver_constraint_name() -> None:
 
     anonymous = IntegrityError("stmt", {}, Exception("duplicate key"))
     assert _constraint_detail(anonymous) == "a unique constraint"
+
+
+# --- rate limiting: reads and writes are different budgets ------------------
+
+
+async def test_reading_a_case_page_does_not_exhaust_the_write_budget(
+    client: AsyncClient, seed_users: dict[str, dict[str, str]]
+) -> None:
+    """A case page is several reads; it must not be throttled like a write flood.
+
+    The whole cases router was limited by `mutation_rate_limit` at 60/min, so
+    ordinary navigation returned 429: one case page renders seven reads in
+    parallel, which is the UI's normal behaviour, not an attack. Reads now have
+    their own, larger budget and writes keep the tight one — sharing a bucket
+    meant a page full of reads spent the write allowance, and the only way to
+    "fix" that by lowering the number would have throttled real writes.
+    """
+    officer = {"Authorization": f"Bearer {await _login(client, seed_users['officer'])}"}
+    case_id = (
+        await client.post("/cases", headers=officer, json={"number": "RL-1", "title": "Reads"})
+    ).json()["id"]
+
+    # Well past the write budget of 60/min. Every one of these must succeed.
+    reads: list[int] = []
+    for _ in range(70):
+        for path in ("", "/evidence", "/findings", "/timeline"):
+            resp = await client.get(f"/cases/{case_id}{path}", headers=officer)
+            reads.append(resp.status_code)
+            assert resp.status_code == 200, (
+                f"{path} returned {resp.status_code} after {len(reads)} reads: "
+                f"{resp.text[:120]}"
+            )
+    assert len(reads) == 280
+
+
+async def test_writes_are_still_capped(
+    client: AsyncClient, seed_users: dict[str, dict[str, str]]
+) -> None:
+    """Splitting the buckets must not have removed the write ceiling.
+
+    The read budget went up by 10x, so the thing that would catch this is a test
+    asserting writes are *still* limited — otherwise the fix is just "raise the
+    numbers", which is not a fix.
+    """
+    officer = {"Authorization": f"Bearer {await _login(client, seed_users['officer'])}"}
+    statuses: list[int] = []
+    for i in range(70):
+        resp = await client.post(
+            "/cases",
+            headers=officer,
+            json={"number": f"RLW-{i}", "title": "Write flood"},
+        )
+        statuses.append(resp.status_code)
+        if resp.status_code == 429:
+            break
+    assert 429 in statuses, f"writes were never limited: {set(statuses)}"
+    assert statuses[0] == 201, "the first write should succeed"

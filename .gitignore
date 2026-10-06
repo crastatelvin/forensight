@@ -51,3 +51,10 @@ secrets/
 # Docker / build
 *.log
 .trivycache/
+
+# frontend
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+frontend/test-results/
+frontend/playwright-report/

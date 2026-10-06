@@ -56,14 +56,43 @@ async def enforce_auth_rate_limit(request: Request, settings: Settings) -> None:
     )
 
 
+async def read_rate_limit(
+    request: Request,
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> None:
+    """Flood ceiling on reads.
+
+    Applied once via the router's `dependencies=[...]`, so a new endpoint cannot
+    forget it.
+
+    This was previously `mutation_rate_limit` on the same router, which capped
+    *reads* at 60/min under a bucket named for writes. That is wrong in two
+    directions: the budget is far too small for real use — one case page renders
+    seven reads in parallel, so a handful of case views exhausted it and the UI
+    started returning 429 on ordinary navigation — and the name misdescribed what
+    it protected. Reads are cheap, scoped and authenticated; the thing worth
+    capping tightly is writes, so that is a separate limiter with its own budget.
+    """
+    await _enforce(
+        request,
+        settings,
+        bucket="read",
+        max_hits=settings.rate_limit_read_max,
+        window=settings.rate_limit_read_window,
+    )
+
+
 async def mutation_rate_limit(
     request: Request,
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> None:
-    """Ceiling on writes/reads for API routes (P1.B4).
+    """Tight ceiling on writes.
 
-    Applied once via the router's `dependencies=[...]` rather than repeated on
-    each mutation, so a new endpoint cannot forget it.
+    Declared per mutating route rather than router-wide, because the two budgets
+    answer different questions: how much reading a client may do, and how much
+    changing it may do. Sharing one bucket meant a page full of reads consumed the
+    write budget, and lowering the write budget to compensate would have throttled
+    actual writes to fix a read problem.
     """
     await _enforce(
         request,

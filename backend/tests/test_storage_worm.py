@@ -65,3 +65,52 @@ def test_worm_rejects_overwrite_and_delete() -> None:
         )
     )
     assert errors, "expected object-lock to reject deletion of the locked version"
+
+
+def test_missing_object_is_a_file_not_found_not_an_s3_error() -> None:
+    """An absent object must surface as `FileNotFoundError`.
+
+    Every caller in this codebase already handles `FileNotFoundError` as "the
+    evidence is not available". Letting the minio SDK's `S3Error` past that turned
+    the condition into an unhandled 500 with a stack trace — in the download
+    endpoint *and* in the in-app viewer.
+
+    Found by running the real stack: a case held an evidence row whose object was
+    never in MinIO, and viewing it produced a 500. The green suite could not see
+    it, because nothing constructed that state.
+
+    Matched on the error *code*, not the class: the SDK raises one `S3Error` for
+    every failure, so a class check would miss `NoSuchKey` completely.
+    """
+    store = _store()
+    store.ensure_bucket()
+    missing = uuid.uuid4().hex + "f" * 32
+
+    with pytest.raises(FileNotFoundError) as caught:
+        store.get_evidence(missing)
+    # The message has to name the object, or whoever is chasing a missing artifact
+    # has nothing to search for.
+    assert missing in str(caught.value)
+
+
+def test_an_unprovisioned_bucket_is_reported_the_same_way() -> None:
+    """`NoSuchBucket` is an operational fault, not a missing file.
+
+    Both mean "the bytes are not retrievable", so both get the same exception type
+    — but the distinction is in the *class check*, and if it ever regressed to
+    `NoSuchKey` only, a deployment with no evidence bucket would return a raw S3
+    error again. Asserted directly rather than by creating a bucket-less store.
+    """
+    from app.domain.storage import _is_missing
+
+    class _S3ish(Exception):
+        def __init__(self, code: str) -> None:
+            super().__init__(code)
+            self.code = code
+
+    assert _is_missing(_S3ish("NoSuchKey")) is True
+    assert _is_missing(_S3ish("NoSuchBucket")) is True
+    assert _is_missing(_S3ish("AccessDenied")) is False
+    # A code-less error must not be treated as "missing" -- that would disguise an
+    # auth or network fault as an absent file.
+    assert _is_missing(Exception("boom")) is False

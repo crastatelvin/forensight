@@ -195,3 +195,65 @@ def test_disclaimer_does_not_overclaim() -> None:
     # inside its own negation, "Not proof of tampering".
     for overclaim in ("proves", "confirmed", "is tampered", "authentic image"):
         assert overclaim not in text
+
+
+# --- the ELA overlay the evidence viewer renders (P7.B4) --------------------
+
+
+def test_ela_overlay_renders_a_png_of_the_error_field() -> None:
+    """The overlay must be a real image, sized like the evidence.
+
+    A PNG that is the wrong size, or not a PNG at all, still *looks* like a
+    successful overlay in the viewer — it just renders as a broken image or a
+    stretched thumbnail. So this asserts the format and the geometry, not just
+    that something came back.
+    """
+    import io
+
+    from app.analysis.overlay import render_ela_png
+    from PIL import Image
+
+    from tests.fixtures_images import make_tampered_jpeg
+
+    source = make_tampered_jpeg()
+    png = render_ela_png(source)
+
+    assert png[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
+
+    with Image.open(io.BytesIO(png)) as rendered:
+        rendered.load()
+        assert rendered.size == Image.open(io.BytesIO(source)).size
+        # Black-to-white, not a flat field. A constant map is the signature of a
+        # division by zero in the ramp, and it looks like a valid overlay.
+        assert rendered.convert("L").getextrema()[1] > 32, "overlay is uniformly black"
+
+
+def test_ela_overlay_refuses_a_format_the_technique_cannot_use() -> None:
+    """ELA is defined on JPEG re-compression.
+
+    A PNG has no compression history to read, so the honest answer is a refusal.
+    Rendering something anyway would be an overlay showing structure that the
+    technique never measured — the exact failure this project treats as its worst.
+    """
+    from app.analysis.overlay import render_ela_png
+    from app.analysis.types import AnalysisNotApplicable
+
+    from tests.fixtures_images import make_prnu_image
+
+    with pytest.raises(AnalysisNotApplicable):
+        render_ela_png(make_prnu_image(0, scene=50))
+
+
+def test_ela_overlay_is_deterministic() -> None:
+    """Two renders of the same evidence must be byte-identical.
+
+    The overlay sits next to a score that is pinned by golden tests; an overlay
+    that shifted between renders would make the two disagree visually with no way
+    for a reviewer to tell which one belongs to which.
+    """
+    from app.analysis.overlay import render_ela_png
+
+    from tests.fixtures_images import make_tampered_jpeg
+
+    source = make_tampered_jpeg()
+    assert render_ela_png(source) == render_ela_png(source)

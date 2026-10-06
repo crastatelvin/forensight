@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 from app.agent.router import router as agent_router
+from app.analysis.router import overlay_router
 from app.analysis.router import router as analysis_router
 from app.auth.middleware import CSRFMiddleware, SecurityHeadersMiddleware
 from app.auth.ratelimit import (
@@ -182,6 +183,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(cases_router)
     app.include_router(analysis_router)
+    app.include_router(overlay_router)
     app.include_router(agent_router)
     app.include_router(metrics_router)
 

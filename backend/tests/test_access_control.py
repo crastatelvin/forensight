@@ -268,3 +268,65 @@ async def test_unknown_case_is_404_not_empty_list(
         f"/cases/{missing}/timeline",
     ):
         assert (await client.get(path, headers=officer)).status_code == 404
+
+
+async def test_case_reports_its_legal_transitions(
+    client: AsyncClient, seed_users: dict[str, dict[str, str]]
+) -> None:
+    """The workflow is served, not reimplemented by clients.
+
+    The state machine lives in one place (`CASE_TRANSITIONS`). A UI holding its own
+    copy will offer a move the API then rejects with 409, and a reviewer reads that
+    as a broken case rather than a stale button -- so `CaseRead` carries the legal
+    moves and every serialisation site fills them in.
+
+    `case_to_read` exists because there are eight call sites: one that forgets the
+    derived field returns a case claiming there are no moves, which reads as
+    "closed" when it is not.
+    """
+    headers = await _auth(client, seed_users["officer"])
+    case_id = await _make_case(client, headers, "TX-1")
+
+    body = (await client.get(f"/cases/{case_id}", headers=headers)).json()
+
+    # Intake can open or archive. An empty list would make the workflow look stuck.
+    assert "open" in body["allowed_transitions"], body
+    assert "archived" in body["allowed_transitions"], body
+
+    moved = await client.post(
+        f"/cases/{case_id}/transition", headers=headers, json={"target": "open"}
+    )
+    assert moved.status_code == 200, moved.text
+    assert "investigating" in moved.json()["allowed_transitions"]
+
+    # The list endpoint must agree with the detail endpoint. Re-read the detail
+    # first: `body` is the pre-transition state, so comparing against it would be
+    # comparing a stale answer to a fresh one and always fail.
+    current = (await client.get(f"/cases/{case_id}", headers=headers)).json()
+    listing = await client.get("/cases?limit=50", headers=headers)
+    match = [c for c in listing.json() if c["id"] == case_id]
+    assert match, listing.text
+    assert match[0]["allowed_transitions"] == current["allowed_transitions"], (
+        "the list and detail endpoints disagree about the workflow, which is how a "
+        "button ends up offering a move the API will reject"
+    )
+
+
+async def test_archived_case_offers_no_further_moves(
+    client: AsyncClient, seed_users: dict[str, dict[str, str]]
+) -> None:
+    """`archived` is terminal, and that has to be visible as an empty list.
+
+    An absent field and an empty list mean different things: one is a bug, the
+    other is a completed case. Returning `[]` is what makes the difference legible
+    to a client.
+    """
+    headers = await _auth(client, seed_users["officer"])
+    case_id = await _make_case(client, headers, "TX-ARCHIVE")
+
+    for target in ("open", "archived"):
+        await client.post(f"/cases/{case_id}/transition", headers=headers, json={"target": target})
+
+    body = (await client.get(f"/cases/{case_id}", headers=headers)).json()
+    assert body["status"] == "archived"
+    assert body["allowed_transitions"] == [], body

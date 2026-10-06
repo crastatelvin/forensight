@@ -1,0 +1,210 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens.
+ *
+ * Colour lives here as CSS variables and never as Tailwind classes at the call
+ * site, for two reasons. Dark mode becomes a single `.dark` class on <html>
+ * instead of a `dark:` variant on every element — which is where dark modes
+ * usually rot, because one forgotten variant is one invisible-on-dark bug. And
+ * the forensic palette is not decorative: an "alert" red has to mean the same
+ * thing on every screen, so it is defined once with its contrast behaviour
+ * already worked out rather than picked per component.
+ *
+ * Every foreground/background pair below was chosen to clear WCAG 2.1 AA (4.5:1
+ * for body text, 3:1 for large text and UI boundaries) in both schemes. That is
+ * asserted by a test rather than assumed — see `tests/a11y.test.ts`.
+ */
+
+:root {
+  /* Surfaces, lightest to darkest. */
+  --surface-0: oklch(99% 0.002 250); /* page */
+  --surface-1: oklch(97% 0.003 250); /* raised cards */
+  --surface-2: oklch(94% 0.005 250); /* nested / hover */
+  --surface-inset: oklch(100% 0 0); /* inputs sit above the card */
+
+  --border-subtle: oklch(90% 0.006 250);
+  --border-default: oklch(83% 0.008 250);
+  --border-strong: oklch(70% 0.01 250);
+
+  --text-primary: oklch(23% 0.01 250); /* 15.6:1 on surface-0 */
+  --text-secondary: oklch(45% 0.01 250); /* 7.1:1  */
+  --text-tertiary: oklch(55% 0.008 250); /* 4.6:1 — the floor, do not go lighter */
+  --text-inverse: oklch(99% 0.002 250);
+
+  --accent: oklch(52% 0.15 255);
+  --accent-hover: oklch(46% 0.15 255);
+  --accent-fg: oklch(99% 0.002 250);
+  --accent-subtle: oklch(95% 0.03 255);
+  --accent-border: oklch(80% 0.07 255);
+
+  /*
+   * Semantic colours. `alert` is deliberately not pure red and `warn` not pure
+   * amber: pure #dc2626 on white is 4.0:1 and fails AA for body text, and pure
+   * amber fails far worse. These are the darkest step of each ramp that clears
+   * 4.5:1, so a badge can carry real text.
+   */
+  --alert: oklch(48% 0.19 25);
+  --alert-bg: oklch(96% 0.03 25);
+  --alert-border: oklch(80% 0.09 25);
+
+  --warn: oklch(45% 0.13 65);
+  --warn-bg: oklch(96% 0.04 75);
+  --warn-border: oklch(80% 0.1 70);
+
+  --calm: oklch(45% 0.12 155);
+  --calm-bg: oklch(95% 0.03 155);
+  --calm-border: oklch(80% 0.08 155);
+
+  --info: oklch(45% 0.13 250);
+  --info-bg: oklch(95% 0.03 250);
+  --info-border: oklch(80% 0.07 250);
+
+  /* Focus ring: one definition, so it cannot drift between components. */
+  --focus-ring: oklch(58% 0.19 255);
+
+  /* Evidence/scan aesthetic for the viewer chrome. */
+  --scanline: oklch(0% 0 0 / 0.06);
+}
+
+.dark {
+  --surface-0: oklch(17% 0.012 255);
+  --surface-1: oklch(21% 0.014 255);
+  --surface-2: oklch(26% 0.016 255);
+  --surface-inset: oklch(14% 0.012 255);
+
+  --border-subtle: oklch(28% 0.014 255);
+  --border-default: oklch(36% 0.016 255);
+  --border-strong: oklch(48% 0.018 255);
+
+  --text-primary: oklch(96% 0.004 250);
+  --text-secondary: oklch(78% 0.008 250);
+  --text-tertiary: oklch(68% 0.008 250); /* 5.1:1 on surface-0 */
+  --text-inverse: oklch(17% 0.012 255);
+
+  --accent: oklch(72% 0.14 255);
+  --accent-hover: oklch(78% 0.13 255);
+  --accent-fg: oklch(17% 0.012 255);
+  --accent-subtle: oklch(28% 0.05 255);
+  --accent-border: oklch(40% 0.08 255);
+
+  /* Lightened to clear 4.5:1 against surface-0 rather than reused from light mode. */
+  --alert: oklch(76% 0.14 25);
+  --alert-bg: oklch(26% 0.06 25);
+  --alert-border: oklch(38% 0.08 25);
+
+  --warn: oklch(80% 0.13 75);
+  --warn-bg: oklch(26% 0.05 70);
+  --warn-border: oklch(38% 0.07 65);
+
+  --calm: oklch(78% 0.13 155);
+  --calm-bg: oklch(24% 0.05 155);
+  --calm-border: oklch(36% 0.07 155);
+
+  --info: oklch(76% 0.12 250);
+  --info-bg: oklch(26% 0.05 250);
+  --info-border: oklch(38% 0.06 250);
+
+  --focus-ring: oklch(70% 0.16 255);
+
+  --scanline: oklch(100% 0 0 / 0.05);
+}
+
+@theme inline {
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-inset: var(--surface-inset);
+
+  --color-border-subtle: var(--border-subtle);
+  --color-border-default: var(--border-default);
+  --color-border-strong: var(--border-strong);
+
+  --color-primary: var(--text-primary);
+  --color-secondary: var(--text-secondary);
+  --color-tertiary: var(--text-tertiary);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-border: var(--accent-border);
+
+  --color-alert: var(--alert);
+  --color-alert-bg: var(--alert-bg);
+  --color-alert-border: var(--alert-border);
+  --color-warn: var(--warn);
+  --color-warn-bg: var(--warn-bg);
+  --color-warn-border: var(--warn-border);
+  --color-calm: var(--calm);
+  --color-calm-bg: var(--calm-bg);
+  --color-calm-border: var(--calm-border);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --color-info-border: var(--info-border);
+
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+}
+
+@layer base {
+  * {
+    border-color: var(--border-default);
+  }
+
+  html {
+    color-scheme: light;
+  }
+  html.dark {
+    color-scheme: dark;
+  }
+
+  body {
+    background-color: var(--surface-0);
+    color: var(--text-primary);
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+   * Focus is never removed, only restyled.
+   *
+   * `outline: none` without a replacement is the most common accessibility
+   * regression in a design system, because it looks correct in a screenshot.
+   */
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* Respect a stated preference for less motion. */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  /* A skip link that is invisible until focused. */
+  .skip-link {
+    position: absolute;
+    left: -9999px;
+    z-index: 100;
+  }
+  .skip-link:focus {
+    left: 1rem;
+    top: 1rem;
+    padding: 0.5rem 1rem;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-radius: 6px;
+    font-weight: 600;
+  }
+}

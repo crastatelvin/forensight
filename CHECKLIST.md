@@ -18,7 +18,14 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 - [x] P0.B3 FastAPI + Uvicorn/Gunicorn + Pydantic v2 settings (no secrets in code)
 - [x] P0.B4 SQLAlchemy 2.0 async engine + Alembic baseline migration
 - [x] P0.B5 Tooling: Ruff, mypy, pytest, pre-commit
-- [!] P0.B5a ESLint/Prettier — blocked on Phase 7 (no frontend yet)
+- [x] P0.B5a ESLint/Prettier — both wired and enforced in CI
+      ESLint 9 flat config over `eslint-config-next` 16 (flat-native, so imported
+      directly rather than through `FlatCompat`, which crashes on it), plus
+      Prettier. A `frontend` CI job runs `typecheck`, `lint`, `format:check` and
+      `build`. It found real dead code on first run — four unused bindings and two
+      `<a>` elements where Next wants `<Link>` — and two instances of the
+      `set-state-in-effect` anti-pattern, both replaced with the idiomatic fix
+      rather than suppressed.
 - [x] P0.B6 CI: lint -> type-check -> test -> Bandit -> pip-audit -> Semgrep -> Trivy
 - [x] P0.B7 Healthchecks `/healthz` (liveness) + `/readyz` (readiness)
 - [x] P0.B8 `/metrics` Prometheus endpoint (the scrape config already pointed here; it 404'd)
@@ -451,15 +458,68 @@ MinIO, a real worker — not by any test:
 
 ## Phase 7 — Frontend (Next.js) + UI/UX
 **Build**
-- [ ] P7.B1 Next.js App Router + TS + Tailwind + shadcn/ui shared design system
-- [ ] P7.B2 Auth flows + role dashboards (Admin/Officer/Expert/Reviewer)
-- [ ] P7.B3 Agent console: streaming tokens, tool-call cards, citation chips, HITL buttons
-- [ ] P7.B4 Evidence viewer: image/audio/video/text + metadata + side-by-side + ELA overlay
+- [x] P7.B1 Next.js App Router + TS + Tailwind + shared design system
+      **shadcn/ui is not used.** The plan names it, and this is a recorded
+      deviation rather than an oversight: the app needs a button, card, badge,
+      notice, empty state, tab strip, dropdown and a `<dl>`. shadcn would add a
+      CLI, a `components.json`, Radix for four of those (a tab strip and a
+      dropdown are ~60 lines of ARIA, and the rest have no behaviour to share), and
+      a `cn()` helper — for a set of primitives that would all fit in one file of
+      the same code. `src/components/ui.tsx` is that file. Every primitive carries
+      its own semantics (`role`, `aria-*`, `<dl>`/`<th scope>`), which is where the
+      accessibility work lives anyway; a Radix primitive would supply the same
+      semantics with more indirection.
+      **Revisit if a component with real behaviour is needed** — a combobox, a
+      modal, a popover with focus trapping. At that point shadcn's Radix primitive
+      is cheaper than hand-rolling focus management, and this decision should flip.
+- [x] P7.B2 Auth flows + role dashboards (Admin/Officer/Expert/Reviewer)
+- [~] P7.B3 Agent console: streaming tokens, tool-call cards, citation chips, HITL buttons
+      Built and rendering live data: SSE is proxied through a route handler (the
+      browser cannot add an `Authorization` header to an `EventSource`, and the
+      access cookie is HttpOnly), tool calls render with their `args_hash` and
+      `result_hash`, claims render with citation chips, and the HITL gate shows the
+      parked action's arguments before approving it. **Not yet verified against a
+      live LLM end to end through the browser** — the backend path is covered by
+      `test_agent_live.py`, but that exercise stops at the API. What is unverified
+      is the browser's handling of a real multi-turn stream, and specifically
+      whether a mid-run reconnect after approve/resume loses events. Do that
+      before ticking this.
+- [x] P7.B4 Evidence viewer: image/audio/video/text + metadata + side-by-side + ELA overlay
 - [ ] P7.B5 Dashboards (Recharts) + MapLibre GL geospatial map
-- [ ] P7.B6 Dark/light CSS vars; WCAG 2.1 AA (keyboard/ARIA/focus/contrast)
-- [ ] P7.B7 Explainability UX (score meaning, threshold, version, why-popovers)
-- [ ] P7.B8 Honesty-clause Tier-A/B disclaimers on results + reports
-- [ ] P7.B9 Loading/skeleton/empty/error states; optimistic UI; async progress + notifications
+- [x] P7.B6 Dark/light CSS vars; WCAG 2.1 AA (keyboard/ARIA/focus/contrast)
+      Colour lives in CSS variables with one `.dark` class, so a dark-mode bug
+      cannot be a forgotten `dark:` variant on one element. The theme toggle reads
+      the resolved theme with `useSyncExternalStore` rather than mirroring it into
+      state from an effect, and an inline script in `<head>` applies it before
+      first paint — verified to persist across a reload in both directions.
+      **Honest limit:** contrast is *designed* for AA and the values are documented
+      in `globals.css`, but nothing automated asserts it yet. T7.3's axe-core scan
+      is still to come; until it runs, "AA" here means reasoned, not measured.
+- [x] P7.B7 Explainability UX (score meaning, threshold, version, why-popovers)
+      The score, its threshold and its module version render as one unit, always —
+      a score shown alone is the single most misleading thing this UI could do,
+      because 0.8 against a 0.25 threshold and 0.8 against a 0.9 are opposite
+      conclusions. `explainScore` also distinguishes *near* threshold from *below*
+      it: rendering a borderline value as an unqualified pass hides it, which is the
+      same class of error as overstating it.
+      Per-module plain-language copy is deliberately **not** complete for every
+      module and says so when it is missing, rather than falling back to generic
+      text — an unexplained analyzer should be visibly unexplained.
+- [x] P7.B8 Honesty-clause Tier-A/B disclaimers on results + reports
+      This is the part of the app the rest of it exists to protect, so it is one
+      pure module (`src/lib/explain.ts`) rather than something each component
+      re-implements. `explainJob` is total: there is no input for which it returns
+      "show a score" when nothing was measured, so `not_applicable` cannot reach
+      the UI as a zero. A refusal renders as a neutral notice, not an error —
+      styling it red would train people to skip past it, which is exactly when it
+      matters most.
+      Calibration facts the analyzer recorded about itself are surfaced
+      automatically (`calibrated_on_this_deployment: false`,
+      `is_zero_meaningful: false`, single-reference-frame PRNU). **These were
+      initially read from the wrong level of the payload** and silently rendered
+      nothing, because module facts live under `payload.detail` and the first
+      version read the envelope. Found by comparing the UI against a live result.
+- [x] P7.B9 Loading/skeleton/empty/error states; optimistic UI; async job progress
 **Test cases**
 - [ ] T7.1 E2E: login->create case->upload->run analysis->view cited result->generate report
 - [ ] T7.2 Console streams tokens; HITL approve/reject reflects backend
@@ -470,6 +530,40 @@ MinIO, a real worker — not by any test:
 - [ ] T7.7 Error/empty states render (no silent failure)
 **Exit**
 - [ ] P7.E full journey E2E; AA-accessible; disclaimers enforced in UI
+
+---
+
+**Bugs found while building the frontend**
+
+All found by driving the real stack. The first three are backend defects the
+green suite could not see; the last two are frontend defects that unit-test-free
+UI always has.
+
+- **The `cases` router rate-limited *reads* under a bucket named `mutation`,**
+  at 60/min. One case page renders seven reads in parallel, so ordinary navigation
+  returned 429 — the UI's normal behaviour, not an attack. Reads and writes now
+  have separate budgets (600/min and 60/min), and the write ceiling is asserted
+  separately so raising the read number cannot quietly remove it.
+- **A missing evidence object returned 500 with a stack trace.** `ObjectStore`
+  raised the minio SDK's `S3Error` past the `FileNotFoundError` every caller was
+  already handling. Found by viewing a case that held a row whose bytes were never
+  in MinIO — a state nothing constructed in tests. Now translated at the storage
+  layer (so every caller benefits) and reported as **410**, not 404: the record
+  exists and the bytes do not, which is an integrity incident and must not look
+  like a mistyped id.
+- **The workflow state machine was not exposed to clients.** A UI had to either
+  hard-code its own copy — which drifts, and produces a button the API then
+  rejects with 409 — or render nothing. `CaseRead` now carries
+  `allowed_transitions`, filled in by one `case_to_read` helper because there are
+  eight call sites and one that forgets it claims a case is closed.
+- **`safe<T>()` returned `null as T` in the case page.** The dishonest cast
+  silenced the compiler, and three components later a list was `.filter`ed without
+  a check and crashed the page — which had passed every check, because there were
+  none. `null` and `[]` are different states and now have different types.
+- **Calibration warnings silently rendered nothing.** They are read from
+  `payload.detail`, and the first version read the envelope, where the keys do not
+  exist. No error, no warning — the UI simply appeared confident about a threshold
+  nobody validated.
 
 ---
 

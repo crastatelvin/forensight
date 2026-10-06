@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.analysis import registry
+from app.analysis.overlay import router as overlay_router
 from app.analysis.queue import enqueue_analysis_job
 from app.analysis.repository import (
     list_jobs_for_case,
@@ -247,4 +248,4 @@ async def run_job_now(
     return AnalysisJobRead.model_validate(job)
 
 
-__all__ = ["router", "Tier"]
+__all__ = ["router", "overlay_router", "Tier"]
