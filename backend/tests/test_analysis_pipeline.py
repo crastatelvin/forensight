@@ -7,7 +7,9 @@ admissible, so it gets the most attention.
 
 from __future__ import annotations
 
+import ast
 import base64
+import pathlib
 import uuid
 
 import pytest
@@ -692,32 +694,123 @@ def test_entropy_of_known_input() -> None:
     assert math.isclose(uniform, 8.0, abs_tol=1e-9)
 
 
-def test_entropy_module_has_no_nondeterminism_sources() -> None:
-    """T4.1/T6.6 guard: a module using randomness cannot be admissible.
+#: Modules whose *own* behaviour is nondeterministic. `numpy` is deliberately
+#: absent: numpy arithmetic is fully deterministic and is required for real image
+#: work. What matters is that none of its random entry points are used.
+NONDETERMINISTIC_MODULES = {"random", "time", "uuid", "secrets", "os", "socket"}
 
-    Scans the parsed AST rather than the raw text, so prose in a docstring that
-    merely mentions "random" does not trip the guard.
+#: Fully-qualified paths whose result varies between runs on identical input.
+NONDETERMINISTIC_CALLS = {
+    "random.uniform",
+    "random.randint",
+    "random.choice",
+    "random.sample",
+    "random.shuffle",
+    "random.random",
+    "np.random.random",
+    "np.random.uniform",
+    "np.random.randint",
+    "np.random.choice",
+    "np.random.shuffle",
+    "np.random.normal",
+    "numpy.random.random",
+    "numpy.random.default_rng",
+    "numpy.random.seed",
+    "time.time",
+    "time.monotonic",
+    "datetime.now",
+    "datetime.today",
+    "datetime.utcnow",
+    "uuid.uuid4",
+    "uuid.uuid1",
+    "uuid.uuid3",
+    "os.urandom",
+    "secrets.token_hex",
+    "secrets.token_urlsafe",
+}
+
+
+def _dotted(node: ast.AST) -> str:
+    """Render an attribute/call chain as a dotted path, or '' if unresolvable."""
+    parts: list[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+    return ".".join(reversed(parts))
+
+
+def _scan_module(path, tree: ast.AST, failures: list[str]) -> None:
+    """Record every nondeterminism source found in one module."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                root = alias.name.split(".")[0]
+                if root in NONDETERMINISTIC_MODULES:
+                    failures.append(f"{path}:{node.lineno} imports {alias.name!r}")
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            root = module.split(".")[0]
+            if root in NONDETERMINISTIC_MODULES:
+                failures.append(f"{path}:{node.lineno} imports from {module!r}")
+            if root == "numpy" and "random" in module:
+                failures.append(f"{path}:{node.lineno} imports numpy.random")
+        elif isinstance(node, ast.Call):
+            dotted = _dotted(node.func)
+            if dotted in NONDETERMINISTIC_CALLS:
+                failures.append(f"{path}:{node.lineno} calls {dotted}()")
+            if dotted.endswith(".default_rng") or dotted.endswith(".RandomState"):
+                failures.append(f"{path}:{node.lineno} constructs {dotted}()")
+
+
+def test_no_module_has_a_nondeterminism_source() -> None:
+    """T4.1/T6.6 guard: an analyzer whose output varies between runs on identical
+    input cannot be admissible, whatever it computes.
+
+    Parsed rather than grepped, so a docstring mentioning "random" is fine and a
+    buried `np.random.normal` is not.
     """
-    import ast
-    import pathlib
+    failures: list[str] = []
+    for path in sorted(pathlib.Path("app/analysis/modules").rglob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        _scan_module(path, ast.parse(path.read_text()), failures)
+    assert not failures, "nondeterminism in analyzer modules:\n  " + "\n  ".join(failures)
 
-    banned = {"random", "numpy", "np", "time", "uuid", "secrets", "os"}
-    banned_calls = {"uniform", "randint", "choice", "rand", "now", "urandom", "uuid4"}
 
-    for path in pathlib.Path("app/analysis/modules").rglob("*.py"):
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    root = alias.name.split(".")[0]
-                    assert root not in banned, f"{path}:{node.lineno} imports {alias.name!r}"
-            elif isinstance(node, ast.ImportFrom) and node.module:
-                root = node.module.split(".")[0]
-                assert root not in banned, f"{path}:{node.lineno} imports from {node.module!r}"
-            elif isinstance(node, ast.Attribute) and node.attr in banned_calls:
-                raise AssertionError(
-                    f"{path}:{node.lineno} calls .{node.attr}() — nondeterministic"
-                )
+def test_nondeterminism_scanner_actually_catches_things() -> None:
+    """A guard that cannot fail is not a guard. Feeds it known-bad source."""
+    bad = [
+        "import random\nrandom.uniform(0, 1)\n",
+        "import numpy as np\nx = np.random.normal(0, 1)\n",
+        "from numpy.random import default_rng\n",
+        "import time\nt = time.time()\n",
+        "import uuid\nu = uuid.uuid4()\n",
+        "from datetime import datetime\nd = datetime.now()\n",
+        "import os\nk = os.urandom(4)\n",
+        "import secrets\nt = secrets.token_hex(8)\n",
+    ]
+    for source in bad:
+        failures: list[str] = []
+        _scan_module("<test>", ast.parse(source), failures)
+        assert failures, f"scanner missed: {source.strip()!r}"
+
+
+def test_nondeterminism_scanner_allows_deterministic_science() -> None:
+    """The guard must not block legitimate numeric work."""
+    good = [
+        "import numpy as np\nx = np.mean(arr)\n",
+        "from PIL import Image\nimport numpy as np\n",
+        "import hashlib\nh = hashlib.sha256(data).hexdigest()\n",
+        "import math\nm = math.log2(2)\n",
+        "# we do not use random numbers here\nimport numpy\n",
+    ]
+    for source in good:
+        failures: list[str] = []
+        _scan_module("<test>", ast.parse(source), failures)
+        assert not failures, f"scanner false-positived on: {source.strip()!r} -> {failures}"
 
 
 # --- authorization on analysis routes ------------------------------------
@@ -911,3 +1004,150 @@ async def test_identical_bytes_in_different_cases_do_not_share_a_job(
 
     jobs_a = (await client.get(f"/cases/{cid_a}/analyses", headers=officer)).json()
     assert [j["id"] for j in jobs_a] == [ja]
+
+
+# --- P6: real image analyzers through the full pipeline ---------------------
+
+
+async def test_image_ela_runs_end_to_end_and_is_flagged(
+    client: AsyncClient, seed_users, fake_store, app
+) -> None:
+    """The whole path: upload -> job -> worker executor -> persisted result.
+
+    Unit tests call `image_ela.run` directly. This proves the module is
+    registered in the app, is reachable by name over HTTP, produces a score, and
+    that the score survives the round trip through the database.
+    """
+    from tests.fixtures_images import make_tampered_jpeg
+
+    registry.reset()
+    registry.register_all()
+
+    officer = await _auth(client, seed_users["officer"])
+    cid = (
+        await client.post("/cases", headers=officer, json={"number": "ELA-1", "title": "T"})
+    ).json()["id"]
+    up = await client.post(
+        f"/cases/{cid}/evidence",
+        headers=officer,
+        files={"file": ("tampered.jpg", make_tampered_jpeg(), "image/jpeg")},
+    )
+    assert up.status_code == 201, up.text
+    eid = up.json()["id"]
+
+    submitted = await client.post(
+        f"/cases/{cid}/analyses",
+        headers=officer,
+        json={"module": "image-ela", "evidence_id": eid},
+    )
+    assert submitted.json()["status"] == "queued"
+    job_id = submitted.json()["id"]
+
+    ran = await client.post(f"/analyses/jobs/{job_id}/run", headers=officer)
+    assert ran.json()["status"] == "done", ran.text
+
+    results = (await client.get(f"/cases/{cid}/results", headers=officer)).json()
+    ela = [r for r in results if r["module"] == "image-ela"]
+    assert len(ela) == 1, results
+    assert ela[0]["score"] > ela[0]["threshold"], "the tampered fixture must be flagged"
+    assert ela[0]["model_version"]
+    assert ela[0]["tier"] == "A"
+
+
+async def test_not_applicable_job_records_no_result(
+    client: AsyncClient, seed_users, fake_store, app
+) -> None:
+    """T6.2 at the pipeline level: ELA on a PNG must not become a 0.0 score.
+
+    The distinction that matters downstream is "cannot measure" versus "measured
+    zero". A report that rendered this as 0.0 would be telling an examiner the
+    image showed no sign of manipulation, when in fact ELA never ran.
+    """
+    registry.reset()
+    registry.register_all()
+
+    officer = await _auth(client, seed_users["officer"])
+    cid, eid = await _case_with_evidence(client, officer, fake_store, "ELA-2")
+
+    submitted = await client.post(
+        f"/cases/{cid}/analyses",
+        headers=officer,
+        json={"module": "image-ela", "evidence_id": eid},
+    )
+    job_id = submitted.json()["id"]
+    ran = await client.post(f"/analyses/jobs/{job_id}/run", headers=officer)
+
+    body = ran.json()
+    assert body["status"] == "not_applicable", body
+    assert "PNG" in body["unsupported_reason"]
+    assert body["attempts"] == 1, "not_applicable is a real run, not a failure"
+
+    results = (await client.get(f"/cases/{cid}/results", headers=officer)).json()
+    assert results == [], "cannot-measure must not be recorded as a measurement"
+
+
+async def test_image_exif_runs_end_to_end_on_clean_evidence(
+    client: AsyncClient, seed_users, fake_store, app
+) -> None:
+    """A clean camera photo scores zero through the full pipeline."""
+    from tests.fixtures_images import CAMERA_EXIF, exif_bytes
+
+    registry.reset()
+    registry.register_all()
+
+    officer = await _auth(client, seed_users["officer"])
+    cid = (
+        await client.post("/cases", headers=officer, json={"number": "EXIF-1", "title": "T"})
+    ).json()["id"]
+    up = await client.post(
+        f"/cases/{cid}/evidence",
+        headers=officer,
+        files={"file": ("clean.jpg", exif_bytes(CAMERA_EXIF), "image/jpeg")},
+    )
+    eid = up.json()["id"]
+    job_id = (
+        await client.post(
+            f"/cases/{cid}/analyses",
+            headers=officer,
+            json={"module": "image-exif", "evidence_id": eid},
+        )
+    ).json()["id"]
+
+    ran = await client.post(f"/analyses/jobs/{job_id}/run", headers=officer)
+    assert ran.json()["status"] == "done", ran.text
+
+    results = (await client.get(f"/cases/{cid}/results", headers=officer)).json()
+    exif = [r for r in results if r["module"] == "image-exif"]
+    assert len(exif) == 1
+    assert exif[0]["score"] == 0.0
+
+
+async def test_same_image_twice_hits_the_idempotency_key(
+    client: AsyncClient, seed_users, fake_store, app
+) -> None:
+    """T6.5: the second submission must not create a second job."""
+    from tests.fixtures_images import make_tampered_jpeg
+
+    registry.reset()
+    registry.register_all()
+
+    officer = await _auth(client, seed_users["officer"])
+    cid = (
+        await client.post("/cases", headers=officer, json={"number": "ELA-3", "title": "T"})
+    ).json()["id"]
+    up = await client.post(
+        f"/cases/{cid}/evidence",
+        headers=officer,
+        files={"file": ("t.jpg", make_tampered_jpeg(), "image/jpeg")},
+    )
+    eid = up.json()["id"]
+    payload = {"module": "image-ela", "evidence_id": eid}
+
+    first = (await client.post(f"/cases/{cid}/analyses", headers=officer, json=payload)).json()
+    second = (await client.post(f"/cases/{cid}/analyses", headers=officer, json=payload)).json()
+    assert first["id"] == second["id"]
+    assert second["attempts"] == 0
+
+    await client.post(f"/analyses/jobs/{first['id']}/run", headers=officer)
+    results = (await client.get(f"/cases/{cid}/results", headers=officer)).json()
+    assert len(results) == 1

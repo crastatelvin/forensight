@@ -4,13 +4,18 @@ Production-grade forensic investigation platform: evidence vault with WORM
 storage, hash-chained audit, chain-of-custody, and a real AI agent (tools +
 memory).
 
-> Build status: **Phase 5 — agent core** complete (see `CHECKLIST.md`).
-> Phases 6-10 — the real Tier-A ML analyzers, the Next.js frontend, signed
-> reports, and ops hardening — are not built yet. `frontend/` is a placeholder
-> and the one shipped analyzer is a deterministic reference module, not an ML
-> model. The agent is real: it plans, calls typed and audited tools, refuses to
+> Build status: **Phase 5 complete; Phase 6 begun** (see `CHECKLIST.md`).
+> The agent core is real: it plans, calls typed and audited tools, refuses to
 > assert anything it cannot cite to an analyzer result, and pauses for human
 > approval before changing state.
+>
+> Three analyzers ship. `byte-entropy` is a deterministic reference module.
+> `image-ela` and `image-exif` are the first real forensic techniques — ELA scores
+> compression anomalies against the image's own error baseline, EXIF scores
+> metadata-integrity indicators. **No ML model ships yet**: face comparison (P6.B1)
+> and object detection (P6.B2) are not built, so the planned Tier-A ML tier is
+> still ahead, as are the Next.js frontend (`frontend/` is a placeholder), signed
+> reports, and ops hardening.
 
 ## Monorepo layout
 

@@ -37,6 +37,21 @@ class JobStatus(StrEnum):
     # distinct from FAILED because nothing went wrong — the work is simply
     # unsupported here, and reporting it as a failure would suggest a bug.
     UNSUPPORTED = "unsupported"
+    # The module ran, but its technique is undefined for this input: ELA on a
+    # PNG, face matching with no face present. Recorded explicitly so "we could
+    # not measure this" never renders as "we measured zero" (T6.2).
+    NOT_APPLICABLE = "not_applicable"
+
+
+#: Terminal job states. `not_applicable` is terminal without a result row.
+TERMINAL_STATUSES: frozenset[str] = frozenset(
+    {
+        JobStatus.DONE.value,
+        JobStatus.FAILED.value,
+        JobStatus.UNSUPPORTED.value,
+        JobStatus.NOT_APPLICABLE.value,
+    }
+)
 
 
 TIER_DISCLAIMER: dict[Tier, str] = {
@@ -54,6 +69,15 @@ class AnalysisError(RuntimeError):
 
 class UnsupportedCapability(AnalysisError):
     """Raised when a module cannot run on this host (job -> unsupported)."""
+
+
+class AnalysisNotApplicable(AnalysisError):
+    """Raised when a technique is undefined for the given input (T6.2).
+
+    ELA on a PNG, or face matching on an image with no face: there is no honest
+    number to report. This exists so a module says "cannot measure" instead of
+    returning 0.0, which a report would render as a clean negative result.
+    """
 
 
 class ModelChecksumError(AnalysisError):
@@ -88,6 +112,12 @@ class ModuleSpec:
     params: dict[str, Any] = field(default_factory=dict)
     #: True when the module cannot run without a GPU.
     requires_gpu: bool = False
+    #: Overrides the tier's generic disclaimer. Tier says how much to trust the
+    #: score; the disclaimer says what the technique can actually support. Those
+    #: are different questions — the generic Tier B text is about identity
+    #: matching, which is meaningless on an EXIF result — so a technique with
+    #: its own limits states them itself.
+    disclaimer: str | None = None
 
 
 @runtime_checkable
@@ -158,6 +188,6 @@ def build_result(spec: ModuleSpec, score: float, detail: dict[str, Any]) -> dict
         "threshold": spec.threshold,
         "model_version": spec.version,
         "tier": spec.tier.value,
-        "disclaimer": TIER_DISCLAIMER[spec.tier],
+        "disclaimer": spec.disclaimer or TIER_DISCLAIMER[spec.tier],
         "detail": detail,
     }

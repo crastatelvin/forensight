@@ -175,19 +175,53 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 **Build**
 - [ ] P6.B1 Face comparison — InsightFace/ArcFace embeddings + cosine + calibrated threshold
 - [ ] P6.B2 Object/weapon detection — Ultralytics YOLO pinned weights
-- [ ] P6.B3 Image forensics — ELA + EXIF (exiftool) + noise/PRNU
-- [ ] P6.B4 Each wired as Celery worker plugin (score+threshold+version+tier)
-- [ ] P6.B5 Agent run_analysis invokes all three; results become citable findings
+- [~] P6.B3 Image forensics — ELA + EXIF done; **noise/PRNU not built**
+      Two modules rather than one, because the module contract requires a single
+      scalar score and ELA (compression anomaly) and EXIF (metadata indicators) do
+      not share a scale. PRNU is a third technique with its own requirements and
+      is genuinely absent, not stubbed.
+      - `image-ela` — Tier A. Anomaly detection uses median + MAD, not mean + std:
+        the regions ELA hunts for are exactly the ones that would inflate the mean.
+        `model_version` embeds `libjpeg-turbo`, because a codec upgrade silently
+        changes every score and would otherwise serve stale results under an
+        unchanged label. Pins to numpy + Pillow, no GPU, no weights download.
+      - `image-exif` — Tier B. Score is the fraction of *scored* indicators, and
+        `score_is` says so in the payload; it is not a probability. GPS and
+        `Software` are reported in full but deliberately **not scored** — an
+        untouched camera photo carries both (own firmware string, location data),
+        so scoring them would flag clean evidence. `Software` would also mean
+        guessing which applications are editors.
+- [x] P6.B4 Each wired as a worker plugin (score+threshold+version+tier)
+      Registered in `register_all()`, which the Dramatiq worker calls at import.
+      NOTE: the checklist said Celery; the project uses Dramatiq (see Phase 4).
 **Test cases**
 - [ ] T6.1 Face same-id above / different-id below threshold; deterministic
-- [ ] T6.2 No-face image -> explicit "no face detected", not fake score
+- [~] T6.2 No-face image -> explicit "no face detected", not fake score
+      The *mechanism* is built and proven for the image analyzers: new
+      `AnalysisNotApplicable` exception + `not_applicable` terminal job status,
+      which writes **no result row**, so "cannot measure" can never render as
+      "measured zero". Exercised end-to-end (ELA on PNG) and on live Postgres.
+      The face-specific case remains unbuilt pending P6.B1.
 - [ ] T6.3 YOLO detects expected labels with stable confidences
-- [ ] T6.4 Tampered fixture flagged; clean not flagged; EXIF extracted
-- [ ] T6.5 Same input twice -> identical result (idempotency hit)
-- [ ] T6.6 Determinism guard: no random/np.random in scoring modules
-- [ ] T6.7 Threshold + model_version present in every result
+- [x] T6.4 Tampered fixture flagged; clean not flagged; EXIF extracted
+      Clean 0.0; tampered 0.0505 against a 0.01 threshold; stripped metadata 1.0.
+      Golden scores pinned. Two candidate EXIF indicators were written and
+      removed for firing on ordinary photos — a threshold that flags clean
+      evidence is worse than no threshold.
+- [x] T6.5 Same input twice -> identical result (idempotency hit)
+      Same submission returns the same job with `attempts == 0`, asserted through
+      the HTTP API, plus byte-identical fixture generation.
+- [x] T6.6 Determinism guard: no random/np.random in scoring modules
+      Rewritten: it previously banned `numpy` outright, which real image work
+      needs. numpy arithmetic is deterministic; `np.random` is not. Now parses the
+      AST for random/time/uuid/secrets/os entry points. Two self-tests assert the
+      scanner both catches known-bad source and allows legitimate numpy — a guard
+      that cannot fail is not a guard.
+- [x] T6.7 Threshold + model_version present in every result
+      `build_result` injects these, so no module can emit a result without them.
 **Exit**
 - [ ] P6.E three analyzers deterministic golden tests pass; agent uses end-to-end; no-simulation proven
+      One of three analyzers built. Not earned.
 
 ---
 

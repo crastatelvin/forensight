@@ -147,6 +147,18 @@ async def mark_unsupported(session: AsyncSession, job: AnalysisJob, reason: str)
     await session.flush()
 
 
+async def mark_not_applicable(session: AsyncSession, job: AnalysisJob, reason: str) -> None:
+    """The technique does not apply to this input (T6.2).
+
+    No result row is written: there is no score to record, and inventing one
+    would turn "cannot measure" into "measured zero" in every downstream report.
+    """
+    job.status = JobStatus.NOT_APPLICABLE.value
+    job.unsupported_reason = reason
+    job.finished_at = datetime.now(UTC)
+    await session.flush()
+
+
 async def list_jobs_for_case(
     session: AsyncSession, case_id: uuid.UUID, *, limit: int = 50, offset: int = 0
 ) -> list[AnalysisJob]:

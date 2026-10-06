@@ -18,12 +18,14 @@ from app.analysis.models import AnalysisJob
 from app.analysis.repository import (
     mark_done,
     mark_failed,
+    mark_not_applicable,
     mark_running,
     mark_unsupported,
 )
 from app.analysis.types import (
+    TERMINAL_STATUSES,
     AnalysisError,
-    JobStatus,
+    AnalysisNotApplicable,
     ModelChecksumError,
     UnsupportedCapability,
     build_result,
@@ -53,7 +55,7 @@ async def execute_job(
     `evidence_reader(evidence) -> bytes` is injectable so tests can supply
     fixture bytes without a live object store.
     """
-    if job.status in (JobStatus.DONE.value, JobStatus.FAILED.value):
+    if job.status in TERMINAL_STATUSES:
         # Already terminal: a redelivery of the same queue message.
         return job
 
@@ -92,6 +94,8 @@ async def execute_job(
         await mark_done(session, job, payload)
     except UnsupportedCapability as exc:
         await mark_unsupported(session, job, str(exc))
+    except AnalysisNotApplicable as exc:
+        await mark_not_applicable(session, job, str(exc))
     except ModelChecksumError as exc:
         # Refusal, not a fallback: a wrong model cannot produce a defensible score.
         await mark_failed(session, job, str(exc))

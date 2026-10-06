@@ -139,6 +139,19 @@ against `evidence.sha256` after any restore.
 | MinIO | Uploads/downloads fail; `/readyz` reports `minio: false`. |
 | Postgres | Everything DB-backed fails. Nothing degrades silently. |
 | GPU absent | `/capabilities` reports GPU modules unavailable with a reason. Never faked. |
+
+A job also ends in a terminal state other than `done`/`failed` when the technique
+does not apply or the host cannot run the module. These are distinct from failure
+because nothing went wrong:
+
+| Status | Meaning | Result row? |
+|---|---|---|
+| `unsupported` | host lacks a capability this module needs (e.g. no GPU) | no |
+| `not_applicable` | module ran; technique undefined for this input (ELA on a PNG, no face found) | no |
+| `failed` | the module raised | no |
+
+The `unsupported_reason` field carries the explanation in all three cases.
+
 ## Analysis pipeline
 
 Submit analysis of one evidence item with one module:
@@ -196,6 +209,23 @@ and is UNIQUE in the database. Consequences:
 To invalidate cached results, bump the module's `version`. That is the intended
 lever and nothing else should need it.
 
+### Analyzers
+
+Three modules ship today. `byte-entropy` is the Phase 4 reference module;
+`image-ela` and `image-exif` are the first real forensic techniques (P6.B3).
+
+| Module | Tier | Score means | Needs |
+|---|---|---|---|
+| `byte-entropy` | B | Shannon entropy in bits/byte | nothing |
+| `image-ela` | A | fraction of pixels with anomalously high error level | JPEG input |
+| `image-exif` | B | fraction of metadata indicators that fired | JPEG input |
+
+```bash
+curl -X POST localhost:8000/cases/$CASE/analyses \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"module":"image-ela","evidence_id":"'$EVID'"}'
+```
+
 ### Adding an analyzer
 
 1. Write it in `backend/app/analysis/modules/<name>.py`: a `ModuleSpec` plus a
@@ -205,9 +235,22 @@ lever and nothing else should need it.
 
 A module must be deterministic: no randomness, no wall-clock time, no
 unversioned library that could change between runs. A test enforces this by AST
-scan. Also fill in `threshold`, `tier`, and `version` — the result payload
-cannot be built without them, and a score is never stored without the bar it was
-judged against.
+scan (it allows numpy, which is deterministic; it bans its random entry points).
+Also fill in `threshold`, `tier`, and `version` — the result payload cannot be
+built without them, and a score is never stored without the bar it was judged
+against.
+
+Two rules the image modules exist to demonstrate:
+
+- **Put everything that can change the number in `version`.** `image-ela` encodes
+  `libjpeg-turbo` because the JPEG encoder's output is baked into the score; a
+  codec upgrade would otherwise change every result under an unchanged label.
+  `version` feeds the idempotency key, so bumping it forces a recompute.
+- **When a technique does not apply, raise `AnalysisNotApplicable`** — do not
+  return 0.0. ELA on a PNG and face matching with no face present are undefined,
+  not negative. The job lands in the `not_applicable` terminal state and writes no
+  result row, so a report can never present "could not measure" as "measured
+  nothing found".
 
 ## Agent
 
