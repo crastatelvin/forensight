@@ -206,9 +206,13 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
       Two pinned Apache-2.0 models: YuNet detects, SFace embeds, cosine compared
       against SFace's published 0.593 operating point. Tier B.
       - **Deviation: SFace from the OpenCV model zoo, not InsightFace/ArcFace.**
-        InsightFace's pretrained weights are released for **non-commercial research
-        only**, which a forensic platform cannot ship under. YuNet and SFace are
-        both Apache-2.0. SFace is the weaker model and that is a real cost.
+        InsightFace's pretrained weights are labelled non-commercial research, so
+        that was the initial reason. The owner has since ruled that this project is
+        open source and that reason does not hold — the substitution stands on SFace
+        being the smaller, Apache-2.0 dependency that installs without torch, not on
+        a licensing judgement. If ArcFace accuracy matters later, switching is a
+        digest change in this module. SFace is the weaker model and that is a real
+        cost.
       - Two models, so `ModuleSpec.aux_models` was added: additional pinned
         artifacts, each verified against its own digest, fetched as
         `<model_key>#<name>`. Bundling into one archive would make the pinned
@@ -276,6 +280,26 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
         untouched camera photo carries both (own firmware string, location data),
         so scoring them would flag clean evidence. `Software` would also mean
         guessing which applications are editors.
+      - `image-prnu` — Tier B. Sensor-fingerprint correlation (Photo Response
+        Non-Uniformity): does this frame share a camera body with the reference?
+        **It says nothing about the people in it.** Two people shot on one camera
+        correlate as a match; one person shot on two cameras does not.
+        Haar residual, mean-centred; `THRESHOLD = 0.20` measured on this repo's
+        fixtures and explicitly *not* calibrated — correlation thresholds are
+        specific to a camera population and imaging pipeline. Measured on
+        fixtures: same sensor 0.276, three different sensors 0.011 / 0.011 /
+        0.009.
+        PRNU is the third image module, so P6.B3 is now complete: ELA, EXIF and
+      PRNU — each its own module, because they do not share a score scale.
+      Two fixture bugs found and fixed while building it, both of which made the
+        technique look broken rather than mis-specified:
+        - A *smooth* trigonometric "fingerprint" scored 0.008, because the
+          estimator reads the finest wavelet band and a smooth pattern is not in
+          it. Real PRNU is per-pixel; the fixture now is too.
+        - A checkerboard texture term at amplitude ~22 sat in the same band as
+          the signal and swamped it. Scene content must be smooth for the
+          fingerprint to be visible, which is also why real PRNU needs many frames
+          and why real thresholds are dataset-specific.
 - [x] P6.B4 Each wired as a worker plugin (score+threshold+version+tier)
       Registered in `register_all()`, which the Dramatiq worker calls at import.
       NOTE: the checklist said Celery; the project uses Dramatiq (see Phase 4).
@@ -333,11 +357,10 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
       `build_result` injects these, so no module can emit a result without them.
 **Exit**
 - [~] P6.E three analyzers deterministic golden tests pass; agent uses end-to-end; no-simulation proven
-      Three analyzers exist and pass deterministic golden tests, and the agent
-      drives `run_analysis` end to end: a live model calls the tool, the real
-      executor scores real JPEG bytes, and the stored score is the analyzer's own
-      (asserted equal to a direct `image_ela.run`). Not yet earned, honestly:
-      - **PRNU is still absent** from P6.B3 (ELA + EXIF only).
+      Six analyzers exist and pass deterministic golden tests, and the agent drives
+      `run_analysis` end to end: a live model calls the tool, the real executor
+      scores real JPEG bytes, and the stored score is the analyzer's own (asserted
+      equal to a direct `image_ela.run`). Not yet earned, honestly:
       - **The agent's run declines rather than citing its own analysis**, because
         `run_analysis` is fire-and-forget and no worker runs in the test. The
         refusal is *correct* — the provenance guard will not let the agent cite a

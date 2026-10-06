@@ -65,6 +65,7 @@ def register_all() -> None:
         face_compare,
         image_ela,
         image_exif,
+        image_prnu,
         object_detect,
     )
 
@@ -72,6 +73,7 @@ def register_all() -> None:
         entropy.module,
         image_ela.module,
         image_exif.module,
+        image_prnu.module,
         object_detect.module,
         face_compare.module,
     ):

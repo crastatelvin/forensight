@@ -10,10 +10,12 @@ memory).
 > approval before changing state. A live model (`qwen2.5:3b`) drives the tool loop
 > end to end and produces a sourced report — see `CHECKLIST.md` T5.10.
 >
-> Five analyzers ship. `byte-entropy` is a deterministic reference module.
-> `image-ela` and `image-exif` are real forensic techniques — ELA scores
-> compression anomalies against the image's own error baseline, EXIF scores
-> metadata-integrity indicators. `object-detect` runs pinned YOLOv4 weights on
+> Six analyzers ship. `byte-entropy` is a deterministic reference module. The
+> image modules are real forensic techniques — `image-ela` scores compression
+> anomalies against the image's own error baseline, `image-exif` scores
+> metadata-integrity indicators, and `image-prnu` correlates sensor fingerprints to
+> say whether two frames came from the same camera. `object-detect` runs pinned
+> YOLOv4 weights on
 > `onnxruntime`, and `face-compare` runs pinned YuNet + SFace for one-to-one face
 > verification; both are digest-verified before load and the agent invokes them
 > through `run_analysis`. **Two capabilities are honestly missing**: the object
@@ -131,6 +133,7 @@ Two independent layers, both required:
 | `byte-entropy` | B | Shannon entropy, bits/byte |
 | `image-ela` | A | fraction of pixels with anomalously high error levels |
 | `image-exif` | B | fraction of metadata indicators that fired |
+| `image-prnu` | B | correlation against a reference sensor fingerprint |
 | `object-detect` | A | highest confidence among watchlist detections |
 | `face-compare` | B | cosine similarity between two faces' embeddings |
 
@@ -145,8 +148,9 @@ technique that does not apply to an input (ELA on a PNG, an image with no face i
 it) is recorded as `not_applicable` with no result row, so "could not measure" is
 never rendered as "measured zero". Each module documents its own limitations in the
 result payload — that `object-detect` cannot detect firearms because COCO has no
-firearm class, and that `face-compare` verifies (1:1) but never identifies (1:N),
-against a vendor threshold not calibrated on this deployment.
+firearm class, that `face-compare` verifies (1:1) but never identifies (1:N)
+against a threshold not calibrated here, and that `image-prnu` reports whether two
+frames share a **camera**, never whether they share a person.
 
 ## Honesty clause
 

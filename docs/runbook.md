@@ -219,6 +219,7 @@ Three modules ship today. `byte-entropy` is the Phase 4 reference module;
 | `byte-entropy` | B | Shannon entropy in bits/byte | nothing |
 | `image-ela` | A | fraction of pixels with anomalously high error level | JPEG input |
 | `image-exif` | B | fraction of metadata indicators that fired | JPEG input |
+| `image-prnu` | B | correlation against a reference sensor fingerprint | 2 images from one camera |
 | `object-detect` | A | highest confidence among detections of the watchlist classes | pinned weights |
 | `face-compare` | B | cosine similarity between two faces' embeddings | pinned weights + 2 images |
 
@@ -285,9 +286,38 @@ Two things to know before trusting a number:
 - **No liveness or presentation-attack check.** A photograph of a photograph will
   produce a confident result. Treat any match as a lead for a trained examiner.
 
-Models are Apache-2.0 (YuNet detects, SFace embeds), chosen because InsightFace's
-ArcFace weights are licensed for non-commercial research only. SFace is the weaker
-model; see `CHECKLIST.md` P6.B1.
+Models are Apache-2.0 (YuNet detects, SFace embeds). SFace is the weaker of the
+two commonly-used face stacks; see `CHECKLIST.md` P6.B1.
+
+### Sensor fingerprinting (PRNU)
+
+Every camera stamps a faint per-pixel pattern into every frame it takes.
+`image-prnu` correlates a query frame against a reference fingerprint to answer
+**"did these two frames come from the same camera body?"**
+
+It does **not** answer "are these the same person". Two different people shot on
+one camera correlate as a match; one person shot on two cameras does not. Treat
+the result as evidence about an image's origin, never about its subject.
+
+```bash
+curl -X POST localhost:8000/cases/$CASE/analyses \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"module":"image-prnu","evidence_id":"'$EVID'",
+       "params":{"reference_evidence_id":"'"$REF"'"}}'
+```
+
+Three things before you rely on it:
+
+- **The reference must be from the same camera as the query.** A fingerprint built
+  from other shots of the same *scene* matches nothing. Supplying several reference
+  frames helps a lot: one frame is a residual, not a fingerprint, and the payload
+  reports `reference_is_single_frame` when only one was given.
+- **The threshold is a screening value from this repo's synthetic fixtures**, not
+  a calibrated operating point. Correlation thresholds depend entirely on the
+  camera population and imaging pipeline.
+- **In-camera processing erodes fingerprints.** Demosaicing, sharpening and noise
+  reduction all attack them, and phone cameras apply all three aggressively. A low
+  correlation is not proof a different camera was used.
 
 ### Adding an analyzer
 

@@ -179,6 +179,95 @@ def make_garbage(size: int = 256) -> bytes:
     return bytes((i * 37) % 256 for i in range(size))
 
 
+#: A fixed sensor fingerprint per `subject`. PRNU is estimated from real pixels,
+#: so a test needs a scene whose noise is predictable. Deterministic by
+#: construction, from fixed trigonometry rather than a random draw: a seed would be
+#: another thing to reproduce, and the determinism guard rejects `random` in
+#: analyzers anyway.
+#:
+#: Each subject gets a genuinely *different* pattern. An earlier version scaled one
+#: shared pattern by a per-subject constant, which made every "camera" a scaled
+#: copy of every other one -- and the same/different correlations came out 0.675 vs
+#: 0.621. A fixture whose different sensors are similar cannot demonstrate
+#: discrimination, no matter how the threshold is set.
+def _fingerprint(subject: int, width: int, height: int) -> np.ndarray:
+    """A per-pixel sensor fingerprint in [-1, 1].
+
+    Real PRNU is *spatially uncorrelated*: each photosite has its own fixed gain
+    error, so the pattern is essentially per-pixel noise, not a smooth image. An
+    earlier version of this fixture used smooth trigonometry, and correlation
+    against it came out at 0.008 — the estimator reads the high-frequency band and
+    a smooth pattern simply is not in it. The lesson is worth keeping: the fixture
+    has to live in the same band the technique reads, or the test measures nothing.
+
+    Deterministic per-pixel values from an integer hash rather than a random draw,
+    so nothing depends on a seed and the guard test's ban on `random` still holds.
+    """
+    ys, xs = np.mgrid[0:height, 0:width]
+    # A cheap integer hash: distinct subjects get uncorrelated pixel values, and the
+    # same subject always gets the same ones.
+    mixed = ((xs * 73856093) ^ (ys * 19349663) ^ (subject * 83492791 + 0x9E3779B9)) & 0xFFFFFFFF
+    mixed = (mixed ^ (mixed >> 13)) * 1274126177 & 0xFFFFFFFF
+    values = (mixed % 20001) / 10000.0 - 1.0
+    return values.astype(np.float64)
+
+
+def make_prnu_image(
+    seed_subject: int = 0,
+    width: int = 256,
+    height: int = 256,
+    *,
+    noise_scale: float = 16.0,
+    scene: int = 0,
+) -> bytes:
+    """An image carrying a known, reproducible sensor fingerprint.
+
+    Two independent parameters, because real PRNU needs both:
+
+    - `seed_subject` picks the *sensor*. Images sharing it share a fingerprint.
+    - `scene` picks the *content*. Estimating a fingerprint requires several
+      images: the fixed pattern accumulates while differing content averages out.
+      With one image the residual is dominated by the scene and the estimate is
+      not a fingerprint at all.
+
+    Different `seed_subject` values give genuinely different patterns, which is the
+    property matching relies on.
+
+    `noise_scale` sets the fingerprint's amplitude against the scene, and it is a
+    signal-to-noise knob rather than a constant: measured correlation runs 0.02 at
+    scale 2, 0.14 at 8, 0.28 at 16. Real sensors sit at a few percent of pixel
+    variance, so the default is set where a real camera plausibly would be. It is
+    still exposed because a test that can only pass at one SNR proves nothing.
+
+    This is a synthetic stand-in for a camera, not a camera. It proves the
+    estimator and the correlation behave as the literature describes; it says
+    nothing about how a real sensor's PRNU behaves, which depends on the whole
+    imaging pipeline including demosaicing and in-camera denoising. The module says
+    so, and the test suite says so.
+    """
+    ys, xs = np.mgrid[0:height, 0:width]
+    # Smooth content. This is not a stylistic choice: the estimator reads the
+    # finest wavelet band, so content with strong per-pixel detail sits *in the same
+    # band as the fingerprint* and swamps it. An earlier fixture added a checkerboard
+    # term at amplitude ~22 and correlation collapsed to 0.016. Real photographs have
+    # plenty of fine detail, which is why real PRNU needs many frames and real
+    # thresholds are dataset-specific -- the module says so.
+    content = 128 + 55 * np.sin(xs * (0.09 + 0.031 * scene) + scene) * np.cos(
+        ys * (0.07 + 0.023 * scene)
+    )
+    fingerprint = _fingerprint(seed_subject, width, height)
+    array = np.clip(content + noise_scale * fingerprint, 0, 255).astype(np.uint8)
+    # Quantise to uint8, as a sensor would, and put the same fingerprint in all
+    # three channels: a photosite's gain error is a property of the site, not of
+    # which colour it filters.
+    image = Image.fromarray(np.dstack([array] * 3), mode="RGB")
+    buffer = io.BytesIO()
+    # PNG, not JPEG: lossy compression destroys exactly the fine grain the
+    # estimator is trying to read.
+    image.save(buffer, format="PNG", compress_level=1)
+    return buffer.getvalue()
+
+
 def exif_bytes(fields: dict[str, Any]) -> bytes:
     """A JPEG carrying exactly the given EXIF fields.
 
