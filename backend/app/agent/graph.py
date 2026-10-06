@@ -214,9 +214,26 @@ class AgentGraph:
         state.status = RunStatus.RUNNING
         state.messages.append(
             {
-                "role": "system",
-                "content": f"{pending.tool} was approved by a human and executed.",
-                "result": {"ok": result.ok, "output": result.output, "error": result.error},
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": pending.action_id,
+                        "type": "function",
+                        "function": {
+                            "name": pending.tool,
+                            "arguments": canonical_args(dict(pending.args)),
+                        },
+                    }
+                ],
+            }
+        )
+        state.messages.append(
+            {
+                "role": "tool",
+                "content": _render_tool_output(result),
+                "tool_call_id": pending.action_id,
+                "name": pending.tool,
             }
         )
         return await self.run_until_pause(state)

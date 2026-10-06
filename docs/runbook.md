@@ -178,9 +178,24 @@ curl localhost:8000/cases/$CASE/results -H "Authorization: Bearer $TOKEN"
 | `done` | Result recorded |
 | `failed` | Analysis or infrastructure error; see `error` on the job |
 | `unsupported` | This host cannot run the module; see `unsupported_reason` |
+| `not_applicable` | The module ran; the technique does not apply to this input |
 
-`unsupported` is deliberately not `failed` — nothing went wrong, and reporting
-it as a failure would suggest a bug and invite a pointless retry.
+Neither `unsupported` nor `not_applicable` is `failed` — nothing went wrong, and
+reporting either as a failure would suggest a bug and invite a pointless retry.
+Neither writes a result row, so "could not measure" is never confused with
+"measured zero". `unsupported_reason` carries the explanation.
+
+### From the agent
+
+The agent's `run_analysis` tool runs the job **inline when no queue broker is
+configured**, so a run can finish with a citable result in one pass. That is not a
+simulation: it calls the same `execute_job` the Dramatiq worker does, with the
+same pinned-model verification and the same refusal statuses. Only the transport
+differs.
+
+With a broker configured the job is queued instead, and the tool returns
+`result_available: false` — the agent is told plainly that there is nothing to
+cite yet rather than being sent to look for a result it cannot see.
 
 ### Workers
 

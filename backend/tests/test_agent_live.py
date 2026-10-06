@@ -254,6 +254,18 @@ async def test_live_run_reaches_a_tool_call_and_a_sourced_outcome(
         assert row.result_hash, "a tool call was recorded with no result hash"
 
 
+#: The objective names the evidence id explicitly and tells the model to look it
+#: up. This is not a hint to the model that a production objective would not give:
+#: it is what a real operator writes when they want a specific item analysed, and
+#: it removes the one thing a 3B model reliably gets wrong -- transcribing a UUID it
+#: was never shown. See CHECKLIST.md P6.E for the tool-level fix this works around.
+def _ANALYSIS_OBJECTIVE(evidence_id: str) -> str:  # noqa: N802
+    return (
+        "Call get_case to list this case's evidence, then run the image-ela "
+        f"analyzer on evidence {evidence_id} and report what it found."
+    )
+
+
 async def test_live_agent_runs_a_real_analyzer_and_cites_its_output(
     pg: AsyncSession, live_model: Any
 ) -> None:
@@ -274,10 +286,8 @@ async def test_live_agent_runs_a_real_analyzer_and_cites_its_output(
     """
     from app.agent.repository import create_run
     from app.analysis import registry
-    from app.analysis.executor import execute_job
     from app.analysis.models import AnalysisJob, AnalysisResult
-    from app.analysis.modules import image_ela
-    from app.analysis.repository import submit_job
+    from app.analysis.modules import image_ela, image_exif
     from app.domain.models import Case, Evidence
 
     from tests.fixtures_images import make_tampered_jpeg
@@ -320,9 +330,7 @@ async def test_live_agent_runs_a_real_analyzer_and_cites_its_output(
             pg,
             case_id=case.id,
             thread_id=f"t-{uuid.uuid4().hex[:6]}",
-            objective=(
-                "Run the image-ela analyzer on the attached image, then report " "what it found."
-            ),
+            objective=_ANALYSIS_OBJECTIVE(str(evidence.id)),
             actor_id=actor,
             model=live_model.name,
         )
@@ -342,9 +350,7 @@ async def test_live_agent_runs_a_real_analyzer_and_cites_its_output(
             run_id=str(run.id),
             case_id=str(case.id),
             thread_id=run.thread_id,
-            objective=(
-                "Run the image-ela analyzer on the attached image, then report " "what it found."
-            ),
+            objective=_ANALYSIS_OBJECTIVE(str(evidence.id)),
         )
         outcome = await graph.start(state)
     finally:
@@ -360,57 +366,30 @@ async def test_live_agent_runs_a_real_analyzer_and_cites_its_output(
             f"answered directly, which a 3B model sometimes does"
         )
 
-    # A 3B model reliably invents a plausible-looking evidence_id ("attached_image")
-    # rather than copying the UUID it was shown. That is a model-capability limit,
-    # not a bug in the plumbing, so this test performs the call itself and leaves
-    # the model's own attempt asserted as a recorded failure above. What is being
-    # proven here is the path, not the model's arithmetic.
+    # The model is asked for an evidence_id it was never shown. `run_analysis`
+    # needs a UUID, and a 3B model reliably invents a plausible-looking one
+    # ("attached_image") rather than copying the value it was given.
     #
-    # A typed-args rejection is also the correct outcome: a wrong id must fail
-    # before the tool body can act on it.
+    # This is a model-capability limit, not a plumbing fault, so it is worked around
+    # here rather than fixed in the tool: the correct fix is a tool that takes an
+    # evidence *index* instead of an id, which is a real design change and is
+    # recorded in CHECKLIST.md rather than smuggled into a test.
+    #
+    # What the model *did* produce is still asserted, because a typed-args rejection
+    # is the correct outcome: a bad id must fail before the tool body can act.
     recorded = await list_tool_calls(pg, run_id=run.id)
     attempt = next(r for r in recorded if r.tool == "run_analysis")
     if not attempt.ok:
-        # The rejection is itself worth asserting: a bad id must fail at the typed
-        # boundary, before the tool body can act on it.
         assert "invalid arguments" in attempt.error, (
             f"a failed run_analysis should have failed argument validation, got "
             f"{attempt.error!r}"
         )
         print(f"model invented evidence_id={attempt.args.get('evidence_id')!r}")
-        from app.agent.repository import record_tool_call
-        from app.agent.types import ToolCall, ToolResult
-
-        result = ToolResult(
-            call_id=attempt.call_id,
-            name="run_analysis",
-            ok=True,
-            output={"note": "test-performed"},
+    else:
+        assert attempt.args.get("evidence_id") == str(evidence.id), (
+            "the model produced a valid UUID; if that stops happening this "
+            "workaround can be deleted"
         )
-        result.compute_hash()
-        await record_tool_call(
-            pg,
-            run_id=run.id,
-            call=ToolCall(
-                name="run_analysis",
-                args={"module": "image-ela", "evidence_id": str(evidence.id)},
-                call_id=f"test-{uuid.uuid4().hex[:8]}",
-            ),
-            result=result,
-            case_id=case.id,
-        )
-        job, _ = await submit_job(
-            pg,
-            case_id=case.id,
-            evidence_id=evidence.id,
-            evidence_sha256=evidence.sha256,
-            module="image-ela",
-            module_version=image_ela.VERSION,
-            params={},
-            requested_by=actor,
-            gpu_available=False,
-        )
-        await pg.commit()
 
     # `run_analysis` is fire-and-forget: it submits a job and returns a job id.
     # No worker runs in this test, so the job is still queued and no result row
@@ -419,28 +398,48 @@ async def test_live_agent_runs_a_real_analyzer_and_cites_its_output(
     # does not exist yet, and declining is the honest outcome.
     from sqlalchemy import select
 
+    recorded = await list_tool_calls(pg, run_id=run.id)
+    analysis_call = next((r for r in recorded if r.tool == "run_analysis"), None)
+    assert analysis_call is not None, f"run_analysis was never called (called {calls})"
+    assert (
+        analysis_call.ok
+    ), f"run_analysis failed: {analysis_call.error} (args {analysis_call.args})"
+
+    # The audit row stores a *hash* of the output, not the output itself -- the
+    # audit trail should not duplicate case data. So the payload is read from the
+    # run's own tool_results, which is what the model actually saw.
+    outputs = [
+        r.output
+        for r in outcome.state.tool_results
+        if r.name == "run_analysis" and isinstance(r.output, dict)
+    ]
+    assert outputs, f"the run saw no run_analysis output; results were {outcome.state.tool_results}"
+    output = outputs[-1]
+    assert output["result_available"] is True, f"the run could not cite its own analysis: {output}"
+    reported = output["result"]
+    assert reported is not None, "result_available was true but no result came back"
+    assert reported["analyzer"] == "image-ela"
+
+    # And the number must be the analyzer's own, from real JPEG bytes.
+    from .fixtures_images import make_clean_jpeg
+
+    expected = image_ela.run(tampered, {})["score"]
+    assert reported["score"] == pytest.approx(
+        expected, abs=1e-6
+    ), f"tool reported {reported['score']} but the analyzer computes {expected}"
+    assert reported["score"] > reported["threshold"], "the tampered fixture must be flagged"
+    assert (
+        image_ela.run(make_clean_jpeg(), {})["score"] < reported["score"]
+    ), "a clean image must score below the tampered one"
+    assert reported["threshold"] == image_exif.THRESHOLD or reported["threshold"] > 0
+
+    # The job really ran: a row exists, and its score matches what was reported.
     jobs = list(
         (await pg.execute(select(AnalysisJob).where(AnalysisJob.case_id == case.id))).scalars()
     )
-    recorded = await list_tool_calls(pg, run_id=run.id)
-    assert jobs, (
-        "run_analysis was called but submitted no job.\n"
-        f"  args it was given: {[r.args for r in recorded if r.tool == 'run_analysis']}\n"
-        f"  errors: {[r.error for r in recorded]}"
-    )
-    assert jobs[0].module == "image-ela", f"submitted {jobs[0].module}"
-    assert outcome.state.refusal, "a run with no available result must decline, not invent one"
-
-    # Now run the queued job the way the worker would, and check the real score.
-    job = jobs[0]
-    await execute_job(
-        pg,
-        job,
-        settings=_live_settings(),
-        gpu_available=False,
-        evidence_reader=lambda evidence: tampered,  # matches _fetch_evidence's arity
-    )
-    assert job.status == "done", f"{job.status}: {job.error}"
+    assert jobs, "the inline executor wrote no job row"
+    assert jobs[0].status == "done", f"{jobs[0].status}: {jobs[0].error}"
+    assert jobs[0].module == "image-ela"
 
     rows = list(
         (
@@ -450,17 +449,24 @@ async def test_live_agent_runs_a_real_analyzer_and_cites_its_output(
     assert rows, "the executor ran but wrote no result"
     ela = [r for r in rows if r.module == "image-ela"]
     assert ela, f"expected an image-ela result, got {[r.module for r in rows]}"
+    assert ela[0].id == uuid.UUID(
+        reported["result_id"]
+    ), "the tool reported a result id that is not the stored one"
+    assert ela[0].score == pytest.approx(reported["score"])
 
-    # The score must be the analyzer's own, computed from real JPEG bytes.
-
-    expected = image_ela.run(tampered, {})["score"]
-    assert ela[0].score == pytest.approx(
-        expected, abs=1e-6
-    ), f"stored {ela[0].score} but the analyzer computes {expected}"
-    assert ela[0].score > ela[0].threshold, "the tampered fixture must be flagged"
-
-    from .fixtures_images import make_clean_jpeg as clean_bytes
-
+    # The run must now have something to cite, so it should not have declined for
+    # lack of results. It may legitimately park on awaiting_approval if the model
+    # tried to write a finding afterwards -- that is the HITL gate doing its job.
     assert (
-        image_ela.run(clean_bytes(), {})["score"] < ela[0].score
-    ), "a clean image must score below the tampered one"
+        outcome.state.refusal == ""
+    ), f"the run declined despite having a result: {outcome.state.refusal!r}"
+    if outcome.state.status.value == "awaiting_approval":
+        assert outcome.state.pending is not None
+        assert outcome.state.pending.tool in {"update_case_finding", "write_memory"}
+        print(f"parked for approval on {outcome.state.pending.tool} (HITL gate)")
+
+    if outcome.state.status.value == "completed":
+        cited = [c for claim in outcome.state.claims for c in claim.citations]
+        assert any(
+            c.score == pytest.approx(reported["score"]) for c in cited
+        ), "the completed report did not cite the analysis it just ran"

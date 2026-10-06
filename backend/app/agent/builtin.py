@@ -30,8 +30,10 @@ class RunAnalysisArgs(BaseModel):
 @define_tool(
     name="run_analysis",
     description=(
-        "Queue analysis of one evidence item with one analyzer. Reuses a cached "
-        "result when identical work was already performed."
+        "Analyze one evidence item with one analyzer. Returns the score, threshold "
+        "and model version, which are citable. Returns result_available=false with "
+        "a reason when the analysis could not be performed. Call get_case first: "
+        "evidence_id must be copied exactly from its 'evidence' list."
     ),
     args_model=RunAnalysisArgs,
 )
@@ -64,14 +66,25 @@ async def run_analysis(ctx: ToolContext, args: RunAnalysisArgs) -> dict[str, Any
     existing = await get_result_for_key(ctx.session, key)
     if existing is not None:
         # T5.8: identical work already done. Report it rather than requeueing.
+        #
+        # Shaped like the freshly-computed branch below, so a caller cannot tell
+        # the two apart by inspecting the response: a cache hit is as citable as a
+        # cold run, and a shape difference would invite a `cached` check to be read
+        # as "not a result".
         return {
             "cached": True,
-            "result_id": str(existing.id),
-            "analyzer": existing.module,
-            "score": existing.score,
-            "threshold": existing.threshold,
-            "model_version": existing.model_version,
-            "tier": existing.tier,
+            "result_available": True,
+            "job_id": str(existing.job_id),
+            "status": "done",
+            "result": {
+                "result_id": str(existing.id),
+                "analyzer": existing.module,
+                "score": existing.score,
+                "threshold": existing.threshold,
+                "model_version": existing.model_version,
+                "tier": existing.tier,
+            },
+            "note": "identical work was already performed; the stored result is citable",
         }
 
     job, created = await submit_job(
@@ -87,15 +100,87 @@ async def run_analysis(ctx: ToolContext, args: RunAnalysisArgs) -> dict[str, Any
     )
     from app.analysis.queue import enqueue_analysis_job
 
-    if created:
-        enqueue_analysis_job(job.id, settings=ctx.settings)
+    queued = enqueue_analysis_job(job.id, settings=ctx.settings) if created else False
+
+    # A tool result must tell the model what it can do *next*. Returning
+    # "analysis is asynchronous; re-read results before citing" was an
+    # instruction the loop could not carry out: the only tool that shows results is
+    # `search_evidence`, which the model had to guess to call, and a tool-call turn
+    # does not get a chance to be retried. Worse, `search_evidence` reads whatever
+    # exists at the time it is called, so a result produced after it ran is
+    # invisible for the rest of the run.
+    #
+    # So: run it here when there is no worker. That is not a simulation -- it is the
+    # same `execute_job` the Dramatiq worker calls, with the same model
+    # verification and the same refusal statuses. It only replaces the transport.
+    # With a broker configured, the job is queued and the tool says plainly that the
+    # result is not available yet.
+    if queued:
+        return {
+            "cached": False,
+            "job_id": str(job.id),
+            "status": job.status,
+            "module": module.spec.name,
+            "result_available": False,
+            "note": "queued for a worker; the result is not available yet, so do "
+            "not cite this analysis. Report what the case already contains.",
+        }
+
+    # No broker: execute inline so the run can finish with a sourced result.
+    from app.analysis.executor import execute_job
+
+    executed = await execute_job(
+        ctx.session,
+        job,
+        settings=ctx.settings,
+        gpu_available=gpu,
+        model_store=_model_store(ctx.settings),
+    )
+
+    if executed.status == "done":
+        stored = await get_result_for_key(ctx.session, key)
+        return {
+            "cached": False,
+            "job_id": str(job.id),
+            "status": executed.status,
+            "module": module.spec.name,
+            "result_available": True,
+            "result": (
+                {
+                    "result_id": str(stored.id),
+                    "analyzer": stored.module,
+                    "score": stored.score,
+                    "threshold": stored.threshold,
+                    "model_version": stored.model_version,
+                    "tier": stored.tier,
+                }
+                if stored is not None
+                else None
+            ),
+            "note": "analysis complete; the result above is citable",
+        }
+
+    # Refusals are data. The model needs to know *why* there is no number, or it
+    # will either invent one or repeat the same call.
     return {
         "cached": False,
         "job_id": str(job.id),
-        "status": job.status,
+        "status": executed.status,
         "module": module.spec.name,
-        "note": "analysis is asynchronous; re-read results before citing",
+        "result_available": False,
+        "reason": executed.error or executed.unsupported_reason,
+        "note": (
+            "no result was produced; report that the analysis did not apply or "
+            "failed rather than citing a score"
+        ),
     }
+
+
+def _model_store(settings: Any) -> Any:
+    """A ModelStore for the executor to verify pinned weights against."""
+    from app.analysis.models_registry import ModelStore
+
+    return ModelStore(settings)
 
 
 class GetCaseArgs(BaseModel):

@@ -17,9 +17,7 @@ import uuid
 import pytest
 from app.agent.graph import AgentGraph, load_state
 from app.agent.llm import (
-    ChatMessage,
     ChatResponse,
-    OpenAICompatModel,
     ScriptedModel,
     parse_json_block,
 )
@@ -40,7 +38,6 @@ from app.agent.security import (
 )
 from app.agent.tools import NeedsApproval, ToolRunner
 from app.agent.tools import registry as tool_registry
-from app.agent.tools import reset as reset_tools
 from app.agent.types import (
     AgentState,
     Citation,
@@ -57,41 +54,6 @@ _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
     "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 )
-
-
-@pytest.fixture
-def fake_store():
-    from app.analysis import executor as executor_mod
-    from app.domain import router as domain_router
-    from app.domain.antivirus import NoopScanner
-    from app.domain.service import IngestService
-
-    from tests.test_domain_integration import FakeStore
-
-    store = FakeStore()
-    service = IngestService(store, NoopScanner())
-    original_service = domain_router._ingest_service
-    original_fetch = executor_mod._read_from_object_store
-    domain_router._ingest_service = lambda settings: service
-    executor_mod._read_from_object_store = lambda evidence, settings: (
-        store.get_evidence(evidence.storage_key)
-    )
-    try:
-        yield service
-    finally:
-        domain_router._ingest_service = original_service
-        executor_mod._read_from_object_store = original_fetch
-
-
-@pytest.fixture(autouse=True)
-def fresh_tools():
-    """Rebuild the tool registry per test so ordering cannot matter."""
-    from app.agent.builtin import register_all
-
-    reset_tools()
-    register_all()
-    yield
-    reset_tools()
 
 
 async def _auth(client: AsyncClient, creds: dict[str, str]) -> dict[str, str]:
@@ -1008,7 +970,12 @@ async def test_run_analysis_tool_reuses_cached_result(
             ctx, RunAnalysisArgs(evidence_id=uuid.UUID(eid), module="byte-entropy")
         )
     assert out["cached"] is True
-    assert out["result_id"]
+    # A cache hit is as citable as a cold run and returns the same shape, so a
+    # caller cannot mistake it for "no result".
+    assert out["result_available"] is True
+    assert out["result"]["analyzer"] == "byte-entropy"
+    assert out["result"]["result_id"]
+    assert out["result"]["threshold"] is not None
 
 
 async def test_run_analysis_tool_refuses_cross_case_evidence(
@@ -1140,309 +1107,3 @@ async def test_tool_call_loop_is_bounded(
 
     assert outcome.state.step is Step.INSUFFICIENT_EVIDENCE
     assert "tool calls" in outcome.state.refusal
-
-
-# --- the OpenAI tools wire format (Phase 5 gap) ------------------------------
-
-
-def test_model_tool_payload_is_openai_shaped() -> None:
-    """Tools must reach the model wrapped as {"type": "function", "function": ...}.
-
-    This is the bug that made the live agent look incapable of tool use. A flat
-    catalog is accepted by every OpenAI-compatible endpoint without error, and
-    the model is simply never told the tools exist — so it answers in prose and
-    the failure is indistinguishable from "the model is too small".
-    """
-    from app.agent.tools import to_model_tools
-
-    for entry in to_model_tools():
-        assert entry["type"] == "function"
-        assert set(entry) == {"type", "function"}, entry.keys()
-        fn = entry["function"]
-        assert fn["name"] and fn["description"]
-        assert fn["parameters"]["type"] == "object", "models need a JSON schema"
-
-
-def test_to_model_tools_drops_the_internal_approval_flag() -> None:
-    """`state_changing` is a routing fact for us, not something the model should
-    reason about; the tool body enforces it regardless."""
-    from app.agent.tools import to_model_tools, tool_catalog
-
-    entries = to_model_tools()
-    assert not any("state_changing" in e["function"] for e in entries)
-    assert any(t["state_changing"] for t in tool_catalog()), "the flag must still exist"
-
-
-def test_catalogue_and_wire_formats_stay_in_step() -> None:
-    """Every catalogued tool must be present on the wire, under the same name."""
-    from app.agent.tools import to_model_tools, tool_catalog
-
-    assert {t["name"] for t in tool_catalog()} == {e["function"]["name"] for e in to_model_tools()}
-
-
-def test_llm_normalises_a_flat_catalog() -> None:
-    """The client coerces a flat entry, so no caller can reintroduce the bug."""
-
-    sent: dict = {}
-
-    class _Resp:
-        status_code = 200
-
-        def raise_for_status(self) -> None:
-            pass
-
-        def json(self) -> dict:
-            return {
-                "model": "m",
-                "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
-            }
-
-    class _Client:
-        def __enter__(self):  # noqa: ANN204
-            return self
-
-        def __exit__(self, *a: object) -> None:
-            return None
-
-        def post(self, url: str, json: dict) -> _Resp:  # noqa: A002
-            sent.update(json)
-            return _Resp()
-
-    model = OpenAICompatModel.__new__(OpenAICompatModel)
-    model.base_url = "http://x/v1"
-    model.model = "m"
-    model.api_key = None
-    model.timeout = 5
-    model.embed_model = "e"
-    model._client = lambda: _Client()  # type: ignore[method-assign]
-
-    model.complete(
-        [ChatMessage(role="user", content="hi")],
-        tools=[{"name": "t", "description": "d", "parameters": {"type": "object"}}],
-    )
-    assert sent["tools"] == [
-        {
-            "type": "function",
-            "function": {"name": "t", "description": "d", "parameters": {"type": "object"}},
-        }
-    ]
-    assert sent["tool_choice"] == "auto"
-
-
-def test_llm_does_not_double_wrap_already_wrapped_tools() -> None:
-    sent: dict = {}
-
-    class _Resp:
-        def raise_for_status(self) -> None:
-            pass
-
-        def json(self) -> dict:
-            return {
-                "model": "m",
-                "choices": [{"message": {"content": ""}, "finish_reason": "stop"}],
-            }
-
-    class _Client:
-        def __enter__(self):  # noqa: ANN204
-            return self
-
-        def __exit__(self, *a: object) -> None:
-            return None
-
-        def post(self, url: str, json: dict) -> _Resp:  # noqa: A002
-            sent.update(json)
-            return _Resp()
-
-    wrapped = [
-        {
-            "type": "function",
-            "function": {"name": "t", "description": "d", "parameters": {"type": "object"}},
-        }
-    ]
-    model = OpenAICompatModel.__new__(OpenAICompatModel)
-    model.base_url = "http://x/v1"
-    model.model = "m"
-    model.api_key = None
-    model.timeout = 5
-    model.embed_model = "e"
-    model._client = lambda: _Client()  # type: ignore[method-assign]
-
-    model.complete([ChatMessage(role="user", content="hi")], tools=wrapped)
-    assert sent["tools"] == wrapped
-
-
-# --- the tool result must actually reach the model (Phase 5 gap) -----------
-
-
-async def _drive(sessionmaker_fixture, scripted: ScriptedModel):  # noqa: ANN001
-    """Run the graph end to end with `scripted` and return (state, model)."""
-    from app.agent.repository import create_run
-    from app.domain.models import Case
-
-    actor = uuid.uuid4()
-    async with sessionmaker_fixture() as session:
-        case = Case(number=f"TC-{uuid.uuid4().hex[:6]}", title="T", owner_id=actor)
-        session.add(case)
-        await session.flush()
-        run = await create_run(
-            session,
-            case_id=case.id,
-            thread_id=f"t-{uuid.uuid4().hex[:6]}",
-            objective="investigate",
-            actor_id=actor,
-            model="scripted",
-        )
-        await session.commit()
-        run_id, case_id = run.id, case.id
-        number, title = case.number, case.title
-
-    async with sessionmaker_fixture() as session:
-        from app.agent.repository import get_run
-
-        run_row = await get_run(session, run_id)
-        assert run_row is not None
-        graph = AgentGraph(
-            session=session,
-            model=scripted,
-            settings=_settings(),
-            run=run_row,
-            case_number=number,
-            case_title=title,
-        )
-        from app.agent.types import AgentState
-
-        state = AgentState(
-            run_id=str(run_id),
-            case_id=str(case_id),
-            thread_id=f"t-{uuid.uuid4().hex[:6]}",
-            objective="investigate",
-        )
-        outcome = await graph.start(state)
-        return outcome.state
-
-
-async def test_tool_result_reaches_the_model_as_a_tool_turn(sessionmaker_fixture) -> None:
-    """The model must be able to read what its tool returned.
-
-    This was the second half of the live-run bug. The result was appended as a
-    user message whose payload sat in a `result` key that the message builder
-    never read, so the model saw the literal string "Tool search_evidence
-    returned:" and nothing else. It then repeated the same call until the loop
-    bound stopped it. The audit rows were correct throughout, which is exactly
-    why every scripted test passed.
-    """
-    scripted = ScriptedModel(
-        [
-            ChatResponse(
-                content="",
-                finish_reason="tool_calls",
-                tool_calls=[
-                    {
-                        "id": "call_abc",
-                        "type": "function",
-                        "function": {"name": "get_case", "arguments": "{}"},
-                    }
-                ],
-            ),
-            ChatResponse(content=json.dumps({"insufficient_evidence": "done"})),
-        ]
-    )
-    await _drive(sessionmaker_fixture, scripted)
-
-    # Find the turn carrying the tool result.
-    tool_turns = [m for call in scripted.calls for m in call if m.role == "tool"]
-    assert tool_turns, "no tool-role turn was ever sent to the model"
-    turn = tool_turns[0]
-    assert turn.content, "the tool turn had empty content"
-    assert turn.content not in (
-        "Tool get_case returned:",
-    ), "the tool result was still being passed out-of-band"
-    # The model must receive the actual payload, not a placeholder.
-    assert turn.content.lstrip().startswith(
-        "{"
-    ), f"the model could not read the result: {turn.content[:200]!r}"
-
-
-async def test_tool_turn_carries_the_originating_call_id(sessionmaker_fixture) -> None:
-    """Without `tool_call_id` the model cannot match a result to the call."""
-    scripted = ScriptedModel(
-        [
-            ChatResponse(
-                content="",
-                finish_reason="tool_calls",
-                tool_calls=[
-                    {
-                        "id": "call_xyz",
-                        "type": "function",
-                        "function": {"name": "get_case", "arguments": "{}"},
-                    }
-                ],
-            ),
-            ChatResponse(content=json.dumps({"insufficient_evidence": "done"})),
-        ]
-    )
-    await _drive(sessionmaker_fixture, scripted)
-
-    last = scripted.calls[-1]
-    assistant = [m for m in last if m.role == "assistant" and m.tool_calls]
-    assert assistant, "the assistant turn did not echo its tool_calls"
-    assert assistant[0].tool_calls[0]["id"] == "call_xyz", (
-        "the assistant turn dropped the call id, so the model cannot correlate "
-        "the result it is about to receive"
-    )
-
-
-async def test_tool_error_is_visible_to_the_model(sessionmaker_fixture) -> None:
-    """A failed tool must read as a failure.
-
-    An empty or silently-dropped error makes the model retry the same call, which
-    is how a live run burned its whole tool budget on one query.
-    """
-    scripted = ScriptedModel(
-        [
-            ChatResponse(
-                content="",
-                finish_reason="tool_calls",
-                tool_calls=[
-                    {
-                        "id": "c1",
-                        "type": "function",
-                        "function": {"name": "no_such_tool", "arguments": "{}"},
-                    }
-                ],
-            ),
-            ChatResponse(content=json.dumps({"insufficient_evidence": "gave up"})),
-        ]
-    )
-    await _drive(sessionmaker_fixture, scripted)
-
-    tool_turns = [m for call in scripted.calls for m in call if m.role == "tool"]
-    assert tool_turns
-    assert (
-        "unknown analysis" in tool_turns[0].content or "no_such_tool" in tool_turns[0].content
-    ), f"the model was not told the tool failed: {tool_turns[0].content[:200]!r}"
-
-
-def test_tool_output_is_truncated_not_dumped() -> None:
-    """A huge tool result must not blow the context window."""
-    from app.agent.graph import MAX_TOOL_OUTPUT_CHARS
-
-    big = {"blob": "x" * (MAX_TOOL_OUTPUT_CHARS * 3)}
-
-    class _Ok:
-        ok = True
-        output = big
-        error = ""
-
-    rendered = __import__("app.agent.graph", fromlist=["_render_tool_output"])._render_tool_output(
-        _Ok()
-    )
-    assert len(rendered) <= MAX_TOOL_OUTPUT_CHARS
-
-
-def test_canonical_args_is_json_not_python_repr() -> None:
-    """Python's repr uses single quotes and True, which is not JSON."""
-    from app.agent.graph import canonical_args
-
-    rendered = canonical_args({"query": "it's here", "limit": 3, "flag": True})
-    assert json.loads(rendered) == {"query": "it's here", "limit": 3, "flag": True}

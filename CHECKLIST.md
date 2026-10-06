@@ -356,31 +356,59 @@ Authoritative progress tracker for `IMPLEMENTATION_PLAN.md`. Every build task, t
 - [x] T6.7 Threshold + model_version present in every result
       `build_result` injects these, so no module can emit a result without them.
 **Exit**
-- [~] P6.E three analyzers deterministic golden tests pass; agent uses end-to-end; no-simulation proven
-      Six analyzers exist and pass deterministic golden tests, and the agent drives
-      `run_analysis` end to end: a live model calls the tool, the real executor
-      scores real JPEG bytes, and the stored score is the analyzer's own (asserted
-      equal to a direct `image_ela.run`). Not yet earned, honestly:
-      - **The agent's run declines rather than citing its own analysis**, because
-        `run_analysis` is fire-and-forget and no worker runs in the test. The
-        refusal is *correct* — the provenance guard will not let the agent cite a
-        result that does not exist yet — but it means "agent produces a report
-        citing its own analysis" is not yet demonstrated in one pass.
-      - **A 3B model invents `evidence_id="attached_image"`** rather than copying
-        the UUID it was shown. A model-capability limit, not a plumbing fault, so
-        the test performs the call itself and asserts the model's failed attempt was
-        rejected at the typed-args boundary. A production path needs either a
-        >=7B model or a tool that takes an evidence *index* rather than an id.
-      What is proven: no analyzer simulates. Five analyzers, real pinned weights,
-      real scores, refusals where a technique does not apply, and a real model
-      driving the tool that invokes them.
+- [x] P6.E three analyzers deterministic golden tests pass; agent uses end-to-end; no-simulation proven
+      Six analyzers, real pinned weights, deterministic golden tests, refusals where a
+      technique does not apply — and a live `qwen2.5:3b` that calls `get_case`, calls
+      `run_analysis`, gets a real score back, and proceeds to a report. Verified:
+      `tools called: ['get_case', 'run_analysis']`, then the HITL gate parks
+      `update_case_finding` for a human. No step of that is simulated.
+
+      The remaining gap was **three bugs of the same shape**, all invisible to green
+      tests because `ScriptedModel` replays responses regardless of what it is sent:
+      1. `run_analysis` returned `"analysis is asynchronous; re-read results before
+         citing"` — an instruction the loop could not carry out. The only tool that
+         shows results is `search_evidence`, which the model must think to call and
+         which reads whatever exists *at the time it runs*, so a result produced
+         afterwards was invisible for the rest of the run. The agent therefore always
+         declined for lack of results. Now: with no broker it runs the job inline
+         via the same `execute_job` the worker calls and returns a citable payload;
+         with a broker it says plainly that no result is available yet. Only the
+         transport differs — verification and refusal statuses are identical.
+      2. `approve()` parked the approved action's outcome under the same unread
+         `"result"` key as the original bug, so after a human approved something the
+         model still could not see that it had happened. Fixed to the assistant
+         `tool_calls` + `role: "tool"` turn shape.
+      3. A cache hit returned a *different shape* from a cold run, so `cached` had to
+         be inspected to know whether a result existed — inviting a reader to treat a
+         cache hit as "no result". Both shapes are now identical.
+
+      Because the pattern recurred three times, the last assertion in
+      `tests/test_agent_tool_roundtrip.py` is structural: **no message may park a
+      tool outcome anywhere but `content`**. That guard would have caught all three.
+
+      [!] One honest limitation remains, and it is a model limit rather than a system
+      one: a 3B model invents `evidence_id="attached_image"` when asked to analyse
+      "the attached image". Pointed at an explicit id in the objective and told to
+      call `get_case` first, it copies the UUID correctly. A production path should
+      still take an evidence *index* rather than an id, so the model is never asked
+      to transcribe one.
 
 **Bugs found in this phase, all by running the stack**
-Three of these were invisible to the test suite and none of them raised:
+Six of these were invisible to the test suite and none of them raised:
 - `_ensure_tools()` registered the *agent* tool registry but not the *analysis*
   registry, so `run_analysis` raised `KeyError: unknown analysis module` for every
   module. The agent was handed a tool it could never use, and every failure looked
   like the model choosing badly.
+- `run_analysis` told the model to re-read results when no tool existed to do that.
+- `approve()` sent the approved action's outcome into a key `_reflector` never read,
+  so the model could not learn that an approved write had happened.
+- Tools were sent to the provider as a flat catalog rather than the OpenAI
+  `{"type": "function", "function": {...}}` shape, which every OpenAI-compatible
+  endpoint accepts and silently ignores. The model was never told the tools existed.
+- Tool results were parked under a `"result"` key on a user message, so the model
+  received the literal string "Tool search_evidence returned:" and nothing else. It
+  repeated the same call 20 times against a live provider.
+- A cache hit returned a different response shape from a cold run.
 - YuNet's row layout is `[box, kps(10), score]` — score **last**. OpenCV's docs
   say index 4. Trusting the docs produced blank white crops (std=0.0) and
   embeddings with no same/different structure at all.

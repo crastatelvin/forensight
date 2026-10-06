@@ -114,3 +114,27 @@ def unique_email() -> str:
 @pytest.fixture
 def make_email() -> Iterator[object]:
     yield unique_email
+
+
+@pytest.fixture
+def fake_store():
+    from app.analysis import executor as executor_mod
+    from app.domain import router as domain_router
+    from app.domain.antivirus import NoopScanner
+    from app.domain.service import IngestService
+
+    from tests.test_domain_integration import FakeStore
+
+    store = FakeStore()
+    service = IngestService(store, NoopScanner())
+    original_service = domain_router._ingest_service
+    original_fetch = executor_mod._read_from_object_store
+    domain_router._ingest_service = lambda settings: service
+    executor_mod._read_from_object_store = lambda evidence, settings: (
+        store.get_evidence(evidence.storage_key)
+    )
+    try:
+        yield service
+    finally:
+        domain_router._ingest_service = original_service
+        executor_mod._read_from_object_store = original_fetch

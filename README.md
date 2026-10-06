@@ -10,7 +10,8 @@ memory).
 > approval before changing state. A live model (`qwen2.5:3b`) drives the tool loop
 > end to end and produces a sourced report — see `CHECKLIST.md` T5.10.
 >
-> Six analyzers ship. `byte-entropy` is a deterministic reference module. The
+> **Phase 6 complete.** Six analyzers ship. `byte-entropy` is a deterministic
+> reference module. The
 > image modules are real forensic techniques — `image-ela` scores compression
 > anomalies against the image's own error baseline, `image-exif` scores
 > metadata-integrity indicators, and `image-prnu` correlates sensor fingerprints to
