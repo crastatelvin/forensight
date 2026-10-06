@@ -490,7 +490,40 @@ MinIO, a real worker — not by any test:
       the parked run, showed the exact arguments, and approving returned in 37ms
       with the finding on the case (`findings 0 -> 1`).
 - [x] P7.B4 Evidence viewer: image/audio/video/text + metadata + side-by-side + ELA overlay
-- [ ] P7.B5 Dashboards (Recharts) + MapLibre GL geospatial map
+- [x] P7.B5 Result overview + geospatial view. **Neither Recharts nor MapLibre GL,
+      and both deviations are deliberate.**
+      - **No MapLibre, and no basemap.** The obvious implementation is MapLibre with
+        raster tiles, and it is wrong for this system: a tile request carries the
+        viewport, and the viewport here is derived from the evidence. Panning far
+        enough would tell a tile CDN where the photographs were taken, before anyone
+        has decided that is acceptable to disclose — and in a restricted deployment it
+        renders a blank canvas. So the coordinates are plotted on an equirectangular
+        graticule with no external service contacted, and the panel says so.
+        *Flip to MapLibre* when a deployment supplies its own tile source (internal
+        server, licensed offline basemap, or explicit opt-in). That is a rendering
+        change only — the coordinates are already in decimal degrees.
+      - **No Recharts.** Each analyzer has its own scale — entropy in bits per byte,
+        face similarity a cosine — so a shared axis would be the single most
+        misleading thing this screen could do, and the rows are therefore bars
+        scaled per-analyzer with the threshold ticked on the same axis. More
+        decisively: the reader is deciding whether something needs investigating, so
+        score and threshold must be readable as *text* by a screen reader and
+        copyable into a report. Recharts renders SVG a screen reader reads as an
+        unlabelled graphic, so an accessible table would be needed alongside it
+        anyway — the same information twice, the second copy second-hand. Each row is
+        a real DOM element whose fill is a `div`.
+        *Flip to a charting library* for a genuine time series — score against
+        analysis time across a case, dozens of points, a readable x-axis. That is a
+        different chart and not this one.
+      - **GPS is now extracted to decimal degrees** by `image-exif`, with the raw
+        DMS triples carried alongside so the decimal figure can be re-derived by
+        hand. Hemisphere refs are honoured (an implementation that ignores them puts
+        London in the southern eastern hemisphere, which is a real place in the wrong
+        hemisphere). Malformed components yield no coordinate rather than a guess at
+        (0, 0) — that is a point in the Gulf of Guinea, which would look like data.
+        Still never scored: a coordinate is editable without touching a pixel, and a
+        test pins that stripping only the GPS IFD from an image leaves the score
+        unchanged.
 - [x] P7.B6 Dark/light CSS vars; WCAG 2.1 AA (keyboard/ARIA/focus/contrast)
       Colour lives in CSS variables with one `.dark` class, so a dark-mode bug
       cannot be a forgotten `dark:` variant on one element. The theme toggle reads

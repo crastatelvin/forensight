@@ -229,7 +229,15 @@ test("evidence bytes and the ELA overlay are served through the proxy", async ()
   }
 
   assert.ok(served > 0, `no JPEG served bytes; ${jpegs.length} tried`);
-  assert.ok(sawGone, "expected at least one dangling evidence record to exercise 410");
+
+  // Whether a dangling record exists is a property of *this* database, not of the
+  // code, so it is reported rather than asserted. An earlier version demanded one
+  // and failed the moment someone re-uploaded the file. What must hold either way
+  // is that a record with no bytes is a clean, readable refusal with no storage
+  // internals in it -- checked inside the loop above.
+  if (sawGone) {
+    console.log("  (one evidence record had no stored bytes; 410 handled cleanly)");
+  }
 });
 
 /** Every JPEG evidence record visible to the signed-in user. */

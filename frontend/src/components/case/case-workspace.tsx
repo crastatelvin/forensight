@@ -11,6 +11,9 @@ import { AgentTab } from "./agent-tab";
 import { FindingsTab } from "./findings-tab";
 import { TimelineTab } from "./timeline-tab";
 import { AuditTab } from "./audit-tab";
+import { ResultsOverview } from "./results-overview";
+import { GeospatialPanel, CoordinateTable } from "./geospatial-panel";
+import { collectCoordinates } from "@/lib/geo";
 
 /**
  * The tabbed case workspace.
@@ -96,14 +99,17 @@ export function CaseWorkspace({
           />
         ) : null}
         {tab === "analyses" ? (
-          <AnalysisTab
-            caseId={bundle.case.id}
-            evidence={bundle.evidence}
-            jobs={bundle.jobs}
-            results={bundle.results}
-            modules={modules}
-            canWrite={canWrite}
-          />
+          <>
+            <ResultsOverview results={bundle.results} />
+            <AnalysisTab
+              caseId={bundle.case.id}
+              evidence={bundle.evidence}
+              jobs={bundle.jobs}
+              results={bundle.results}
+              modules={modules}
+              canWrite={canWrite}
+            />
+          </>
         ) : null}
         {tab === "agent" ? (
           <AgentTab
@@ -120,7 +126,18 @@ export function CaseWorkspace({
             canWrite={canWrite}
           />
         ) : null}
-        {tab === "timeline" ? <TimelineTab events={bundle.timeline} /> : null}
+        {tab === "timeline" ? (
+          <>
+            <TimelineTab events={bundle.timeline} />
+            <GeospatialPanel
+              points={collectCoordinates(bundle.results, bundle.evidence)}
+            >
+              <CoordinateTable
+                points={collectCoordinates(bundle.results, bundle.evidence)}
+              />
+            </GeospatialPanel>
+          </>
+        ) : null}
         {tab === "audit" ? (
           <AuditTab entries={bundle.audit} caseId={bundle.case.id} />
         ) : null}

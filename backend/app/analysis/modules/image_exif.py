@@ -160,6 +160,89 @@ def indicators(fields: dict[str, Any]) -> list[dict[str, Any]]:
     return found
 
 
+#: `ExifTags.GPSTAGS` is tag-id -> name; the readers below think in names.
+_GPS_TAG_IDS: dict[str, int] = {name: tag for tag, name in ExifTags.GPSTAGS.items()}
+
+
+def _raw_dms(gps: dict[Any, Any], tag_name: str) -> list[str]:
+    """A DMS triple as strings, for display and for hand-checking."""
+    raw = gps.get(_GPS_TAG_IDS.get(tag_name))
+    if not isinstance(raw, (tuple, list)):
+        return []
+    out: list[str] = []
+    for component in raw:
+        try:
+            out.append(f"{float(component):g}")
+        except (TypeError, ValueError):
+            out.append(str(component))
+    return out
+
+
+def gps_to_decimal(gps: dict[Any, Any]) -> dict[str, Any]:
+    """The GPS IFD as signed decimal degrees, or `{}` when it cannot be read.
+
+    Pillow hands back the raw IFD: ``GPSLatitude`` is a ``(degrees, minutes,
+    seconds)`` triple and the hemisphere lives in a separate ``*Ref`` tag. Nothing
+    downstream could use that — a map, a distance, a nearest-neighbour search all
+    want signed decimal degrees — so it is converted here rather than in each
+    consumer.
+
+    Deliberately not scored and deliberately lossy about precision: EXIF stores
+    rationals, and the third component is often absent, so the honest answer
+    carries the values it actually had rather than a fabricated precision. Missing
+    or malformed components yield `{}` rather than a guess at 0,0 — a point off the
+    coast of Africa is worse than no point, because it looks like data.
+
+    Returns the *raw* strings too. A coordinate in a forensic record has to be
+    reproducible from the file, and "51°30'00"N" is what is in the bytes.
+    """
+
+    def _dms(tag_name: str) -> float | None:
+        raw = gps.get(_GPS_TAG_IDS.get(tag_name))
+        if not isinstance(raw, (tuple, list)) or not raw:
+            return None
+        parts: list[float] = []
+        for component in raw[:3]:
+            try:
+                parts.append(float(component))
+            except (TypeError, ValueError):
+                # A missing seconds component is normal; a non-numeric one is not.
+                if len(parts) >= 2:
+                    parts.append(0.0)
+                    break
+                return None
+        degrees = sum(part / (60.0**i) for i, part in enumerate(parts))
+        return degrees if -180.0 <= degrees <= 180.0 else None
+
+    lat = _dms("GPSLatitude")
+    lon = _dms("GPSLongitude")
+    if lat is None or lon is None:
+        return {}
+
+    # The ref carries the hemisphere: "S" and "W" mean negative.
+    lat_ref = str(gps.get(_GPS_TAG_IDS["GPSLatitudeRef"], "N")).strip().upper()[:1]
+    lon_ref = str(gps.get(_GPS_TAG_IDS["GPSLongitudeRef"], "E")).strip().upper()[:1]
+    if lat_ref == "S":
+        lat = -lat
+    if lon_ref == "W":
+        lon = -lon
+
+    return {
+        "latitude": round(lat, 7),
+        "longitude": round(lon, 7),
+        "latitude_ref": lat_ref,
+        "longitude_ref": lon_ref,
+        # The raw triples as text. `IFDRational` is not JSON-serialisable, and the
+        # string form is the more useful record anyway: "51/1, 30/1, 0/1" is
+        # exactly what the file holds, so an examiner can re-derive the decimal
+        # value by hand and check this one.
+        "raw_latitude": _raw_dms(gps, "GPSLatitude"),
+        "raw_longitude": _raw_dms(gps, "GPSLongitude"),
+        "note": "as recorded in the file's EXIF; not corroborated against any "
+        "external source, and an EXIF coordinate is trivially editable",
+    }
+
+
 def notable_fields(fields: dict[str, Any]) -> list[dict[str, Any]]:
     """Facts that matter to an examiner but are not evidence of manipulation.
 
@@ -229,6 +312,12 @@ def run(data: bytes, params: dict[str, Any]) -> dict[str, Any]:
         "exif_present": bool(fields),
         "recorded_fields": sorted(k for k in fields if k != "GPS"),
         "gps_present": bool(fields.get("GPS")),
+        # Decimal degrees, alongside the raw IFD triples. Reported, never scored:
+        # an EXIF coordinate is editable without touching a pixel, so treating its
+        # presence as evidence of anything would be the same mistake as scoring the
+        # Software field. It is here because a case that turns on where a photo was
+        # taken needs it.
+        "gps": gps_to_decimal(fields.get("GPS", {})),
         "software": fields.get("Software"),
         "params": params,
         "known_limitations": [
