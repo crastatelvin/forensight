@@ -159,6 +159,16 @@ function ResultBar({ result }: { result: AnalysisResultRead }) {
         />
       </div>
 
+      {/* The limitation, in the summary as well as in the detail card.
+          An axe-driven test caught this: the overview showed a score, a tier badge
+          and a version and nothing about what the result can support, which is the
+          one thing a summary must not omit. A reader who only ever looks at the
+          overview would take "Tier A, below threshold, 0.0039/0.01" as a
+          determination. */}
+      <p className="mt-1.5 text-[11px] leading-relaxed text-secondary">
+        {result.disclaimer}
+      </p>
+
       <p className="mt-1 text-[11px] text-tertiary">
         Bar scaled to {ceiling.toPrecision(3)} — this analyzer only. Tick mark is the
         threshold. <span className="font-mono">{result.model_version}</span>

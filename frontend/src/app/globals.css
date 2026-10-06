@@ -29,7 +29,13 @@
 
   --text-primary: oklch(23% 0.01 250); /* 15.6:1 on surface-0 */
   --text-secondary: oklch(45% 0.01 250); /* 7.1:1  */
-  --text-tertiary: oklch(55% 0.008 250); /* 4.6:1 — the floor, do not go lighter */
+  /* 4.8:1 against surface-0, 4.6:1 against surface-1 and 4.5:1 against
+     surface-2 -- measured, not estimated. It was previously 55% lightness on the
+     strength of a comment claiming "4.6:1", and axe-core measured it at 4.07:1
+     against the nested surface. Nothing else in the palette was out of line, but
+     this one was the token every timestamp, version string and secondary label in
+     the app is painted with, so it was failing on nearly every screen. */
+  --text-tertiary: oklch(51% 0.008 250);
   --text-inverse: oklch(99% 0.002 250);
 
   --accent: oklch(52% 0.15 255);

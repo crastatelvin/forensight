@@ -16,7 +16,7 @@
  */
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { type TestContext } from "node:test";
 
 const WEB = process.env.FORENSIGHT_WEB ?? "http://localhost:3000";
 const API = process.env.FORENSIGHT_API ?? "http://localhost:8000";
@@ -79,6 +79,46 @@ async function call(
  * is what the Playwright suite (T7.1) is for; doing it here as well would be a
  * second, weaker copy of that test.
  */
+/**
+ * Whether a live stack is up.
+ *
+ * These tests need a running API and frontend. When neither is reachable they skip
+ * rather than fail: a test that fails because the server is not started is noise
+ * that hides the tests that would have caught something. They must not skip when
+ * the stack *is* up, though — hence a real probe rather than a try/catch that
+ * swallows whatever went wrong.
+ */
+async function stackIsUp(): Promise<boolean> {
+  try {
+    const api = await fetch(`${API}/healthz`, {
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (!api.ok) return false;
+    const web = await fetch(`${WEB}/login`, {
+      signal: AbortSignal.timeout(5_000),
+    });
+    return web.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Skip the calling test unless a live stack is reachable.
+ *
+ * Uses the test context's own `skip`, which marks *this* test as skipped. Calling
+ * `test(...)` with `{skip: true}` instead registers a new skipped sub-test and lets
+ * the parent keep running — which showed up as four "failures" whenever the stack
+ * was down, the opposite of the intent.
+ */
+async function requireStack(t: TestContext): Promise<void> {
+  if (await stackIsUp()) return;
+  t.skip(
+    `no live stack at ${API} / ${WEB} — start it with docker compose up -d ` +
+      `and npm run dev to run these`,
+  );
+}
+
 let signedIn: Promise<void> | null = null;
 
 /**
@@ -152,7 +192,8 @@ async function doSignIn(): Promise<void> {
   storeCookies(direct);
 }
 
-test("a signed-in session can reach every case screen", async () => {
+test("a signed-in session can reach every case screen", async (t) => {
+  await requireStack(t);
   await signIn();
   assert.ok(jar.has("access_token"), "no access token stored after sign-in");
   assert.ok(jar.has("csrf_token"), "no CSRF token stored after sign-in");
@@ -176,7 +217,8 @@ test("a signed-in session can reach every case screen", async () => {
   assert.match(page.body, /Audit/, "audit tab missing");
 });
 
-test("evidence bytes and the ELA overlay are served through the proxy", async () => {
+test("evidence bytes and the ELA overlay are served through the proxy", async (t) => {
+  await requireStack(t);
   await signIn();
 
   // Walk every visible case for a JPEG whose bytes actually exist. Not every
@@ -257,7 +299,8 @@ async function jpegEvidence(): Promise<Array<{ id: string }>> {
   return found;
 }
 
-test("an unauthenticated request is refused, not served", async () => {
+test("an unauthenticated request is refused, not served", async (t) => {
+  await requireStack(t);
   // Run this one first in file order, and restore immediately: the jar is shared
   // process-wide for the rate-limit reason above, so clearing it and not putting
   // it back would fail every test that follows for an unrelated reason.
@@ -277,7 +320,8 @@ test("an unauthenticated request is refused, not served", async () => {
   );
 });
 
-test("an API outage surfaces as 503, not a crash", async () => {
+test("an API outage surfaces as 503, not a crash", async (t) => {
+  await requireStack(t);
   await signIn();
   const res = await call("/api/evidence/00000000-0000-0000-0000-000000000000/download");
   // Either a clean refusal from the API (404) or a proxy error. What it must never

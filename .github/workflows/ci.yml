@@ -51,6 +51,70 @@ jobs:
           # Referenced by the build for prerendering; never a real secret.
           SECRET_KEY: ci-only-not-a-real-secret-0123456789
 
+      - name: Unit tests
+        run: npm test
+
+  # The browser suite needs the real API, so it runs in its own job against the
+  # full compose stack rather than inside `frontend`.
+  e2e:
+    name: E2E (Playwright + axe-core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.5.11"
+
+      - name: Backend dependencies
+        run: uv sync --frozen
+        working-directory: backend
+
+      - name: Frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      # The browser suite proves the analytics the unit suite cannot: that an
+      # unreadable contrast token or a missing accessible name fails the build.
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      # A real Postgres and MinIO. The suite creates cases and uploads evidence, so
+      # this cannot run against SQLite.
+      - name: Start the stack
+        run: docker compose --profile core up -d --wait postgres redis minio api worker
+
+      # The browser signs in through the API, so an admin has to exist. No default
+      # credentials: they are supplied here, as a CI-only secret.
+      - name: Seed an admin
+        working-directory: backend
+        run: |
+          uv run python -m app.seed
+        env:
+          DATABASE_URL: postgresql+asyncpg://forensight:forensight@localhost:5432/forensight
+          SECRET_KEY: ci-only-not-a-real-secret-0123456789
+          SEED_ADMIN_EMAIL: ci-e2e@example.com
+          SEED_ADMIN_PASSWORD: ci-e2e-password-not-real
+
+      - name: Run Playwright
+        working-directory: frontend
+        env:
+          FORENSIGHT_EMAIL: ci-e2e@example.com
+          FORENSIGHT_PASSWORD: ci-e2e-password-not-real
+        run: npx playwright test
+
   backend:
     name: Backend (lint, type-check, test, security)
     runs-on: ubuntu-latest

@@ -11,7 +11,8 @@
     "format:check": "prettier --check .",
     "typecheck": "tsc --noEmit",
     "test": "node --test --experimental-strip-types \"tests/**/*.test.ts\"",
-    "check": "npm run typecheck && npm run lint && npm run build"
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run build",
+    "e2e": "playwright test"
   },
   "dependencies": {
     "next": "16.3.8",
@@ -19,7 +20,9 @@
     "react-dom": "19.2.8"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/eslintrc": "^3.3.7",
+    "@playwright/test": "^1.63.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -29,5 +32,6 @@
     "prettier": "^3.9.9",
     "tailwindcss": "^4",
     "typescript": "^5"
-  }
+  },
+  "type": "module"
 }

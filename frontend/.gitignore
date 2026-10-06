@@ -31,3 +31,6 @@ next-env.d.ts
 
 # typescript
 *.tsbuildinfo
+
+# playwright
+/e2e/.auth/

@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { getSession } from "@/lib/session";
 import { apiGet } from "@/lib/api";
 import type { CaseRead } from "@/lib/types";
@@ -31,14 +30,13 @@ export async function CaseNav() {
     .slice(0, 25);
 
   return (
+    /* No "New case" link here. There was one, `sr-only` until focused, which put
+       two links with the same accessible name on the page — ambiguous for anyone
+       navigating by link list, and it shadowed the real one for anything that
+       resolves links by name. The case switcher is the nav's job; creating a case
+       belongs on the page that lists them. */
     <nav aria-label="Cases" className="hidden sm:block">
       <CaseSwitcher cases={recent} />
-      <Link
-        href="/cases/new"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-md focus:bg-accent focus:px-3 focus:py-1.5 focus:text-xs focus:font-medium focus:text-accent-fg"
-      >
-        New case
-      </Link>
     </nav>
   );
 }

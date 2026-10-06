@@ -530,9 +530,17 @@ MinIO, a real worker — not by any test:
       the resolved theme with `useSyncExternalStore` rather than mirroring it into
       state from an effect, and an inline script in `<head>` applies it before
       first paint — verified to persist across a reload in both directions.
-      **Honest limit:** contrast is *designed* for AA and the values are documented
-      in `globals.css`, but nothing automated asserts it yet. T7.3's axe-core scan
-      is still to come; until it runs, "AA" here means reasoned, not measured.
+      **Now measured rather than asserted.** axe-core scans the rendered login
+      page, the case list, and the case workspace in both themes, and
+      `tests/contrast.test.ts` computes every foreground/background pair straight
+      from `globals.css`. Both were worth having: **axe-core caught a real failure
+      and so did the token test, in the same place.** `--text-tertiary` shipped at
+      4.07:1 against the nested surface while a comment in the stylesheet claimed it
+      was 4.6:1 — arithmetic nobody had done. It is the token every timestamp,
+      version string and secondary label in the app is painted with, so it was
+      failing on nearly every screen. Now 4.5:1 minimum, verified two ways.
+      The token test also fails if a token is *missing*, because a silently skipped
+      pair is how a check reports "clean" over a palette it never looked at.
 - [x] P7.B7 Explainability UX (score meaning, threshold, version, why-popovers)
       The score, its threshold and its module version render as one unit, always —
       a score shown alone is the single most misleading thing this UI could do,
@@ -559,15 +567,61 @@ MinIO, a real worker — not by any test:
       version read the envelope. Found by comparing the UI against a live result.
 - [x] P7.B9 Loading/skeleton/empty/error states; optimistic UI; async job progress
 **Test cases**
-- [ ] T7.1 E2E: login->create case->upload->run analysis->view cited result->generate report
-- [ ] T7.2 Console streams tokens; HITL approve/reject reflects backend
-- [ ] T7.3 axe-core AA; keyboard-only flow; contrast checks
-- [ ] T7.4 Every Tier-A/B result renders disclaimer+threshold+version
-- [ ] T7.5 Long job shows progress + notifies; page responsive
-- [ ] T7.6 Dark/light persists; MapLibre real coords; charts match API
-- [ ] T7.7 Error/empty states render (no silent failure)
+- [x] T7.1 E2E (Playwright, no mocks): login -> create case -> upload -> run
+      analysis -> read the result -> survive a reload. The ELA overlay is asserted
+      by `naturalWidth > 0`, because a broken image is still "visible" to
+      Playwright and only the decode proves it rendered. **Report generation is not
+      covered** — that is Phase 8, so this line will be revisited then rather than
+      ticked early.
+- [~] T7.2 HITL approve/reject reflected in the browser: driven by hand and
+      verified (37ms, findings 0 -> 1, tool call reads `ok` with the approving
+      action id). **Not yet an automated test.** The obstacle is real rather than
+      procedural: parking an action needs a model that decides to ask for approval,
+      and the 3B one is inconsistent about it. Making it deterministic means
+      scripting the graph, which stops the test exercising the browser path that
+      broke. Left `[~]` rather than ticked on the strength of a manual check.
+- [x] T7.3 axe-core AA on the rendered pages in both themes; keyboard-only sign-in
+      and submission with focus asserted at every step; tab strips with roving
+      tabindex; contrast computed from the tokens. **Finding: the overview summary
+      rendered a score and a tier badge with no limitation on it** — caught because
+      the test asserts the disclaimer on *every* element that shows the version, so
+      the summary could not quietly drop it.
+- [x] T7.4 Every rendered result carries disclaimer + threshold + model version,
+      asserted on **every element that shows the version** rather than on the detail
+      card alone — which is what caught the overview summary omitting the
+      limitation. Runs against a live analyzer result, so it fails if the API ever
+      stops sending a field the UI has no way to invent.
+- [x] T7.5 A queued analysis renders a live status region with a progress bar, and
+      the result appears on its own when the job finishes — the client polls and
+      refreshes rather than the page sitting on a pending request. Polling is bounded
+      (60 attempts) so a wedged job does not become a request every two seconds
+      forever, and the page stays interactive throughout. **No toast layer:** progress
+      appears inline where the work was started, and a single page already covers
+      the case. Worth revisiting if a job ever runs that the operator did not start.
+- [~] T7.6 Dark/light persists across a reload in both directions (asserted).
+      Geospatial view renders real coordinates — 51.50000, -0.11667 with the raw
+      51°30'0" 0°7'0" beside it, verified against a generated EXIF fixture. The
+      result overview is computed straight from the API payload with no intermediate
+      transform, so it cannot disagree with the data. **"MapLibre renders real
+      coordinates" is not met as written and will not be** — see P7.B5: a tile
+      service would be handed a viewport derived from the evidence. The intent
+      behind the line (real coordinates actually drawn) is met; the named tool is
+      refused, with the reason recorded.
+- [x] T7.7 Every list section distinguishes "could not load" from "loaded and
+      empty", and says which. Enforced by the types rather than by discipline: when
+      `safe<T>()` returned `null as T` the compiler was silenced and the page crashed
+      three components later on an unchecked `.filter`. A missing evidence record's
+      bytes render as **410**, not 404 — an integrity incident, worded as one, never
+      a broken image icon. A failed overlay, an unreachable API, a declined agent run
+      and a missing analyzer description each have their own wording.
 **Exit**
-- [ ] P7.E full journey E2E; AA-accessible; disclaimers enforced in UI
+- [~] P7.E Full journey E2E, AA-accessible, disclaimers enforced in UI.
+      The journey runs in a real browser against the real stack; axe-core passes on
+      the rendered pages in both themes; the disclaimer is enforced by an assertion
+      rather than by review. **Not yet fully exited**, because T7.2's HITL round trip
+      is verified by hand rather than automated, and the honest reason is recorded
+      there rather than papered over with a scripted test that would stop exercising
+      the path that broke.
 
 ---
 
