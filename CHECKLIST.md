@@ -1723,7 +1723,53 @@ that might not work — the same argument as the CI security scanners.
       **The earlier negative result was mine, and it was a fixture error, not a
       method error** — recorded above because a wrong measurement left in place would
       have blocked this item indefinitely on a false premise.
-- [ ] FI-3 Redaction tool for exports
+- [x] FI-3 Redaction tool for exports. **The deliverable is the verification, not the
+      removal.** A redaction an operator believes in and that did not take effect is
+      worse than no redaction: it converts an exposure into a concealed one. So
+      `collect` runs *before* `apply`, and `verify_absent` is handed the actual values
+      that were taken out and checks the serialised bytes for them.
+      **This is the distinction the whole module turns on.** A token sweep — scanning
+      the output for something shaped like an officer id — passes just as happily on an
+      export where the redaction silently did nothing, because the placeholder is
+      present either way. Checking the real UUIDs cannot. A test asserts exactly that:
+      a document containing `"[redacted: officer] <uuid>"` is refused.
+      **`verify_zip` reads inside the archive, not the container.** ZIP compresses, so
+      a naive scan of the outer bytes finds no plaintext and reports success on an
+      archive whose `case.json` still names the officer. A test proves the outer bytes
+      contain no plaintext for that archive and that the member scan still catches it.
+      **No pattern matching, deliberately.** A regex matching an email also matches a
+      sha256 quoted in a finding, and "42 items redacted" without being able to say
+      which 42 asserts something unsupportable. Redaction is by **named field** (an
+      allowlist — a deny-list would grow silently as columns are added) and by
+      **literal string** the caller names. Free text is passed through untouched
+      unless named, and a test asserts that, so the limitation cannot drift into being
+      over-claimed.
+      **An unknown field name is a 422, not a silent pass-through** — asking to redact
+      `owner` and receiving a clean export with nothing removed is precisely the
+      outcome this prevents.
+      `?redact=owner_id,assigned_to&redact_text=...` on `GET /cases/{id}/export`,
+      covering JSON, CSV and ZIP. Applied in `exports.py` rather than the router so a
+      format added later cannot accidentally ship unredacted. Each builder verifies its
+      own output.
+      **A redacted export is not evidence and is never signed.** It has had content
+      taken out, so its digest no longer matches the case file. The PAdES-signed report
+      (P8.B1) is untouched by any of this. The response carries `X-Redacted-Fields` and
+      an `X-Redacted-Notice`, so a document separated from the request still says it is
+      incomplete, and the audit log records `case.export.redacted` as a distinct action
+      from `case.export`.
+      **The case id is deliberately kept** in the ZIP manifest: a manifest without it
+      cannot be matched back to anything, and it identifies a case, not a person.
+      Asserted, so a future "redact every id" change has to confront that trade-off
+      rather than make it silently.
+      A failure inside the exporter returns **500, not 4xx** — reaching it means the
+      codebase produced a document still holding a value the caller asked to have
+      removed, and the client did nothing wrong by asking for redaction.
+      **One real bug found by a test**: `collect` took `str()` of a redacted field's
+      value, so a field holding a *list* produced the list's repr — which matches
+      nothing in the output, and the absence check then passed on an export where the
+      values were still present. Exactly the silent pass this module exists to prevent,
+      now flattened and covered.
+      21 tests.
 - [ ] FI-4 Multi-case entity linking
 - [ ] FI-5 Agent second-opinion reviewer mode
 

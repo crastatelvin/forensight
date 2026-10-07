@@ -246,6 +246,41 @@ for integrity purposes — the bytes are still verifiably unaltered — but read
 no longer see it as *trusted* unless they hold the old certificate. Keep the old
 certificate; that is what makes historical reports verifiable.
 
+### Redacted exports
+
+`GET /cases/{id}/export?fmt=json|csv|zip` accepts `redact=` and `redact_text=`:
+
+```bash
+curl -s "localhost:8000/cases/$CASE/export?fmt=json&redact=owner_id,assigned_to" \
+  -H "Authorization: Bearer $TOKEN" -o redacted.json
+```
+
+`redact` takes a comma-separated list of field names from `owner_id`, `assigned_to`,
+`uploaded_by`, `created_by`, `actor_id`. An unrecognised name is a **422** rather than
+a silent pass-through — asking to redact `owner` and getting a clean export with
+nothing removed is the failure this guards against.
+
+`redact_text` takes newline-separated literal strings to scrub from free text. This is
+the only way to remove something from a case description, a finding body or a
+filename, and naming the exact string is deliberate: there is **no pattern matching**,
+because a pattern that matches an email also matches a sha256 quoted in a finding, and
+"42 items redacted" without saying which 42 asserts something unsupportable.
+
+Every export is verified against the values it actually removed before being returned,
+and a redaction that did not take effect is refused rather than sent. For ZIP this
+means each member is read and checked — scanning the archive's outer bytes would find
+no compressed plaintext and report success on an export that still names the officer.
+
+Redacted responses carry `X-Redacted-Fields` and an `X-Redacted-Notice`, and the audit
+log records `case.export.redacted` rather than `case.export`.
+
+**A redacted export is not evidence and is never signed.** It has had content removed,
+so its digest no longer matches the case file. The PAdES-signed report above is
+unaffected; the case file remains the record.
+
+The case id is deliberately kept in the ZIP manifest — a manifest without it cannot be
+matched back to anything, and it identifies a case rather than a person.
+
 ### Seeding a parked approval
 
 To exercise the HITL gate by hand — or to reproduce what the browser test arranges —

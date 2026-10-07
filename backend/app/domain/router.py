@@ -34,12 +34,14 @@ from app.auth.roles import MUTATING_ROLES, Role
 from app.auth.service import mutation_rate_limit, read_rate_limit
 from app.config import Settings, get_settings
 from app.db import get_session
+from app.domain import redaction
 from app.domain.access import scoped_case, visible_case
 from app.domain.antivirus import ClamAVScanner, InfectedFileError, NoopScanner, Scanner
 from app.domain.exports import export_csv, export_json, export_zip
 from app.domain.ingest import EvidenceValidationError
 from app.domain.models import AuditLog, Case, Evidence, Finding
 from app.domain.notifications import Notifier
+from app.domain.redaction import RedactionError
 from app.domain.repository import (
     append_audit,
     custody_for_evidence,
@@ -810,28 +812,67 @@ async def export_case(
     fmt: Annotated[str, Query(pattern="^(json|csv|zip)$")],
     user: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    redact: Annotated[str | None, Query()] = None,
+    redact_text: Annotated[str | None, Query()] = None,
 ) -> Response:
+    """Export a case as JSON, CSV or a ZIP manifest.
+
+    `redact=owner_id,assigned_to` removes those fields and `redact_text` takes
+    newline-separated literal strings to scrub from free text. Every export is checked
+    against the values it removed before being returned; a redaction that did not take
+    effect is refused rather than sent.
+
+    **Redaction is deliberately narrow**: named fields and literal strings only. There
+    is no pattern matching, so this cannot claim to have found PII it did not find, and
+    free text is passed through unless a caller names the exact string in it.
+    """
     case = await scoped_case(session, case_id, user)
     evidence = await list_case_evidence(session, case.id)
 
+    try:
+        rule = redaction.parse(redact, redact_text)
+    except RedactionError as exc:
+        # 422, not 400: the request was well-formed but names something that cannot
+        # be redacted, and a silent pass-through would be the dangerous answer.
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    # A redacted export is not evidence and is never signed as a report, so it is
+    # recorded distinctly in the audit trail rather than as an ordinary export.
     await append_audit(
         session,
         actor_id=uuid.UUID(user.id),
-        action="case.export",
+        action="case.export.redacted" if rule.active else "case.export",
         target=str(case.id),
-        payload={"fmt": fmt},
+        payload={"fmt": fmt, **rule.describe()},
     )
     await session.commit()
 
     # `case.number` is validated on write (see CaseCreate) to be free of quotes
     # and newlines, so interpolating it into Content-Disposition is safe.
-    content, media, ext = {
-        "json": (export_json(case, evidence), "application/json", "json"),
-        "csv": (export_csv(evidence), "text/csv", "csv"),
-        "zip": (export_zip(case, evidence), "application/zip", "zip"),
-    }[fmt]
-    return Response(
-        content=content,
-        media_type=media,
-        headers={"Content-Disposition": f'attachment; filename="{case.number}.{ext}"'},
-    )
+    try:
+        content, media, ext = {
+            "json": (export_json(case, evidence, redaction=rule), "application/json", "json"),
+            "csv": (export_csv(evidence, redaction=rule), "text/csv", "csv"),
+            "zip": (export_zip(case, evidence, redaction=rule), "application/zip", "zip"),
+        }[fmt]
+    except RedactionError as exc:
+        # A 500, deliberately. Reaching here means the exporter produced a document
+        # still containing a value the caller asked to have removed, which is a bug in
+        # this codebase rather than anything the requester did wrong — and it must not
+        # be reported as a client error, because the client did ask for redaction.
+        logger.error("redaction failed for case %s: %s", case.id, exc)
+        raise HTTPException(
+            status_code=500,
+            detail="redaction did not take effect; the export was refused rather than sent",
+        ) from exc
+
+    headers = {"Content-Disposition": f'attachment; filename="{case.number}.{ext}"'}
+    if rule.active:
+        # Stated in the response, so a document separated from this request still
+        # carries the fact that it is incomplete.
+        headers["X-Redacted-Fields"] = ",".join(sorted(rule.fields))
+        headers["X-Redacted-Notice"] = (
+            "redacted export: not evidence, not signed; the case file remains the "
+            "record of this case"
+        )
+    return Response(content=content, media_type=media, headers=headers)
