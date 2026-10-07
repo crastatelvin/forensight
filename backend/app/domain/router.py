@@ -121,6 +121,25 @@ def _limit(limit: int) -> int:
     return max(1, min(limit, _MAX_PAGE))
 
 
+def _derived_id(source_ref: str) -> uuid.UUID:
+    """A stable UUID for a derived event, which has no row to have an id.
+
+    Derived from the source reference so the same record produces the same id on
+    every request. That matters for more than tidiness: React keys the timeline list
+    by `id`, and an id regenerated per request would remount every entry on each
+    refresh, discarding focus and any text selection the examiner had.
+
+    Namespaced by the prefix so it cannot collide with a real row id, which would let
+    a derived entry be mistaken for a recorded one by anything that only compares ids.
+    """
+    return uuid.uuid5(_DERIVED_ID_NAMESPACE, source_ref)
+
+
+#: Fixed namespace for `_derived_id`. A literal rather than a random per-process UUID:
+#: the ids have to match across processes and across restarts.
+_DERIVED_ID_NAMESPACE = uuid.UUID("6f1d5a6e-0f3a-5c2b-9a4e-1d7c8b0f2a31")
+
+
 async def _scoped_evidence(
     session: AsyncSession, evidence_id: uuid.UUID, user: CurrentUser
 ) -> Evidence:
@@ -721,10 +740,50 @@ async def get_timeline(
     session: Annotated[AsyncSession, Depends(get_session)],
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE)] = 200,
     offset: Annotated[int, Query(ge=0)] = 0,
+    derived: Annotated[bool, Query()] = False,
 ) -> list[TimelineEventRead]:
+    """The case timeline: the examiner's own entries plus what the case records.
+
+    `derived=False` (the default) returns only what an examiner entered. The derived
+    view is opt-in, because these entries describe *handling* — when this platform
+    received and touched evidence — and an examiner building a chronology needs to be
+    able to exclude them rather than sift them out.
+    """
     case = await scoped_case(session, case_id, user)
     rows = await list_timeline(session, case.id, limit=_limit(limit), offset=offset)
-    return [TimelineEventRead.model_validate(t) for t in rows]
+
+    if not derived:
+        return [TimelineEventRead.model_validate(t) for t in rows]
+
+    evidence = {e.id: e for e in await list_case_evidence(session, case.id, limit=_limit(limit))}
+    from app.domain.timeline import derive_events, merge, recorded_undated
+
+    derived_events = await derive_events(session, case.id, evidence_by_id=evidence)
+    combined = merge(derived_events, rows)
+
+    out: list[TimelineEventRead] = []
+    for entry in combined[: _limit(limit)]:
+        out.append(
+            TimelineEventRead(
+                # A recorded entry keeps its real row id; only a derived one — which
+                # has no row — gets a synthetic id derived from its source reference.
+                id=entry.id or _derived_id(entry.source_ref),
+                case_id=case.id,
+                occurred_at=entry.occurred_at,
+                label=entry.label,
+                source_ref=entry.source_ref,
+                # A derived entry is never the examiner's own statement, so it is
+                # never `uncertain` in their sense — and marking it uncertain would
+                # dilute the flag that exists to mean something.
+                uncertain=False,
+                created_at=entry.occurred_at,
+                derived=entry.derived,
+            )
+        )
+    # Undated examiner entries go last, and keep `uncertain` as recorded.
+    for row in recorded_undated(rows):
+        out.append(TimelineEventRead.model_validate(row))
+    return out
 
 
 # --- Search (T3.3) ---

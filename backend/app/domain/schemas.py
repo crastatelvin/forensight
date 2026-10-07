@@ -202,6 +202,14 @@ class TimelineEventRead(BaseModel):
     source_ref: str
     uncertain: bool
     created_at: datetime
+    #: True for an event derived from the case's own records, False for one an
+    #: examiner entered. Defaults to False so an entry posted through the API is
+    #: recorded as the examiner's own without having to say so.
+    #:
+    #: This is the only thing telling the two apart in the UI, and it is a field
+    #: rather than something inferred from the label text — an examiner writing
+    #: "Evidence received: photo.jpg" must not be able to pass as a system entry.
+    derived: bool = False
 
 
 class AuditEntryRead(BaseModel):

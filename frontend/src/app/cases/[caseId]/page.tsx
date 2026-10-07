@@ -104,7 +104,7 @@ export default async function CasePage({
       safe<AnalysisJobRead[]>(`/cases/${caseId}/analyses`),
       safe<AnalysisResultRead[]>(`/cases/${caseId}/results`),
       safe<FindingRead[]>(`/cases/${caseId}/findings`),
-      safe<TimelineEventRead[]>(`/cases/${caseId}/timeline`),
+      safe<TimelineEventRead[]>(`/cases/${caseId}/timeline?derived=true`),
       safe<AuditEntryRead[]>(`/cases/audit?limit=200`),
       // The analyzer catalogue is fetched here rather than by the picker on mount,
       // because a `<select>` that fills in after hydration renders as an empty

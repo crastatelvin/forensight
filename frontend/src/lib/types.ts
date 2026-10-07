@@ -146,14 +146,34 @@ export interface FindingRead {
   is_sourced: boolean;
 }
 
-/** `TimelineEventRead` */
+/** `TimelineEventRead` — mirrors the backend `TimelineEventRead` exactly.
+ *
+ * This type previously declared `occurred_at: string` plus `kind` and `detail`, none
+ * of which the API ever sent. It compiled cleanly and then the timeline tab threw on
+ * the first real response: `occurred_at` is nullable on the wire (an event may be
+ * recorded with no known time), so `.localeCompare` was called on `null`. `kind` and
+ * `detail` were simply absent, rendering an empty badge and no body text.
+ *
+ * A hand-written duplicate of a backend schema is a second chance to contradict it,
+ * which is the same failure this project has hit with `/capabilities`, `explainTier`
+ * and the analyzer tier wording. It is checked against the wire instead.
+ */
 export interface TimelineEventRead {
   id: string;
   case_id: string;
-  occurred_at: string;
-  kind: string;
+  /** Null when the event has no known time. Never assumed present. */
+  occurred_at: string | null;
   label: string;
-  detail: string;
+  source_ref: string;
+  /** The examiner is not sure of this entry; must be visible, per the model. */
+  uncertain: boolean;
+  created_at: string;
+  /**
+   * True for an event derived from the case's own records, false for one an examiner
+   * entered. The backend defaults it to false, so a response predating this field
+   * reads as "the examiner's own" — which is the safe direction to be wrong in.
+   */
+  derived?: boolean;
 }
 
 /** `EntityRead` */

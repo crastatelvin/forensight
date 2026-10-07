@@ -1616,7 +1616,50 @@ that might not work — the same argument as the CI security scanners.
 ---
 
 ## Future improvements (see FUTURE_IMPROVEMENTS.md)
-- [ ] FI-1 Case timeline auto-assembly
+- [x] FI-1 Case timeline auto-assembly. **The timeline shipped permanently empty.**
+      Its empty state read *"Events appear as evidence is uploaded, analyses run and
+      findings are recorded"* and nothing did any of those things — `POST
+      /cases/{id}/timeline` existed and was reachable from no UI at all, so a case's
+      chronology was visible only by calling the API by hand. That is the same class
+      of defect as the stale README build status: a promise made in the interface that
+      the system does not keep.
+      Derived **on read, never written to `timeline_events`.** That table is the
+      examiner's own record; a derived row written there would be indistinguishable
+      from their entry, would survive this code being corrected, and could not be
+      retracted. Sources: evidence received, evidence accessed, analyses completed,
+      findings recorded.
+      **Derived timestamps are when the platform recorded a step, not when the event
+      happened**, and every entry says which it is — "Evidence received", never
+      "photograph taken". A timeline that blurs the two lets an examiner read a
+      processing time as an event time, which is the specific confusion this exists to
+      prevent. Every entry carries `derived`, so an examiner writing "Evidence
+      received: photo.jpg" cannot pass as the platform by choosing their words.
+      Opt-in via `?derived=true`, so existing consumers see exactly what they saw.
+      **EXIF capture times deliberately excluded** — `image-exif` records which fields
+      were *present*, not their values, so re-reading the object store here would turn
+      a list endpoint into an unbounded scan.
+      **Four defects found by building it, none by reading it:**
+      1. **The tab crashed on every undated event.** `b.occurred_at.localeCompare(...)`
+         on a field the API sends as `null`. `tsc` was clean because
+         `TimelineEventRead` was hand-written declaring `occurred_at: string` — plus
+         `kind` and `detail`, which the API never sent and which rendered as an empty
+         badge and no body text. The type is now the wire, and ordering moved into
+         `orderTimeline` where `node --test` can reach it.
+      2. **`uncertain` was invisible.** A first-class backend field, documented as
+         "must be visibly uncertain in the export and UI", rendered nowhere. It now
+         shows, as does `source_ref`.
+      3. **Recorded entries came back with synthetic ids.** `merge` rebuilt every
+         entry through the derived-id helper, so the id a client would use to fetch or
+         cite a *recorded* event resolved to a row that does not exist. Only entries
+         with genuinely no row get a synthetic id now.
+      4. **One upload appeared twice.** The arrival was reported from both the
+         `Evidence` row and the `upload` custody row, with identical wording — which
+         reads as two separate occurrences. The custody allowlist is now `("access",)`.
+      19 tests (11 backend through the HTTP API, 8 frontend). The backend ones assert
+      the negative properties that make this safe: nothing is persisted, a derived
+      entry is never marked `uncertain` (that would dilute the flag), ids are stable
+      across requests (React keys by them, so a regenerated id remounts the list and
+      drops focus), and an undated entry stays visible rather than being dropped.
 - [ ] FI-2 Duplicate / near-duplicate evidence detection
 - [ ] FI-3 Redaction tool for exports
 - [ ] FI-4 Multi-case entity linking
