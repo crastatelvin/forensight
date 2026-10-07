@@ -894,13 +894,44 @@ UI always has.
 - [ ] P9.B6 Text authorship/phishing — DistilBERT
 - [ ] P9.B7 Geospatial correlation — PostGIS/Shapely
 - [ ] P9.B8 Tier-B repositioned as visual-similarity/triage (bloodstain, fiber, glass, paint, soil, hair, iris)
-- [ ] P9.B9 Tier-C as lab-attachment workflows only (DNA, tox, pollen, insect, odor, explosive/arson)
+- [x] P9.B9 Tier-C as lab-only workflows (DNA, tox, pollen, insect, odor,
+      explosive/arson). Not "scored conservatively" — **there is no scoring path at
+      all**, and that is the design goal rather than a limitation of it.
+      `app/analysis/lab_only.py` is a catalog of seven disciplines, each carrying
+      what it is, why there is no score, and what to do instead. The refusal is
+      raised in the router **before a job row exists**, so a Tier-C attempt leaves no
+      job, no worker message and no result — asserted directly, because a leftover row
+      would appear in the case's analysis listing looking like real work.
+      **Deliberately not `JobStatus.UNSUPPORTED`.** That status means *this host*
+      cannot run a real module and provisioning the weights would fix it. Tier C
+      means no host ever can, so filing it under `unsupported` would promise a fix
+      that does not exist and send an operator looking for one.
+      A test asserts no Tier-C technique is ever in the runnable registry, which is
+      the property in its strongest form — the router's refusal is then one check,
+      not the only thing standing between the catalog and a score.
+      Each entry names an **alternative**. Someone who has just uploaded a blood
+      sample and been told no reads these fields, and an entry with no way forward is
+      indistinguishable from the platform being broken. The wording is also asserted
+      never to read as temporary — "not currently supported" is a promise this
+      platform does not make.
+      Served at `/lab-techniques`, deliberately *not* inside `/modules`: a catalog
+      entry with no scoring path is not an analyzer, and listing it beside runnable
+      modules would imply it can be queued.
+      Refusals are audited. Nobody scored a DNA profile, but somebody asked for one
+      and was told no — and with no job row written, that audit entry is the only
+      trace left.
 **Test cases**
 - [ ] T9.1 Each new Tier-A analyzer has deterministic golden tests
 - [ ] T9.2 NBIS matching high / non-matching low on fixtures
 - [ ] T9.3 Speaker same>threshold / different<threshold
 - [ ] T9.4 Tier-B always labeled visual-similarity-not-identity
-- [ ] T9.5 Tier-C no AI endpoint; lab-PDF only; AI scoring -> unsupported by design
+- [x] T9.5 Tier-C: no scoring path, asserted rather than assumed. Nine tests,
+      because the property under test is *negative* — nothing here proves Tier C
+      works, since working is exactly what it must not do. Every technique in the
+      catalog is refused the same way (parameterised, because the failure is a
+      technique being quietly forgotten); no job or result row survives a refusal;
+      the refusal carries the discipline and the alternative; the catalog never
+      surfaces a module-shaped field an interface could render as a score.
 - [ ] T9.6 Plugin isolation: add module without core change
 **Exit**
 - [ ] P9.E catalog complete + honestly tiered; every AI module deterministic + sourced

@@ -13,7 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.analysis import registry
+from app.analysis import lab_only, registry
 from app.analysis.overlay import router as overlay_router
 from app.analysis.queue import enqueue_analysis_job
 from app.analysis.repository import (
@@ -73,6 +73,19 @@ async def list_modules(
     return out
 
 
+@router.get("/lab-techniques")
+async def list_lab_techniques(
+    _user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> list[dict[str, str]]:
+    """Tier-C techniques: named, explained, and not scoreable.
+
+    Served separately from `/modules` because a catalog entry with no scoring path
+    is not an analyzer. Listing these alongside runnable modules would imply they
+    can be queued, which is the one thing they must not imply.
+    """
+    return lab_only.catalog()
+
+
 @router.post("/cases/{case_id}/analyses", response_model=AnalysisJobRead, status_code=201)
 async def submit_analysis(
     case_id: uuid.UUID,
@@ -90,6 +103,22 @@ async def submit_analysis(
     evidence = await session.get(Evidence, payload.evidence_id)
     if evidence is None or evidence.case_id != case.id:
         raise HTTPException(status_code=404, detail="Evidence not found")
+
+    # Tier C is refused here, before any row exists. Not queued and marked
+    # `unsupported`: there is no module to provision, so a job row and a worker
+    # message would both be records of something this platform will never attempt.
+    # A test asserts that no job is created, because a Tier-C attempt that left a
+    # row behind would be indistinguishable from a real analysis in the case view.
+    if lab_only.is_lab_only(payload.module):
+        await append_audit(
+            session,
+            actor_id=uuid.UUID(user.id),
+            action="analysis.refused",
+            target=str(payload.evidence_id),
+            payload={"module": payload.module, "reason": lab_only.REFUSAL_PREFIX},
+        )
+        await session.commit()
+        raise HTTPException(status_code=422, detail=lab_only.refusal(payload.module))
 
     if not registry.is_registered(payload.module):
         known = ", ".join(registry.registered_names()) or "none"
