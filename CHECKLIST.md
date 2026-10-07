@@ -1166,7 +1166,27 @@ be made deliberately rather than absorbed.
         are now validated as hostnames *before* classification; otherwise the control's
         classification can be talked past by a typo.
 - [ ] P10.B5 Load tests (Locust); pen-test pass; docs (runbooks, threat model, admin guide)
-- [ ] P10.B6 Android dev profile: CPU-only ONNX + small Ollama; GPU degraded
+- [x] P10.B6 Constrained-host profile (`android-dev`): CPU-only ONNX, capped local
+      model, GPU modules degraded cleanly.
+      **Found a profile that could not run the platform.** `worker` was in `core`
+      only, so `android-dev` started a database and an LLM with *nothing to run an
+      analysis*. `/capabilities` would have reported the analyzers available, jobs
+      would have queued and never been claimed, and the first symptom would be a case
+      that quietly never finished. A dev profile that cannot run the product is worse
+      than no dev profile, and it was invisible because every capability test passed.
+      Also made the api→worker image link **explicit**: `api` built while the workers
+      referenced `forensight-api` by name, which compose resolved implicitly from the
+      service name. It worked, and a rename would have produced workers pointing at an
+      image nothing builds.
+      Ollama is capped to one resident model and one parallel request, because a
+      phone-sized host that keeps two resident swaps or OOMs — and the symptom is an
+      agent failing intermittently rather than a clear refusal.
+      **CPU-only is a supported deployment, not a degraded one.** Every analyzer here
+      is ONNX, so the CPU path runs the *same pinned weights* through onnxruntime
+      rather than a smaller substitute — a substitution would be a simulation, which
+      is what this project refuses everywhere else. Asserted non-empty, because the
+      prior hand-written capability list advertised three GPU modules no analyzer
+      implemented while omitting the five that do.
 **Test cases**
 - [ ] T10.1 Trace spans API->agent->worker with correct parent/child
 - [ ] T10.2 Prometheus scrapes; Grafana renders; alert fires on synthetic errors
@@ -1203,7 +1223,24 @@ be made deliberately rather than absorbed.
       while a local one is unaffected. A cloud provider being *blocked* is asserted
       separately from "no model configured", because those are different problems with
       different fixes and the operator has to be told which they have.
-- [ ] T10.6 Android profile runs CPU analyzer + agent turn; GPU reports unavailable
+- [x] T10.6 CPU analyzers available, GPU modules report unavailable, profile wired.
+      Fourteen tests. Two directions matter and both are asserted:
+      - A GPU module on a CPU host is unavailable **and says why** — which separates
+        "this host cannot run this" from "you have not finished installing it".
+      - The CPU set is **non-empty**, so a profile that silently stopped working is a
+        test failure rather than a deployment nobody notices. Without this the
+        hand-written capability list would pass today.
+      - A GPU host reports the *same module list* with everything available, so
+        `available` cannot be a constant that satisfies the CPU test.
+      - No GPU device is passed to any container, and the GPU worker is excluded:
+        setting `GPU_AVAILABLE=false` is a *claim*; the absence of a device mapping is
+        the fact. A profile that claimed CPU-only while still passing `/dev/dri` would
+        let a GPU module start and then fail at execution — exactly what the
+        capability list exists to prevent.
+      - The `/capabilities` endpoint is asserted against the computed list, field for
+        field. It once re-serialised each field by hand and a field added to
+        `Capability` silently did not appear — which is how `tier` went missing once
+        already.
 - [x] T10.7 Readiness flips before termination; new work refused; reads survive.
       Ten tests. The **ordering** assertions are the load-bearing ones, because every
       way a shutdown can go wrong presents the same symptom — requests failing — and

@@ -1,6 +1,13 @@
 # ForenSight — Docker Compose (single-host).
 # Profiles: core | gpu-workers | observability | android-dev
 #   docker compose --profile core up -d
+#   docker compose --profile android-dev up -d   # CPU-only, small model
+#
+# `android-dev` is the constrained-host profile: no GPU is passed to any container,
+# the model is a small one, and the GPU-only analyzers report themselves unavailable
+# through /capabilities rather than failing at request time. Everything here is ONNX,
+# so the CPU analyzers are not approximations of the GPU ones — they are the same
+# weights executed by onnxruntime.
 #
 # NOTE (security): services below are for local/single-host development.
 # The API has no TLS termination here; put it behind a reverse proxy with
@@ -72,6 +79,11 @@ services:
   api:
     build:
       context: ./backend
+    # Named explicitly, and the workers reference this name. Compose already tags a
+    # built service with its service name, so the workers did resolve — but the link
+    # between them was implicit, which meant a rename silently produced workers
+    # pointing at an image nothing builds.
+    image: forensight-api
     profiles: ["core", "android-dev"]
     env_file: .env
     environment:
@@ -115,6 +127,14 @@ services:
   ollama:
     image: ollama/ollama:latest
     profiles: ["core", "android-dev"]
+    environment:
+      # No GPU is shared into this container, deliberately. `android-dev` models a
+      # laptop or a phone-sized host, and the point of the profile is that CPU-only
+      # is a *supported* deployment rather than a degraded one: the analyzers are
+      # ONNX, so they run, and `GPU_AVAILABLE=false` below makes the GPU-only modules
+      # report themselves unavailable instead of failing at request time.
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
     volumes:
       - ollamadata:/root/.ollama
     ports:
@@ -126,7 +146,12 @@ services:
   # (Phase 6/9) runs on worker-gpu.
   worker:
     image: forensight-api
-    profiles: ["core"]
+    # `android-dev` too. It was missing, which made that profile a database and an
+    # LLM with nothing to run an analysis: `/capabilities` would have reported the
+    # analyzers available, jobs would have queued and never been claimed, and the
+    # first sign would have been a case that silently never finished. A dev profile
+    # that cannot run the product is worse than no dev profile.
+    profiles: ["core", "android-dev"]
     # Same image so workers and API cannot drift on the domain layer they share.
     # `entrypoint` is overridden because the image's ENTRYPOINT migrates and then
     # serves gunicorn; the worker must instead consume the queue.
