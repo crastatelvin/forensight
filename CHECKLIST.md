@@ -971,7 +971,27 @@ UI always has.
       technique being quietly forgotten); no job or result row survives a refusal;
       the refusal carries the discipline and the alternative; the catalog never
       surfaces a module-shaped field an interface could render as a score.
-- [ ] T9.6 Plugin isolation: add module without core change
+- [x] T9.6 Plugin isolation: registering a module is the *only* step required.
+      The test defines a complete analyzer in the test file — never heard of by the
+      codebase — and asserts it reaches all four places a hardcoded list could
+      hiding in: `/modules`, `/capabilities` (including the tier the interface now
+      reads rather than asserts), job submission, and a real run that stores a
+      result. A module that exists only in test code and is fully functional
+      everywhere is the strongest available evidence the extension point is real.
+      Driven through the **real upload endpoint**, not by inserting evidence rows:
+      seeding rows leaves the object store empty, the run fails on a missing object,
+      and the test then says nothing about the thing it is checking.
+      `not_applicable` is asserted too — a plugin that could only ever succeed would
+      make the pipeline look more capable than it is, and the refusal path is what
+      keeps "we could not measure this" distinct from "we measured zero".
+      The negative half is what makes the positive mean anything: registering must
+      leave every built-in untouched, or a catalogue that mutated on registration
+      would make every golden test's module list a function of test order. And a
+      duplicate name is refused, because at that point two analyzers are claiming one
+      identity and whichever loaded second would silently win.
+      **This test would have caught both bugs from the previous commit** — the
+      hand-written capability list and the hand-written field serialisation — and
+      neither was visible from the tests that existed.
 **Exit**
 - [ ] P9.E catalog complete + honestly tiered; every AI module deterministic + sourced
 
