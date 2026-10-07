@@ -955,7 +955,26 @@ UI always has.
       The face-compare golden asserts the direction, not the cosine: two different
       people must not compare above threshold, on any threshold this deployment
       might legitimately set.
-- [ ] X6 CI security: Bandit, Semgrep, pip-audit, Trivy, gitleaks (pip-audit still advisory)
+- [x] X6 CI security: Bandit, Semgrep, pip-audit, Trivy, gitleaks. The advisory
+      `|| true` on pip-audit is gone — the CVE backlog it was covering is cleared,
+      and `|| true` on a security gate reads as passing in the UI while checking
+      nothing.
+      **And the gates are now proven to fail.** A scanner that has never been seen to
+      reject anything is indistinguishable from one that is checking nothing: a
+      broken rule path, an empty include glob, a mistyped binary — all exit 0 and
+      look exactly like a clean scan. `scripts/verify_security_gates.py` plants one
+      of each problem in a temp directory (an AWS-shaped key for gitleaks, MD5-for-
+      password and a hardcoded password for bandit, `shell=True` for Semgrep, and a
+      requirements file pinned to a release with a published advisory for pip-audit)
+      and asserts the scanner rejects it. A gate that cannot be made to fail is
+      **reported as a failure, not skipped** — "the scanner said nothing" is the
+      outcome this exists to detect.
+      Verified locally: bandit and pip-audit both reject their planted problems.
+      gitleaks and Semgrep are not installed on this host, and the script says so
+      rather than claiming four of four — an earlier version of it printed "every
+      gate rejected the problem planted for it" with all four skipped, which is the
+      exact false assurance the script exists to prevent, committed inside the
+      script. CI installs and checks all four.
 - [x] X7 Ruff lint + format clean; mypy strict on `app`
 - [x] X8 Compose core profile boots, migrates, and serves in CI
 

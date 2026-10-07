@@ -185,6 +185,16 @@ jobs:
       - name: Dependency audit (pip-audit)
         run: uv run python scripts/audit_deps.py
 
+      # A scanner that has never been seen to fail is indistinguishable from one
+      # that is checking nothing: a broken rule path, an empty include glob or a
+      # mistyped binary all exit 0 and read in the CI UI exactly like a clean scan.
+      # This plants one of each problem in a temp directory and asserts the scanner
+      # rejects it. Runs after the real scans, so a green board above still means
+      # nothing until this passes.
+      - name: Verify the security gates actually fail on planted problems
+        working-directory: backend
+        run: uv run python scripts/verify_security_gates.py
+
   integration:
     name: Integration (Postgres + MinIO, real schemas)
     runs-on: ubuntu-latest
@@ -329,6 +339,27 @@ jobs:
         uses: semgrep/semgrep-action@v1
         with:
           config: p/ci
+
+      # Same reasoning as the backend job: prove the scanner rejects a planted
+      # `shell=True` rather than trusting a green tick. Semgrep runs only here, so
+      # it is the gate most likely to be silently misconfigured.
+      - name: Verify Semgrep rejects a planted shell-injection pattern
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          mkdir -p "$tmp/app"
+          cat > "$tmp/app/runner.py" <<'PY'
+          import subprocess
+          def run(target: str) -> None:
+              subprocess.run(f"tool --target {target}", shell=True, check=True)
+          PY
+          if semgrep scan --config p/python --quiet --disable-version-check \
+               --metrics=off "$tmp/app"; then
+            echo "::error::Semgrep passed a planted shell=True. It is not checking."
+            exit 1
+          fi
+          echo "Semgrep rejected the planted pattern."
 
   image-scan:
     name: Build & Trivy scan API image
