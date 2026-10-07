@@ -1189,7 +1189,44 @@ be made deliberately rather than absorbed.
       implemented while omitting the five that do.
 **Test cases**
 - [ ] T10.1 Trace spans API->agent->worker with correct parent/child
-- [ ] T10.2 Prometheus scrapes; Grafana renders; alert fires on synthetic errors
+- [x] T10.2 Prometheus scrapes this service; alert rules that can actually fire.
+      `infra/observability/alerts.yml`, wired into `prometheus.yml` via `rule_files` —
+      a rule file nothing loads is a file that does nothing, which is exactly the shape
+      of "we have alerting" in a repository.
+      **Fifteen tests, and they assert content rather than availability.** A scraper
+      returning 200 with nothing in it looks exactly like a healthy service, so a
+      counter that counts requests must be shown having counted the requests made.
+      **The alert rules are the part worth having, because that failure mode is
+      silent.** A rule written against a metric name or label that was later renamed
+      evaluates to an empty vector forever: it parses, the dashboard renders, nothing
+      announces it, and the board stays green through the outage it was written for.
+      So every referenced metric is checked against what this build actually emits,
+      every `by (...)` is checked against labels that exist, and `promtool` validates
+      the rules when the binary is present — **skipped rather than faked when it is
+      not**, since a rule promtool rejects will not load and pretending it was checked
+      is the false assurance this suite exists to prevent.
+      **`ForenSightAPIDown` (`up == 0`) carries the observability.** Every other rule
+      on this service is blind while the target is down, which is precisely when they
+      are needed.
+      Two decisions the tests forced:
+      - **The failure alert counts only `outcome="failed"`.** `unsupported` and
+        `not_applicable` are a module declining an input it cannot honestly score —
+        exactly what it should do — and paging on them trains people to ignore pages.
+        Asserted, because collapsing them into "failure" is the obvious simplification
+        and a wrong one.
+      - **A scrape is counted, and no rule alerts on it.** The first draft of that test
+        asserted `/metrics` never appears in its own output; it does, and that was the
+        *test* being wrong. Omitting it would mean the request counter silently
+        disagreed with reality. The requirement is on the rules instead.
+      **Known gap, asserted rather than hidden:** `forensight_analysis_jobs_total` is a
+      *labelled* counter, and `prometheus_client` emits no samples for one until
+      `.labels()` is called — so it is absent from `/metrics` on a deployment that has
+      analysed nothing, and the rule watching it sits on an empty vector. Not fixable in
+      the metric, because pre-initialising every (module, outcome) pair means
+      enumerating modules plugins register at runtime. The honest options are the
+      `absent()` variant or accepting the rule only exists once the first job runs.
+      **Grafana is not verified** — no dashboard is asserted against a rendering
+      Prometheus, and this only covers Prometheus and the rules.
 - [x] T10.3 Backup → restore reproduces DB + evidence; hashes verify. Nine tests.
       **The round trip runs end to end**: a real `pg_dump`, a real `pg_restore` into a
       real second database, and every recorded digest recomputed from the restored

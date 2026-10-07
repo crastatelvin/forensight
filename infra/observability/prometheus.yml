@@ -1,3 +1,8 @@
+# Alert rules are loaded, not merely kept in the repo. A rule file nothing loads is a
+# file that does nothing — which is exactly the shape of "we have alerting".
+rule_files:
+  - /etc/prometheus/alerts.yml
+
 global:
   scrape_interval: 15s
 

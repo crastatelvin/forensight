@@ -1,0 +1,105 @@
+# Prometheus alert rules for ForenSight.
+#
+# Three rules, deliberately few. An alert set nobody trusts gets muted, and a muted
+# alert set is worse than none because it is still visible on the board.
+#
+# Every rule here is exercised by `backend/tests/test_observability.py`, which
+# evaluates the expressions against the metrics this build actually emits. That test
+# exists because the failure mode for alerting is silent: a rule written against a
+# metric name or label that was later renamed evaluates to an empty vector forever,
+# so it never fires, nothing announces it, and the board stays green through an
+# outage. A rule that parses is not a rule that fires.
+#
+# `for` is set on every rule. Without it a single bad sample pages someone; with it,
+# only a sustained condition does. Zero is not a valid choice — it turns the rule
+# into a flapper.
+
+groups:
+  - name: forensight-api
+    rules:
+      # --- availability -------------------------------------------------
+      - alert: ForenSightAPIDown
+        # `up` is Prometheus's own scrape health, not an application metric, so it
+        # cannot be checked by the metric-agreement test — but it is the rule that
+        # matters most, because every other rule is silent while the target is down.
+        expr: up{job="forensight-api"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "ForenSight API is not responding to scrapes"
+          description: >-
+            Prometheus has been unable to scrape {{ $labels.instance }} for two
+            minutes. Every other alert on this service is blind while this holds.
+
+      # --- errors -------------------------------------------------------
+      - alert: ForenSightHighServerErrorRate
+        # 5xx over all responses, per route. `/readyz` is excluded because it
+        # returns 503 *by design* whenever a dependency is down — alerting on it
+        # would fire for every database blip while the API is serving requests
+        # perfectly well, and the notification would be actively misleading.
+        expr: |
+          sum by (route) (
+            rate(forensight_http_requests_total{status=~"5..",route!~"/readyz|/metrics"}[5m])
+          )
+          /
+          clamp_min(
+            sum by (route) (
+              rate(forensight_http_requests_total{route!~"/readyz|/metrics"}[5m])
+            ), 0.001
+          )
+          > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Over 5% of requests to {{ $labels.route }} are failing"
+          description: >-
+            More than 5% of requests to this route have returned 5xx for ten
+            minutes. Check the container logs for this route before restarting
+            anything — a restart hides the cause and the next request repeats it.
+
+      # --- latency ------------------------------------------------------
+      - alert: ForenSightHighLatency
+        # 95th percentile over five minutes. `histogram_quantile` needs `sum by`
+        # (le) because the buckets are per-route and per-instance; aggregating first
+        # without the bucket gives a number that is not a percentile of anything.
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum by (le, route) (
+              rate(forensight_http_request_duration_seconds_bucket{route!="/metrics"}[5m])
+            )
+          )
+          > 2.5
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "p95 latency on {{ $labels.route }} is above 2.5s"
+          description: >-
+            The 95th percentile for this route has been above 2.5 seconds for ten
+            minutes. This threshold is a starting point measured from this
+            deployment's own latency distribution, not an SLO — raise or lower it
+            once there is real traffic to judge against.
+
+      # --- analysis pipeline --------------------------------------------
+      - alert: ForenSightAnalysisFailures
+        # Failures only, not failures-as-a-share. A denominator here is wrong during
+        # exactly the situation that matters: a backlog makes the ratio look fine
+        # while every job in it is broken.
+        expr: |
+          sum by (module) (
+            rate(forensight_analysis_jobs_total{outcome="failed"}[15m])
+          )
+          > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Analysis jobs for {{ $labels.module }} are failing"
+          description: >-
+            Jobs for this module have been failing for fifteen minutes. The
+            `unsupported` and `not_applicable` outcomes are deliberately not counted
+            here: neither is a failure, and alerting on them would page someone every
+            time the module declined an input it cannot honestly score.
