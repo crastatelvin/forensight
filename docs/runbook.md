@@ -87,6 +87,33 @@ Cookie-authenticated mutation without the `X-CSRF-Token` header echoing the
 establish the session, so no cookie exists yet. Bearer-token requests are also
 exempt.
 
+### Reading a trace
+
+Every API response carries `x-trace-id` and `x-trace-span-id`. A submission's trace
+follows the job into the worker, so the API span and the worker's span are **one
+trace**, not two:
+
+```bash
+curl -s "localhost:8000/traces/$TRACE_ID?case_id=$CASE" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+`case_id` is **required**. A trace readable by id alone would let any signed-in user
+time other people's investigations by guessing trace ids, so a trace is only readable
+in the context of a case you may open, and every span in it must belong to that case.
+
+Spans are **stored in Postgres, not exported to a collector** — no OpenTelemetry SDK,
+no image growth, and the egress allowlist stays meaningful on an air-gapped host. The
+trade is that there is no sampling, aggregation or flame-graph UI: this answers "what
+happened to this job, in what order, and how long did each part take", which is the
+question a stuck analysis raises. Nothing in the read path can slow a request down —
+span writes are best-effort and a failure to record is never a failure to serve.
+
+If you are adding instrumentation, note that `tracing.finish()` coerces attributes to
+something `jsonb` accepts. Do not skip it: an uncoerced `uuid.UUID` raises at flush
+time, and because span writes swallow their own errors, the result is a trace that
+appears to work and records nothing.
+
 ### Observability profile will not start
 
 Loki needs `infra/observability/loki.yaml` mounted; without it the container has

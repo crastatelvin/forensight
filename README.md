@@ -52,6 +52,14 @@ memory).
 > not independently establish *when* signing happened, and it does not establish *who*
 > signed it to anyone who has not been given the signer's certificate.
 >
+> **Traces span the queue, and are stored rather than shipped.** Every response carries
+> `x-trace-id`; a submission's trace follows the job into the worker as **one trace
+> with a real parent link**, not two roots that look continuous. Spans live in
+> Postgres — **no OpenTelemetry SDK, no collector, no image growth** — which is also
+> why a trace here is covered by the same backup, audit trail and case access control
+> as the investigation it belongs to. A trace is readable only inside a case the
+> caller may open, so trace ids cannot be used to time someone else's work.
+>
 > **Investigator tooling ships, and it refuses the readings it cannot support.** The
 > case timeline assembles itself from the case's own records — derived on read, so it
 > can never become a permanent record of what the code thought, and every entry says

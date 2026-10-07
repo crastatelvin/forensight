@@ -37,6 +37,8 @@ from app.drain import reset as drain_reset
 from app.health import gather_readiness
 from app.observability import MetricsMiddleware, configure_logging, metrics_router
 from app.reports.router import router as reports_router
+from app.tracing_router import install as tracing_router_install
+from app.tracing_router import router as tracing_router
 
 logger = logging.getLogger("forensight")
 
@@ -254,6 +256,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agent_router)
     app.include_router(metrics_router)
     app.include_router(reports_router)
+    app.include_router(tracing_router)
+
+    # Tracing middleware (P10.B1). Installed after the routers so `trace_spans` is
+    # registered on the metadata before anything can query it.
+    tracing_router_install(app)
 
     # A unique-constraint violation is a client mistake, not a server fault.
     #

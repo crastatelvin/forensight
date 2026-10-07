@@ -1167,26 +1167,45 @@ that might not work — the same argument as the CI security scanners.
       for everything this platform scores and **honestly tiered** — Tier B's label
       served from the backend so the interface cannot contradict it, Tier C a refusal
       with no scoring path, every AI module deterministic and digest-pinned with
-      golden tests against real bytes. The remaining half is six analyzers (B1–B6) and
-      their three test cases, all blocked on labelled fixtures, recorded with reasons
-      at P9.B1–B6.
+      golden tests against real bytes. **B6 shipped** (`text-authorship`, pure stylometry,
+      no weights) and its threshold is recorded as **not separating** its fixtures
+      rather than tuned until it did. The remaining half is five analyzers (B1–B5) and
+      their two test cases, all blocked on labelled fixtures, recorded with reasons at
+      P9.B1–B5.
+      **Why five analyzers were not written anyway**, since "blocked on fixtures" invites
+      the reading that the code was easy and the data was missing. It was not: without
+      fixtures there is no way to know whether any of these techniques *works on the
+      evidence*, so each module would ship a threshold that nothing establishes, a
+      payload that could only say "uncalibrated", and a number an examiner would read as
+      a finding. Five of those is worse than none, because the interface would offer
+      them and the disclaimer is not what a tired person at 3am reads. The blocker is
+      external data with no permissively-licensed source; the reasoning per technique is
+      at P9.B1–B5.
 
 ---
 
 ## Phase 10 — Hardening, observability, ops, Android dev profile
 **Build**
-- [~] P10.B1 Observability — **Prometheus + alerting done; tracing, Loki, Grafana
-      dashboards and Sentry not done.**
+- [~] P10.B1 Observability — **Prometheus + alerting done; tracing done; Loki,
+      Grafana dashboards and Sentry not done.**
       Prometheus scraping, the metric set, and alert rules are complete (T10.2), and
       the parts that make them *believable* are tested. Loki and Prometheus config
-      exist but nothing renders a Loki dashboard. **Not built: OpenTelemetry traces
-      across API → agent → worker.** Measured rather than assumed: it needs the OTel
-      SDK and an exporter added to a deliberately slim image, span context propagated
-      across three processes *and* a queue boundary (the job id is the only thing that
-      crosses it today), and T10.1 would need a trace collector in CI to assert
-      parent/child against. That is a real dependency and a real test-infrastructure
-      decision, not a day's work — and half-instrumented spans are worse than none,
-      because a trace that silently stops at a queue boundary looks continuous.
+      exist but nothing renders a Loki dashboard.
+      **Tracing is built — spans stored in Postgres, no SDK and no collector** (T10.1).
+      The previous note on this item claimed tracing needed the OTel SDK added to a
+      slim image and a collector in CI to assert parent/child against. **That was
+      wrong, and it is worth recording why rather than quietly replacing it.** Both
+      requirements follow from assuming spans are *exported*. Spans can be *stored*,
+      and this system already has a store that is backed up, hash-verified, case-scoped
+      and air-gapped — so the image is unchanged, the P10.B4 egress allowlist stays
+      meaningful, and T10.1 is asserted against the database rather than against
+      infrastructure CI would have to run. **A trace stored with its case can be joined
+      to it, correlated with an audit entry and restored from a backup; a trace
+      shipped to a collector can do none of those.** The real problem was never the SDK,
+      it was the queue boundary, and that is solved and tested — see T10.1.
+      What tracing still does not do: sample, aggregate, or render a flame graph. It
+      answers one question well — what happened to this job, in what order, and how long
+      each part took — which is the question a stuck analysis actually raises.
       Sentry is deliberately absent: it is a third-party SaaS endpoint, which the
       egress allowlist added in P10.B4 would by default refuse. For an air-gapped
       deployment it is the wrong tool, and self-hosted error tracking is the honest
@@ -1365,10 +1384,54 @@ that might not work — the same argument as the CI security scanners.
       prior hand-written capability list advertised three GPU modules no analyzer
       implemented while omitting the five that do.
 **Test cases**
-- [ ] T10.1 Trace spans API → agent → worker with correct parent/child. **Not
-      written**, because the instrumentation it would test is not there — see P10.B1.
-      Deliberately not stubbed: a span test with no real spans asserts that a mock
-      recorded a call, which is the simulation this project refuses everywhere else.
+- [x] T10.1 Trace spans API → worker with correct parent/child. **17 tests**, 4 of
+      them against live Postgres.
+      **The earlier "not written" assessment was wrong, and worth recording why.** It
+      said tracing "needs the OTel SDK in a slim image and a collector in CI to assert
+      parent/child against". Both follow from assuming spans are *exported*. Spans can
+      be **stored**, and this system already has a store that is backed up (P10.B2),
+      hash-verified, case-scoped and air-gapped — so there is **no SDK and no
+      collector**, the image is unchanged, and T10.1 is asserted against the database.
+      A trace that lives with its case can be joined to it, correlated with an audit
+      entry and restored from a backup; a trace shipped to a collector can do none of
+      those.
+      W3C Trace Context is written out by hand — four hex fields in a header, not a
+      dependency — and parsed **strictly**. A malformed or all-zero `traceparent` is
+      *ignored*, never guessed at, because a wrong parent link silently attaches work
+      to the wrong trace, which is worse than losing it.
+      **The queue boundary is the real problem and it is asserted directly.** The job id
+      is the only thing crossing from the API process to the worker, so naive
+      instrumentation yields two root spans that *look* like one continuous trace while
+      measuring nothing across the boundary. The `traceparent` rides in the Dramatiq
+      message options and is re-parented on delivery, and
+      `test_the_worker_span_is_a_child_of_the_api_span_across_the_queue` asserts the
+      worker's `parent_span_id` is the API's `span_id` **on live Postgres** — it cannot
+      be asserted in-process, because any single-process test flattens the boundary back
+      into one and then proves nothing.
+      **Two real bugs, both found by running it:**
+      - **`perf_counter_ns` was used as the span timestamp.** It is right for measuring
+        a duration and useless for ordering rows: its origin is arbitrary and differs
+        *per process*, so the API's span and the worker's span sorted by two unrelated
+        epochs. Caught by a test asserting a non-negative duration, which came out
+        negative because the test passed its own `ended_ns`. Wall-clock
+        `time.time_ns()` for ordering, monotonic for duration.
+      - **A `uuid.UUID` in a span attribute made the span silently unwritable.**
+        `jsonb` rejects it at flush time — and `record` deliberately swallows its own
+        errors so tracing cannot break a case submission, so the combination meant
+        tracing *appeared to work and recorded nothing*. Every SQLite test passed;
+        SQLite's JSON type is more forgiving. This is the same failure the Phase 6 live
+        -Postgres tests were added for, arriving again in a new column. Attributes are
+        now coerced explicitly, with a test that round-trips them through `json.dumps`.
+      Tracing **can never break an operation** — the swallow is the point, and commented
+      as such, because a bare `except: pass` elsewhere in this codebase is a bug. The
+      one exception is a `required=True` mode that raises, which is what lets a test
+      assert on stored rows rather than on a mock recording a call.
+      `GET /traces/{trace_id}?case_id=` nests spans by parent link. **`case_id` is
+      required**: a trace readable by id alone would let any signed-in user time other
+      people's investigations by guessing, so a trace is only readable in the context of
+      a case the caller may open, and every span in it must belong to that case. Health
+      and metrics paths are excluded — they fire constantly and would bury every genuine
+      trace in rows nobody will read. Spans cascade-delete with their case.
 - [x] T10.2 Prometheus scrapes this service; alert rules that can actually fire.
       `infra/observability/alerts.yml`, wired into `prometheus.yml` via `rule_files` —
       a rule file nothing loads is a file that does nothing, which is exactly the shape
@@ -1472,18 +1535,16 @@ that might not work — the same argument as the CI security scanners.
       backups that verify cryptographically and restore (T10.3), egress enforced with
       the surface AST-pinned (T10.5), a graceful drain in the correct order (T10.7),
       a constrained-host profile that can actually run the platform (T10.6), alert
-      rules proven to fire (T10.2), a load check measuring no job loss (T10.4), and a
-      threat model brought back in line with the code.
-      **Four things stand between this and a clean exit**, each recorded where it is
+      rules proven to fire (T10.2), a load check measuring no job loss (T10.4), traces that
+      span the queue boundary with a real parent link and are stored with their case
+      (P10.B1/T10.1), and a threat model brought back in line with the code.
+      **Three things stand between this and a clean exit**, each recorded where it is
       built rather than only here:
-      1. **OpenTelemetry traces (P10.B1/T10.1).** Needs the SDK in a slim image, span
-         context across a queue boundary, and a collector in CI. Half-instrumented spans
-         are worse than none.
-      2. **A penetration test (P10.B5).** CI scanners that are themselves proven to
+      1. **A penetration test (P10.B5).** CI scanners that are themselves proven to
          fail prove the scanners work, not that the application has no findings.
-      3. **PITR and MinIO-side replication (P10.B2).** `pg_dump` is a logical backup;
+      2. **PITR and MinIO-side replication (P10.B2).** `pg_dump` is a logical backup;
          point-in-time recovery needs WAL archiving.
-      4. **Nine Phase 9 items (B1–B6, T9.1–T9.3)** blocked on labelled fixtures that
+      3. **Seven Phase 9 items (B1–B5, T9.2, T9.3)** blocked on labelled fixtures that
          cannot be manufactured, with the enabler named.
       **Grafana dashboards are not asserted** against a rendering Prometheus; only
       Prometheus and the rules are.

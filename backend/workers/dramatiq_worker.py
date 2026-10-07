@@ -18,6 +18,7 @@ import asyncio
 import uuid
 
 import dramatiq
+from app import tracing
 from app.analysis.executor import execute_job
 from app.analysis.registry import register_all
 from app.analysis.repository import get_job
@@ -48,12 +49,19 @@ register_all()
     max_backoff=60_000,
     time_limit=600_000,
 )
-def run_analysis_job(job_id: str) -> None:
-    """Execute one job. Never raises for an analysis failure (T4.2)."""
-    _run_job_sync(job_id)
+def run_analysis_job(job_id: str, *, traceparent: str = "") -> None:
+    """Execute one job. Never raises for an analysis failure (T4.2).
+
+    `traceparent` arrives in the message options set by `enqueue_analysis_job`, which
+    is what makes this span a **child** of the API's rather than a second root. The
+    parameter is a plain string rather than the message options dict because Dramatiq
+    has no per-argument options mechanism — every option would otherwise become an
+    argument the actor does not otherwise need.
+    """
+    _run_job_sync(job_id, traceparent=traceparent)
 
 
-def _run_job_sync(job_id: str) -> None:
+def _run_job_sync(job_id: str, *, traceparent: str = "") -> None:
     """Bridge the sync worker to the async data layer.
 
     A fresh event loop *and a fresh engine* per job.
@@ -74,6 +82,11 @@ def _run_job_sync(job_id: str) -> None:
       thing more confusingly.
     """
 
+    # Parsed *outside* the event loop and rejected if malformed: an unparseable parent
+    # must start a fresh trace rather than be guessed at, because attaching the work to
+    # the wrong trace is worse than losing the link.
+    parent = tracing.TraceParent.parse(traceparent)
+
     async def _main() -> None:
         engine = create_engine()
         maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
@@ -91,13 +104,31 @@ def _run_job_sync(job_id: str) -> None:
                 # nothing passed a store.
                 from app.analysis.models_registry import ModelStore
 
-                await execute_job(
-                    session,
-                    job,
-                    settings=job_settings,
-                    gpu_available=job_settings.gpu_available,
-                    model_store=ModelStore(job_settings),
-                )
+                # The worker span, parented to the API's span across the queue
+                # boundary. Recording it is best-effort — a trace that can fail a job
+                # would be worse than no trace — so `record` swallows its own errors.
+                with tracing.span(
+                    "worker.execute_job",
+                    parent=parent,
+                    case_id=job.case_id,
+                ) as worker_span:
+                    outcome = await execute_job(
+                        session,
+                        job,
+                        settings=job_settings,
+                        gpu_available=job_settings.gpu_available,
+                        model_store=ModelStore(job_settings),
+                    )
+                    await tracing.finish(
+                        worker_span,
+                        session,
+                        status="ok" if job.status == "done" else job.status,
+                        job_id=str(job.id),
+                        module=job.module,
+                        attempts=job.attempts,
+                        trace_id=worker_span.trace_id,
+                    )
+                _ = outcome
         finally:
             await engine.dispose()
 
