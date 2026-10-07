@@ -63,6 +63,7 @@ def register_all() -> None:
     from app.analysis.modules import (
         entropy,
         face_compare,
+        geo_correlate,
         image_ela,
         image_exif,
         image_prnu,
@@ -76,6 +77,7 @@ def register_all() -> None:
         image_prnu.module,
         object_detect.module,
         face_compare.module,
+        geo_correlate.module,
     ):
         if not is_registered(module.spec.name):
             register(module)

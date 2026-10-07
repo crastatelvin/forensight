@@ -28,12 +28,13 @@ import os
 import pathlib
 
 import pytest
-from app.analysis.modules import entropy, image_ela, image_exif
+from app.analysis.modules import entropy, geo_correlate, image_ela, image_exif
 from app.analysis.types import AnalysisNotApplicable
 
 from tests.fixtures_images import (
     CAPTURED,
     MODIFIED,
+    exif_at,
     exif_with,
     exif_with_gps,
     make_clean_jpeg,
@@ -408,3 +409,147 @@ def test_face_compare_scores_a_mismatch_low() -> None:
     assert "This is NOT an identification" in result["disclaimer"]
     assert "NOT evidence that the people are different" in result["disclaimer"]
     assert "sface" in result["model_version"]
+
+
+# --- geo-correlate (Tier B) ----------------------------------------------
+#
+# Geospatial values are pinned with the geometry checked against known distances
+# first, because a pinned number proves only that the code still produces what it
+# produced — not that the number is a distance at all. A haversine with the
+# arguments transposed is stable, reproducible, and wrong.
+
+LONDON = (51.5074, -0.1278)
+NYC = (40.7128, -74.0060)
+
+
+def test_haversine_matches_known_distances() -> None:
+    """The formula, checked where the answer is known independently.
+
+    1° of latitude is 111.19 km on a sphere of this radius. London–New York is
+    ~5570 km. Antipodes are half the circumference, ~20015 km. If any of these move,
+    every pinned geospatial score below is measuring a different planet.
+    """
+    assert geo_correlate.haversine_km(0, 0, 1, 0) == pytest.approx(111.195, abs=0.01)
+    assert geo_correlate.haversine_km(*LONDON, *NYC) == pytest.approx(5570.2, abs=1.0)
+    assert geo_correlate.haversine_km(0, 0, 0, 180) == pytest.approx(20015.1, abs=1.0)
+    # Short distances are the regime that matters here — the threshold is 1 km — and
+    # they are exactly where the law of cosines loses precision, which is why
+    # haversine was chosen over it.
+    assert geo_correlate.haversine_km(51.5, -0.12, 51.50009, -0.12) == pytest.approx(
+        0.010, abs=0.0005
+    )
+
+
+def test_geo_distance_is_pinned_on_a_known_separation() -> None:
+    """~110 m north of the origin, against two supplied places."""
+    result = geo_correlate.run(
+        exif_at(51.50099, -0.12),
+        {
+            "compare_to": [
+                {"label": "origin", "latitude": 51.5, "longitude": -0.12},
+                {"label": "nyc", "latitude": NYC[0], "longitude": NYC[1]},
+            ]
+        },
+    )
+
+    assert result["score"] == 0.110083
+    assert result["tier"] == "B"
+    assert result["threshold"] == geo_correlate.THRESHOLD
+    assert result["detail"]["nearest"]["label"] == "origin"
+    assert result["detail"]["colocated_count"] == 1
+    assert result["detail"]["references_compared"] == 2
+    # Distances are sorted, so the first one is the nearest by construction rather
+    # than by luck of ordering.
+    ordered = [d["distance_km"] for d in result["detail"]["distances_km"]]
+    assert ordered == sorted(ordered)
+
+
+def test_geo_reports_the_far_case_as_far() -> None:
+    """Sydney against London and New York: thousands of km, and not co-located.
+
+    The negative case, and the one that matters — a module that returned a small
+    number for everything would still pass the test above.
+    """
+    result = geo_correlate.run(
+        exif_at(-33.8688, 151.2093),
+        {
+            "compare_to": [
+                {"label": "london", "latitude": LONDON[0], "longitude": LONDON[1]},
+                {"label": "nyc", "latitude": NYC[0], "longitude": NYC[1]},
+            ]
+        },
+    )
+
+    assert result["score"] == pytest.approx(15988.7776, abs=0.001)
+    assert result["detail"]["colocated_count"] == 0
+    assert result["detail"]["nearest"]["label"] == "nyc"
+    assert result["score"] > result["threshold"]
+
+
+def test_geo_refuses_without_coordinates_rather_than_scoring_zero() -> None:
+    """A 0.0 km would render as "at the origin" — a claim about the world.
+
+    The distinction the whole tiering rests on: "we could not measure this" is not
+    "we measured zero".
+    """
+    from tests.fixtures_images import make_photo_jpeg
+
+    with pytest.raises(AnalysisNotApplicable) as caught:
+        geo_correlate.run(
+            make_photo_jpeg(),
+            {"compare_to": [{"label": "x", "latitude": 51.5, "longitude": -0.12}]},
+        )
+    assert "no GPS" in str(caught.value)
+
+
+def test_geo_refuses_without_comparison_targets() -> None:
+    """A correlation needs two things; one alone is undefined, not negative."""
+    for params in ({}, {"compare_to": []}):
+        with pytest.raises(AnalysisNotApplicable) as caught:
+            geo_correlate.run(exif_at(51.5, -0.12), params)
+        assert "no comparison targets" in str(caught.value)
+
+
+def test_geo_rejects_malformed_targets_with_a_usable_message() -> None:
+    """Each malformed input names the shape it wanted.
+
+    A refusal that says only "invalid input" makes the caller guess, and three
+    different mistakes here have three different fixes.
+    """
+    origin = {"latitude": 51.5, "longitude": -0.12}
+
+    with pytest.raises(AnalysisNotApplicable, match="must be a list"):
+        geo_correlate.run(exif_at(51.5, -0.12), {"compare_to": origin})
+
+    with pytest.raises(AnalysisNotApplicable, match="not a valid coordinate"):
+        geo_correlate.run(exif_at(51.5, -0.12), {"compare_to": [{"latitude": 999, "longitude": 0}]})
+
+    with pytest.raises(AnalysisNotApplicable, match="no usable latitude"):
+        geo_correlate.run(exif_at(51.5, -0.12), {"compare_to": [{"label": "x"}]})
+
+    # Out-of-range is rejected rather than clamped: a latitude of 999 is a malformed
+    # coordinate, not a place very far away, and clamping it would produce a
+    # confident distance to the pole.
+    with pytest.raises(AnalysisNotApplicable, match="not a valid coordinate"):
+        geo_correlate.run(
+            exif_at(51.5, -0.12), {"compare_to": [{"latitude": 51.5, "longitude": 181}]}
+        )
+
+
+def test_geo_states_that_gps_is_self_reported() -> None:
+    """The limitation is asserted, so it cannot be quietly dropped.
+
+    A photograph's coordinates are a number in a file anyone can write. A reader who
+    sees "0.11 km from origin" and not "the coordinates agree" would be reading a
+    stronger claim than the measurement supports.
+    """
+    result = geo_correlate.run(
+        exif_at(51.5, -0.12),
+        {"compare_to": [{"label": "origin", "latitude": 51.5, "longitude": -0.12}]},
+    )
+
+    assert "NOT proof" in result["disclaimer"]
+    assert "the coordinates are close" in result["disclaimer"]
+    assert result["detail"]["calibration"]["calibrated_on_this_deployment"] is False
+    assert "synthetic test fixtures" in result["detail"]["calibration"]["threshold_source"]
+    assert any("self-reported" in limit for limit in result["detail"]["known_limitations"])

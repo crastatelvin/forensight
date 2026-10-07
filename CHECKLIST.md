@@ -892,7 +892,39 @@ UI always has.
 - [ ] P9.B4 Gunshot audio — YAMNet/PANNs
 - [ ] P9.B5 Handwriting/document similarity
 - [ ] P9.B6 Text authorship/phishing — DistilBERT
-- [ ] P9.B7 Geospatial correlation — PostGIS/Shapely
+- [x] P9.B7 Geospatial correlation. `geo-correlate`, Tier B, pure algorithm.
+      **No Shapely, no PostGIS.** The plan named both. What this actually needs is a
+      distance between two points on a sphere — haversine over `math` — and the
+      alternative was a compiled geometry dependency in the image for one function.
+      PostGIS earns its place when there are *areas* to test against (is this point
+      inside this jurisdiction), and nothing asks that yet. Add it when something does.
+      Reads GPS from the evidence's own EXIF and measures it against places the
+      caller supplies. Targets arrive as `compare_to` data rather than evidence ids
+      on purpose: a module may not read the object store, so the caller resolves ids
+      to coordinates, and a module cannot become a way to reach another case's data.
+      **Not a manipulation signal, and the payload says so.** A photograph's GPS is a
+      number in a file anyone can write; phones reset it, inherit a stale fix, or
+      record a network position. So the score is a distance, the threshold is a
+      co-location radius, and the disclaimer states that a close match means the
+      coordinates agree and nothing more. Asserted, so it cannot be quietly dropped.
+      Refuses rather than scoring when there is no GPS or no comparison target —
+      a `0.0` here would render as "at the origin", which is a claim about the world
+      that nobody measured. Malformed targets are distinguished from absent ones,
+      because they have different fixes.
+      **Two bugs found by running it rather than by reading it**, both in code that
+      looked right: the longitude hemisphere was written as N/S instead of E/W,
+      which put western longitudes on the far side of the planet — a fixture that
+      looked correct and measured 20,000 km from where it claimed to be; and the
+      module read the raw GPS IFD instead of calling the existing `gps_to_decimal`,
+      so it reported *every* image as having no GPS — which reads as a correct
+      refusal rather than as a bug.
+      **Three of my own pinned values were guesses and all three were wrong** (110 m
+      separation, the Sydney–New York distance, a disclaimer substring). Replaced with
+      measured ones. The geometry is asserted against independently-known distances
+      first — 1° of latitude, London–New York, antipodes — because a pinned number
+      proves only that the code still produces what it produced, not that the number
+      is a distance. A haversine with its arguments transposed is stable,
+      reproducible, and wrong.
 - [x] P9.B8 Tier B repositioned as visual similarity / triage, with the label
       **served from the backend rather than written in the interface.**
       The plan lists seven trace-evidence techniques (bloodstain, fiber, glass,

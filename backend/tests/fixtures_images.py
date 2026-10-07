@@ -370,3 +370,54 @@ def exif_with(
 #: fixtures and the format is easy to get subtly wrong.
 CAPTURED = "2026:01:02 03:04:05"
 MODIFIED = "2026:06:07 08:09:10"
+
+
+def exif_at(
+    latitude: float,
+    longitude: float,
+    *,
+    width: int = 128,
+    height: int = 128,
+) -> bytes:
+    """A JPEG whose GPS says exactly where `latitude, longitude` is.
+
+    Needed because a geospatial test has to state a distance it already knows. Taking
+    one from the fixed `exif_with_gps()` fixture would mean every case shares one
+    origin, and "the module rounds to the same number for every input" would pass.
+
+    Written as degrees/minutes/seconds because that is what EXIF stores: EXIF has no
+    decimal field, so a fixture that wrote 51.500000 directly would not be a fixture
+    any real camera could have produced.
+    """
+    if not (-90.0 <= latitude <= 90.0) or not (-180.0 <= longitude <= 180.0):
+        raise ValueError(f"({latitude}, {longitude}) is not a coordinate")
+
+    def to_dms(
+        value: float, positive: str, negative: str
+    ) -> tuple[str, tuple[float, float, float]]:
+        # Latitude is N/S and longitude is E/W. Writing "N" for a western longitude
+        # silently yields a point on the far side of the planet — a fixture that
+        # looks correct and measures 20,000 km from where it claims to be.
+        hemisphere = positive if value >= 0 else negative
+        magnitude = abs(value)
+        degrees = int(magnitude)
+        remainder = (magnitude - degrees) * 60
+        minutes = int(remainder)
+        seconds = round((remainder - minutes) * 60, 4)
+        return hemisphere, (float(degrees), float(minutes), seconds)
+
+    lat_ref, lat_dms = to_dms(latitude, "N", "S")
+    lon_ref, lon_dms = to_dms(longitude, "E", "W")
+
+    image = Image.fromarray(_gradient(width, height), mode="RGB")
+    exif = Image.Exif()
+    exif[ExifTags.Base.Make] = "Canon"
+    gps_ifd = exif.get_ifd(ExifTags.IFD.GPSInfo)
+    gps_ifd[_GPS["GPSLatitudeRef"]] = lat_ref
+    gps_ifd[_GPS["GPSLatitude"]] = lat_dms
+    gps_ifd[_GPS["GPSLongitudeRef"]] = lon_ref
+    gps_ifd[_GPS["GPSLongitude"]] = lon_dms
+    exif[ExifTags.Base.GPSInfo] = gps_ifd
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=90, exif=exif)
+    return buffer.getvalue()
