@@ -7,6 +7,7 @@ import type {
   AnalysisResultRead,
   EvidenceRead,
   ModuleRead,
+  TierMeaningRead,
 } from "@/lib/types";
 import {
   explainJob,
@@ -48,6 +49,7 @@ export function AnalysisTab({
   results,
   modules,
   canWrite,
+  tiers,
 }: {
   caseId: string;
   evidence: EvidenceRead[] | null;
@@ -56,6 +58,8 @@ export function AnalysisTab({
   /** Fetched in the server render, so the picker is never briefly empty. */
   modules: ModuleRead[] | null;
   canWrite: boolean;
+  /** Backend-authored tier wording; see TierMeaningRead. */
+  tiers: TierMeaningRead[];
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -270,6 +274,7 @@ export function AnalysisTab({
               outcome={outcome}
               expanded={expanded === job.id}
               onToggle={() => setExpanded(expanded === job.id ? null : job.id)}
+              tiers={tiers}
             />
           ))}
         </ul>
@@ -316,11 +321,14 @@ function ResultRow({
   outcome,
   expanded,
   onToggle,
+  tiers,
 }: {
   job: AnalysisJobRead;
   outcome: Outcome;
   expanded: boolean;
   onToggle: () => void;
+  /** Backend-authored tier wording; see TierMeaningRead. */
+  tiers: TierMeaningRead[];
 }) {
   if (outcome.kind === "not_measured") {
     return (
@@ -386,7 +394,7 @@ function ResultRow({
 
   const { result } = outcome;
   const score = explainScore(result.score, result.threshold);
-  const tier = explainTier(result.tier);
+  const tier = explainTier(result.tier, tiers);
   const flags = calibrationFlags(result.payload);
   const explanation = explainModule(result.module);
 
@@ -406,11 +414,15 @@ function ResultRow({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="font-mono text-sm font-semibold">{result.module}</span>
+                {/* `tier` is null when the backend sent no wording for this tier,
+                    and it renders as the bare letter rather than as something
+                    plausible. Inventing a label here is how the interface ends up
+                    contradicting the report about how far a score can be pushed. */}
                 <Badge
                   tone={result.tier === "A" ? "accent" : "info"}
-                  title={tier.meaning}
+                  title={tier?.meaning}
                 >
-                  {tier.label}
+                  {tier?.label ?? `Tier ${result.tier}`}
                 </Badge>
                 <Badge
                   tone={
@@ -443,9 +455,14 @@ function ResultRow({
               rendered on its own is the thing this project exists to avoid. */}
           <p className="text-xs leading-relaxed text-secondary">{score.detail}</p>
 
-          <Notice tone={result.tier === "A" ? "info" : "warn"} title={tier.label}>
+          <Notice
+            tone={result.tier === "A" ? "info" : "warn"}
+            title={tier?.label ?? `Tier ${result.tier}`}
+          >
             {result.disclaimer}
-            <span className="mt-1 block opacity-80">{tier.meaning}</span>
+            {tier ? (
+              <span className="mt-1 block opacity-80">{tier.meaning}</span>
+            ) : null}
           </Notice>
 
           {flags.map((flag) => (

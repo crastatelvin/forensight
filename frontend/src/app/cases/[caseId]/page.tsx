@@ -11,6 +11,7 @@ import type {
   EvidenceRead,
   FindingRead,
   ModuleRead,
+  TierMeaningRead,
   TimelineEventRead,
 } from "@/lib/types";
 import { CaseHeader } from "@/components/case/case-header";
@@ -47,6 +48,8 @@ export interface CaseBundle {
    * started it is closed would be the wrong default for a forensic tool.
    */
   runs: AgentRunRead[] | null;
+  /** Backend-authored tier wording. See TierMeaningRead. */
+  tiers: TierMeaningRead[] | null;
 }
 
 export async function generateMetadata({
@@ -95,7 +98,7 @@ export default async function CasePage({
     throw error;
   }
 
-  const [evidence, jobs, results, findings, timeline, audit, runs, modules] =
+  const [evidence, jobs, results, findings, timeline, audit, runs, modules, tiers] =
     await Promise.all([
       safe<EvidenceRead[]>(`/cases/${caseId}/evidence`),
       safe<AnalysisJobRead[]>(`/cases/${caseId}/analyses`),
@@ -108,6 +111,9 @@ export default async function CasePage({
       // form first — which reads as broken rather than as loading.
       safe<AgentRunRead[]>(`/agent/cases/${caseId}/runs`),
       safe<ModuleRead[]>("/modules"),
+      // Tier wording comes from the backend too, for the same reason: a second
+      // hand-written copy of a safety label is a second chance to contradict it.
+      safe<TierMeaningRead[]>("/tiers"),
     ]);
 
   const bundle: CaseBundle = {
@@ -119,6 +125,7 @@ export default async function CasePage({
     timeline,
     audit,
     runs,
+    tiers,
   };
 
   return (

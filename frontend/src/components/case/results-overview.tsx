@@ -1,4 +1,4 @@
-import type { AnalysisResultRead } from "@/lib/types";
+import type { AnalysisResultRead, TierMeaningRead } from "@/lib/types";
 import { explainScore, explainTier, calibrationFlags } from "@/lib/explain";
 import { Card, CardHeader, CardBody, EmptyState, Badge } from "@/components/ui";
 
@@ -22,7 +22,14 @@ import { Card, CardHeader, CardBody, EmptyState, Badge } from "@/components/ui";
  * plotting — score against analysis time across a case, with dozens of points and
  * a readable x-axis. That is a different chart, and it is not this one.
  */
-export function ResultsOverview({ results }: { results: AnalysisResultRead[] | null }) {
+export function ResultsOverview({
+  results,
+  tiers,
+}: {
+  results: AnalysisResultRead[] | null;
+  /** Backend-authored tier wording; see TierMeaningRead. */
+  tiers: TierMeaningRead[];
+}) {
   if (results === null) {
     return (
       <Card>
@@ -70,7 +77,7 @@ export function ResultsOverview({ results }: { results: AnalysisResultRead[] | n
       <CardBody>
         <ul className="space-y-3">
           {results.map((r) => (
-            <ResultBar key={r.id} result={r} />
+            <ResultBar key={r.id} result={r} tiers={tiers} />
           ))}
         </ul>
       </CardBody>
@@ -86,9 +93,15 @@ export function ResultsOverview({ results }: { results: AnalysisResultRead[] | n
  * misleading thing this screen could do, so each bar is normalised against its own
  * threshold and says so.
  */
-function ResultBar({ result }: { result: AnalysisResultRead }) {
+function ResultBar({
+  result,
+  tiers,
+}: {
+  result: AnalysisResultRead;
+  tiers: TierMeaningRead[];
+}) {
   const score = explainScore(result.score, result.threshold);
-  const tier = explainTier(result.tier);
+  const tier = explainTier(result.tier, tiers);
   const flags = calibrationFlags(result.payload);
 
   // Width is measured against a per-analyzer ceiling rather than a shared maximum.
@@ -111,7 +124,7 @@ function ResultBar({ result }: { result: AnalysisResultRead }) {
       <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
         <span className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xs font-semibold">{result.module}</span>
-          <Badge tone={result.tier === "A" ? "accent" : "info"} title={tier.meaning}>
+          <Badge tone={result.tier === "A" ? "accent" : "info"} title={tier?.meaning}>
             Tier {result.tier}
           </Badge>
           <Badge

@@ -1,4 +1,4 @@
-import type { CapabilitiesResponse } from "@/lib/types";
+import type { CapabilitiesResponse, TierMeaningRead } from "@/lib/types";
 import { explainModule, explainTier } from "@/lib/explain";
 import { Card, CardHeader, CardBody, Notice, Badge } from "@/components/ui";
 
@@ -14,8 +14,11 @@ import { Card, CardHeader, CardBody, Notice, Badge } from "@/components/ui";
  */
 export function CapabilityPanel({
   capabilities,
+  tiers,
 }: {
   capabilities: CapabilitiesResponse | null;
+  /** Backend-authored tier wording; see TierMeaningRead. */
+  tiers: TierMeaningRead[];
 }) {
   if (!capabilities) {
     return (
@@ -65,7 +68,11 @@ export function CapabilityPanel({
         <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
           {capabilities.capabilities.map((c) => {
             const explanation = explainModule(c.name);
-            const tier = explainTier("A"); // generic; per-module tier comes from results
+            // The module's *own* tier, read from the backend. This used to be a
+            // hardcoded `explainTier("A")`, which announced Tier A to screen
+            // readers for all six analyzers when five of them are Tier B — the one
+            // fact a reader consults this panel for, stated wrongly for most of it.
+            const tier = explainTier(c.tier ?? "", tiers);
             return (
               <li
                 key={c.name}
@@ -89,7 +96,7 @@ export function CapabilityPanel({
                     No plain-language description is recorded for this analyzer.
                   </p>
                 )}
-                <span className="sr-only">{tier.meaning}</span>
+                {tier ? <span className="sr-only">{tier.meaning}</span> : null}
               </li>
             );
           })}

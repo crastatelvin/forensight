@@ -893,7 +893,41 @@ UI always has.
 - [ ] P9.B5 Handwriting/document similarity
 - [ ] P9.B6 Text authorship/phishing — DistilBERT
 - [ ] P9.B7 Geospatial correlation — PostGIS/Shapely
-- [ ] P9.B8 Tier-B repositioned as visual-similarity/triage (bloodstain, fiber, glass, paint, soil, hair, iris)
+- [x] P9.B8 Tier B repositioned as visual similarity / triage, with the label
+      **served from the backend rather than written in the interface.**
+      The plan lists seven trace-evidence techniques (bloodstain, fiber, glass,
+      paint, soil, hair, iris). Most of those are *laboratory measurements* —
+      glass refractive index, soil microscopy — which is Tier-C reasoning, not
+      Tier-B: a computed similarity there would be exactly the plausible-looking
+      number this project refuses. Fiber/trace colour and texture comparison from
+      two images is genuinely computable and genuinely a visual-similarity triage
+      signal, so that is the one worth having, and it is the same shape as the
+      PRNU module already shipped. **Not built this pass**: the labelling defect
+      found underneath was the real work here, and it applied to every existing
+      Tier-B surface.
+      **Found a live contradiction between two copies of a safety label.**
+      `frontend/src/lib/explain.ts` carried its own tier wording and had drifted
+      into saying the *opposite* of the backend on two of three tiers:
+      - Tier B was "a corroborating signal" — which is precisely how a
+        visual-similarity score gets read as a determination, while the backend
+        said "NOT an identity match".
+      - Tier C was "unvalidated, research value only", when Tier C is a deliberate
+        refusal to score at all.
+      Fixed at the owner: `TIER_MEANING` in `types.py`, served at `/tiers`, with
+      the interface asking rather than asserting. `explainTier` now has **no
+      fallback text** — an absent entry renders nothing rather than something
+      plausible and wrong.
+      **Found a second, worse one behind it.** The capability panel called
+      `explainTier("A")` for *every* module, in an `sr-only` span, so it announced
+      Tier A to screen readers for all six analyzers when five are Tier B. The one
+      fact a reader opens that panel for, stated wrongly for most of the list.
+      `Capability` now carries each module's real tier.
+      **And a third instance of the recurring bug class.** `/capabilities`
+      re-serialised each field by hand, which is why `tier` *silently failed to
+      appear* when added — the field existed, the response simply did not carry it.
+      Now serialised from the dataclass. A field-by-field projection is a
+      duplicate that must be updated by hand and fails silently when it is not,
+      the same shape as the three copies of `scoped_case`.
 - [x] P9.B9 Tier-C as lab-only workflows (DNA, tox, pollen, insect, odor,
       explosive/arson). Not "scored conservatively" — **there is no scoring path at
       all**, and that is the design goal rather than a limitation of it.
@@ -924,7 +958,12 @@ UI always has.
 - [ ] T9.1 Each new Tier-A analyzer has deterministic golden tests
 - [ ] T9.2 NBIS matching high / non-matching low on fixtures
 - [ ] T9.3 Speaker same>threshold / different<threshold
-- [ ] T9.4 Tier-B always labeled visual-similarity-not-identity
+- [x] T9.4 Tier-B always labeled "not an identity match", in the disclaimer, the
+      tier vocabulary, the capabilities list and the report. Nine tests, and the
+      part worth having is the **reverse** checks: Tier A must *not* claim to refuse
+      identity, and the capabilities list must contain both tiers, so a test cannot
+      pass on a single-valued field. `explainTier` returning `null` rather than a
+      default is itself load-bearing — the label must not be invented anywhere.
 - [x] T9.5 Tier-C: no scoring path, asserted rather than assumed. Nine tests,
       because the property under test is *negative* — nothing here proves Tier C
       works, since working is exactly what it must not do. Every technique in the

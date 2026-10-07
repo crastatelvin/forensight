@@ -62,6 +62,50 @@ TIER_DISCLAIMER: dict[Tier, str] = {
     Tier.B: ("Visual similarity / triage assist only. This is NOT an identity match."),
 }
 
+#: What each tier means, for the UI.
+#:
+#: Served rather than written in the frontend. The interface had its own copy of
+#: this, and the copy had drifted into saying the *opposite* of the backend on two of
+#: the three tiers: it called Tier B a "corroborating signal" — which is how a
+#: visual-similarity score gets read as a determination — and it called Tier C
+#: "unvalidated, research value only", when Tier C is a deliberate refusal to score
+#: at all (`app/analysis/lab_only.py`). Two hand-written copies of a safety label
+#: will disagree, and the one that disagrees is the one a user reads.
+#:
+#: A tier is a statement about how far a number can be pushed. That statement belongs
+#: to the code that assigns the tier, so the interface asks rather than asserts.
+#: Keyed by string rather than by `Tier`, and deliberately so.
+#:
+#: `Tier` has no `C` member and must not grow one. Adding it would let a module
+#: declare `tier=Tier.C` and emit a result carrying it — and a result with a tier is
+#: a claim that something was measured. Tier C is the claim that nothing can be, so
+#: it belongs to a technique in `lab_only.py`, never to a result row.
+TIER_MEANING: dict[str, dict[str, str]] = {
+    Tier.A.value: {
+        "label": "Tier A — investigative lead",
+        "meaning": (
+            "A published, independently benchmarked method. A result above threshold "
+            "is a legitimate lead. It is still not proof: no forensic technique is."
+        ),
+    },
+    Tier.B.value: {
+        "label": "Tier B — visual similarity, not identity",
+        "meaning": (
+            "A real measured signal that establishes similarity or triage relevance "
+            "only. This is NOT an identity match and must never be reported as one. "
+            "Use it to support or weaken a hypothesis formed from other evidence."
+        ),
+    },
+    "C": {
+        "label": "Tier C — lab only, not scored here",
+        "meaning": (
+            "A discipline this platform deliberately does not score. There is no "
+            "module for it on any host and provisioning nothing will change that. "
+            "Attach the accredited laboratory's report as evidence instead."
+        ),
+    },
+}
+
 
 class AnalysisError(RuntimeError):
     """Raised by a module when analysis genuinely fails (job -> failed)."""

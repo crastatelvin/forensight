@@ -10,6 +10,7 @@ import contextlib
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -237,16 +238,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         caps = get_capabilities(app.state.settings)
         return {
             "gpu_available": app.state.settings.gpu_available,
-            "capabilities": [
-                {
-                    "name": c.name,
-                    "available": c.available,
-                    "requires_gpu": c.requires_gpu,
-                    "version": c.version,
-                    **({"reason": c.reason} if c.reason else {}),
-                }
-                for c in caps
-            ],
+            # Serialised from the dataclass rather than field by field. The hand-written
+            # copy was the reason `tier` silently failed to appear when it was added to
+            # `Capability`: the field existed, and the response simply did not carry
+            # it. A field-by-field projection is a duplicate that has to be updated by
+            # hand and fails silently when it is not — the same shape as the three
+            # copies of `scoped_case` this project already had to merge.
+            "capabilities": [{k: v for k, v in asdict(c).items() if v != ""} for c in caps],
         }
 
     return app

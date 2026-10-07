@@ -101,8 +101,9 @@ export function CaseWorkspace({
         ) : null}
         {tab === "analyses" ? (
           <>
-            <ResultsOverview results={bundle.results} />
+            <ResultsOverview results={bundle.results} tiers={bundle.tiers ?? []} />
             <AnalysisTab
+              tiers={bundle.tiers ?? []}
               caseId={bundle.case.id}
               evidence={bundle.evidence}
               jobs={bundle.jobs}

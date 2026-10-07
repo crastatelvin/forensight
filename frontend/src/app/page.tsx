@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { apiGet, ApiError } from "@/lib/api";
 import { requireSession, isAdmin } from "@/lib/session";
-import type { CapabilitiesResponse, AnalysisJobRead, CaseRead } from "@/lib/types";
+import type {
+  AnalysisJobRead,
+  CapabilitiesResponse,
+  CaseRead,
+  TierMeaningRead,
+} from "@/lib/types";
 import { formatRelative } from "@/lib/format";
 import { CaseCard } from "@/components/case-card";
 import { CapabilityPanel } from "@/components/capability-panel";
@@ -34,6 +39,16 @@ export default async function Dashboard() {
     capabilities = await apiGet<CapabilitiesResponse>("/capabilities");
   } catch {
     capabilities = null;
+  }
+
+  // Tier wording, from the backend. Fetched alongside the capabilities because the
+  // panel's job is to say how far a module's number can be pushed, and the answer
+  // belongs to the code that assigns the tier rather than to the interface.
+  let tiers: TierMeaningRead[] = [];
+  try {
+    tiers = await apiGet<TierMeaningRead[]>("/tiers");
+  } catch {
+    tiers = [];
   }
 
   const open = cases.filter(
@@ -105,7 +120,7 @@ export default async function Dashboard() {
       )}
 
       {isAdmin(user.role) || capabilities ? (
-        <CapabilityPanel capabilities={capabilities} />
+        <CapabilityPanel capabilities={capabilities} tiers={tiers} />
       ) : null}
 
       {cases.length > 0 ? <RecentJobs /> : null}

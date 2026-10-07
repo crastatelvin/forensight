@@ -182,6 +182,14 @@ export interface CapabilityRead {
   requires_gpu: boolean;
   version: string;
   reason?: string;
+  /** The tier this module's results carry. Absent on an older backend. */
+  tier?: string;
+}
+
+export interface TierMeaningRead {
+  tier: string;
+  label: string;
+  meaning: string;
 }
 
 export interface CapabilitiesResponse {

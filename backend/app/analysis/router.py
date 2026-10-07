@@ -28,7 +28,7 @@ from app.analysis.schemas import (
     AnalysisResultRead,
     ModuleRead,
 )
-from app.analysis.types import Tier
+from app.analysis.types import TIER_MEANING, Tier
 from app.auth.rbac import CurrentUser, get_current_user, require_roles
 from app.auth.roles import MUTATING_ROLES
 from app.config import Settings, get_settings
@@ -71,6 +71,19 @@ async def list_modules(
             )
         )
     return out
+
+
+@router.get("/tiers")
+async def list_tiers(
+    _user: Annotated[CurrentUser, Depends(get_current_user)],
+) -> list[dict[str, str]]:
+    """What each tier means, for the interface to render.
+
+    The interface asks rather than keeping its own copy. It had one, and the copy
+    disagreed with this code on what Tier B and Tier C mean — a disagreement about
+    how far a number can be pushed, which is the one thing a tier exists to fix.
+    """
+    return [{"tier": tier, **meaning} for tier, meaning in TIER_MEANING.items()]
 
 
 @router.get("/lab-techniques")

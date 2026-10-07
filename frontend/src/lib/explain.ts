@@ -22,7 +22,12 @@
  *     edited" and "this looks edited, worth a look".
  */
 
-import type { AnalysisJobRead, AnalysisResultRead, ModuleRead } from "./types";
+import type {
+  AnalysisJobRead,
+  AnalysisResultRead,
+  ModuleRead,
+  TierMeaningRead,
+} from "./types";
 
 /** How much weight a technique's output can carry. */
 export type Tier = "A" | "B" | "C";
@@ -71,40 +76,25 @@ export function explainScore(
 }
 
 /** One line on what a tier permits. Used in the tier badge tooltip. */
-export function explainTier(tier: string): { label: string; meaning: string } {
-  switch (tier) {
-    case "A":
-      return {
-        label: "Tier A — investigative lead",
-        meaning:
-          "A published, independently benchmarked method. A result above threshold is a legitimate lead. It is still not proof: no forensic technique is.",
-      };
-    case "B":
-      return {
-        label: "Tier B — corroborating signal",
-        meaning:
-          "A real signal, but not a determination on its own. Use it to support or weaken a hypothesis formed from other evidence — never as the sole basis for a finding.",
-      };
-    case "C":
-      return {
-        label: "Tier C — unvalidated",
-        meaning:
-          "Experimental. Included for research value only. Must not appear as a finding in a report.",
-      };
-    default:
-      return {
-        label: `Tier ${tier}`,
-        meaning: "Trust level not declared by this module.",
-      };
-  }
+/**
+ * What a tier means, from the backend's own wording.
+ *
+ * There is no fallback text, and that is deliberate. A hardcoded default would be a
+ * second copy of a safety label, which is exactly what this function replaced: the
+ * interface used to call Tier B a "corroborating signal" while the backend said
+ * "NOT an identity match", and Tier C "unvalidated research" while the backend
+ * refused to score it at all. A missing entry renders nothing rather than
+ * something plausible and wrong.
+ */
+export function explainTier(
+  tier: string,
+  meanings: readonly TierMeaningRead[],
+): { label: string; meaning: string } | null {
+  const found = meanings.find((m) => m.tier === tier);
+  if (!found) return null;
+  return { label: found.label, meaning: found.meaning };
 }
 
-/**
- * Fold a job and its (possibly absent) result into one outcome.
- *
- * Written to be total: there is no input for which it returns "show a score" when
- * no measurement was made. A caller that wants a number has to have a result row.
- */
 export function explainJob(
   job: AnalysisJobRead,
   result: AnalysisResultRead | undefined,

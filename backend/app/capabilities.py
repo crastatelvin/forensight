@@ -36,6 +36,13 @@ class Capability:
     #: apart. A capability list without versions cannot answer "are these results
     #: comparable?".
     version: str = ""
+    #: The tier this module's results carry.
+    #:
+    #: Added because the panel rendered `explainTier("A")` for every entry — it
+    #: announced Tier A to screen readers for all six analyzers when five of them
+    #: are Tier B. A panel that misreports the trust level of a module is worse than
+    #: one that omits it, and it omitted the one fact a reader needs it for.
+    tier: str = ""
 
 
 def get_capabilities(settings: Settings, *, weights_available: bool = True) -> list[Capability]:
@@ -59,6 +66,7 @@ def get_capabilities(settings: Settings, *, weights_available: bool = True) -> l
                     requires_gpu=True,
                     reason="no GPU detected on this host",
                     version=spec.version,
+                    tier=spec.tier.value,
                 )
             )
         elif spec.model_key and not weights_available:
@@ -69,6 +77,7 @@ def get_capabilities(settings: Settings, *, weights_available: bool = True) -> l
                     requires_gpu=False,
                     reason=_UNAVAILABLE_MISSING_WEIGHTS,
                     version=spec.version,
+                    tier=spec.tier.value,
                 )
             )
         else:
@@ -78,6 +87,7 @@ def get_capabilities(settings: Settings, *, weights_available: bool = True) -> l
                     available=True,
                     requires_gpu=spec.requires_gpu,
                     version=spec.version,
+                    tier=spec.tier.value,
                 )
             )
     return caps
