@@ -904,7 +904,17 @@ UI always has.
 
 ## Cross-cutting quality gates (enforced every phase)
 - [x] X1 pytest unit+integration on live Postgres + MinIO (CI `integration` job)
-- [ ] X2 Playwright E2E
+- [x] X2 Playwright E2E against the real compose stack (CI `e2e` job). 11
+      browser tests: the case journey, the ELA overlay asserted by `naturalWidth > 0`
+      because a broken image is still "visible" to Playwright, the refusal path
+      (a generated PNG run through ELA reports "not measured" and "No score was
+      produced" rather than a zero), report generation and verification, and the
+      accessibility suite below. No mocks anywhere: a mocked test confirms the
+      component tree, and every defect this project found in the frontend was
+      invisible to one. Auth is a setup project rather than a per-test sign-in,
+      because `/auth/login` allows five attempts a minute and a suite that signs in
+      per test spends the budget and fails on a 429 that looks nothing like the bug
+      being hunted.
 - [ ] X3 Contract tests for agent tools
 - [ ] X4 Agent eval harness (cites sources, respects HITL)
 - [ ] X5 Golden tests for every analyzer (no simulation)
