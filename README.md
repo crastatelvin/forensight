@@ -23,8 +23,18 @@ memory).
 > detector cannot find weapons (COCO has no firearm class, so its watchlist is
 > `knife`/`scissors` and a nil result says nothing about guns), and the face
 > threshold is the model vendor's published operating point, not one calibrated on
-> this deployment. Signed reports (Phase 8) and ops hardening are still ahead; the
-> case workspace, streaming agent console and evidence viewer ship now.
+> this deployment.
+
+> **Signed reports ship.** A case report is a PAdES-signed PDF carrying a SHA-256
+> manifest of the evidence and a provenance appendix — every finding resolved to its
+> analyzer, its score against its own threshold, the evidence digest, the analyzer
+> version, who recorded it, and which human approved each change the agent made.
+> There is **no unsigned mode**: with no signing key configured the endpoint refuses
+> rather than handing back a PDF that carries no integrity claim. Altering one byte
+> of a signed report is detected — swept at 82 positions across the signed ranges,
+> all detected. Two limits are stated rather than glossed: a baseline-B signature does
+> not independently establish *when* signing happened, and it does not establish *who*
+> signed it to anyone who has not been given the signer's certificate.
 
 ## Monorepo layout
 
@@ -33,7 +43,8 @@ memory).
 | `backend/` | FastAPI API gateway (auth, REST, WebSocket, OpenAPI) |
 | `backend/app/agent/` | Autonomous agent: graph, tools, provenance guard, memory, HITL |
 | `backend/workers/` | Analysis workers (Dramatiq; four analyzers registered, see `docs/runbook.md`) |
-| `frontend/` | Next.js (App Router, TypeScript, Tailwind v4); case workspace, agent console, evidence viewer |
+| `frontend/` | Next.js (App Router, TypeScript, Tailwind v4); case workspace, agent console, evidence viewer, report download and signature check |
+| `backend/app/reports/` | Signed report generation (PAdES), the evidence manifest, and the provenance appendix |
 | `infra/` | Docker Compose, deployment, observability configs |
 | `docs/` | Architecture, runbooks, threat model, admin guide |
 | `tests/` | Cross-cutting / E2E test assets |
