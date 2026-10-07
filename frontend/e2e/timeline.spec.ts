@@ -10,45 +10,16 @@
  * disagreement between the TypeScript interface and the API — a mock built from the
  * interface would have agreed with the interface and passed.
  *
- * Fixtures are created with `fetch` *inside the page*, not Playwright's `request`
- * fixture: the session lives in an HttpOnly cookie, and cookie-authenticated writes
- * need the CSRF header. Running in the page gets both for free and keeps to the rule
- * the rest of this suite follows — go through the same origin the user does.
+ * Fixtures are created against the API with a real bearer token, while the timeline
+ * itself is read as a signed-in user in a browser. They cannot both go through the
+ * page: Next's route handlers do not expose the create endpoints, because mutations
+ * are server actions with no HTTP surface. An earlier version posted to
+ * `/api/cases` from inside the page and kept trying to parse the app's own 404 page.
  */
-import { expect, test, type Page } from "@playwright/test";
-import { signInOnce } from "./helpers";
+import { expect, test, type APIRequestContext } from "@playwright/test";
+import { CREDENTIALS, signInOnce } from "./helpers";
 
-interface Posted {
-  ok: boolean;
-  status: number;
-  /** Raw response text. Parsed by `postJson`, never assumed to be JSON. */
-  body: string;
-}
-
-/** POST through the app's own proxy, from inside the signed-in page. */
-async function post(page: Page, path: string, payload: unknown): Promise<Posted> {
-  // One object rather than a positional pair: `page.evaluate` serialises its
-  // argument, and a tuple of two values types as `unknown` per element, which pushes
-  // casts into the callback. An object keeps both fields typed.
-  return page.evaluate(
-    async ({ url, body }: { url: string; body: string }) => {
-      const csrf = document.cookie
-        .split("; ")
-        .find((c) => c.startsWith("csrf_token="))
-        ?.slice("csrf_token=".length);
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...(csrf ? { "x-csrf-token": decodeURIComponent(csrf) } : {}),
-        },
-        body,
-      });
-      return { ok: response.ok, status: response.status, body: await response.text() };
-    },
-    { url: path, body: JSON.stringify(payload) },
-  );
-}
+const API_URL = process.env.FORENSIGHT_API ?? "http://localhost:8000";
 
 interface PostedJson {
   ok: boolean;
@@ -63,53 +34,85 @@ interface PostedJson {
   body: Record<string, unknown> | string;
 }
 
+/**
+ * A bearer token from a real login, so fixture data goes through the same
+ * authentication and RBAC path production traffic does.
+ *
+ * Cached across the file. The auth rate limiter allows five attempts a minute, and
+ * three tests each logging in — plus `signInOnce` driving the real form — trips it
+ * and turns a green suite into a 429 on the login step, which looks nothing like the
+ * bug anyone is hunting. This is the same reason `signInOnce` exists.
+ */
+let cachedToken: Promise<string> | null = null;
+
+function token(request: APIRequestContext): Promise<string> {
+  cachedToken ??= (async () => {
+    const response = await request.post(`${API_URL}/auth/login`, {
+      data: { email: CREDENTIALS.email, password: CREDENTIALS.password },
+    });
+    expect(response.ok(), `login failed: ${response.status()}`).toBe(true);
+    return (await response.json()).access_token as string;
+  })();
+  return cachedToken;
+}
+
 async function postJson(
-  page: Page,
+  request: APIRequestContext,
+  bearer: string,
   path: string,
   payload: unknown,
 ): Promise<PostedJson> {
-  const result = await post(page, path, payload);
+  const response = await request.post(`${API_URL}${path}`, {
+    headers: { Authorization: `Bearer ${bearer}` },
+    data: payload,
+  });
+  const text = await response.text();
   try {
-    const parsed: unknown = JSON.parse(result.body);
+    const parsed: unknown = JSON.parse(text);
     if (parsed && typeof parsed === "object") {
       return {
-        ok: result.ok,
-        status: result.status,
+        ok: response.ok(),
+        status: response.status(),
         body: parsed as Record<string, unknown>,
       };
     }
   } catch {
     // Fall through and hand back the text.
   }
-  return { ok: result.ok, status: result.status, body: result.body };
+  return { ok: response.ok(), status: response.status(), body: text };
+}
+
+async function newCase(request: APIRequestContext, bearer: string, title: string): Promise<string> {
+  const created = await postJson(request, bearer, "/cases", {
+    title,
+    number: `E2E-${title.replace(/\W+/g, "").slice(0, 8).toUpperCase()}-${Date.now() % 100000}`,
+  });
+  expect(created.ok, `case creation failed (${created.status}): ${String(created.body).slice(0, 200)}`).toBe(
+    true,
+  );
+  return String((created.body as { id: unknown }).id);
 }
 
 test.describe("timeline", () => {
   test.beforeEach(async ({ page }) => {
     await signInOnce(page);
-    await page.goto("/cases");
   });
 
   test("an event with no known time renders instead of crashing the tab", async ({
     page,
+    request,
   }) => {
-    const created = await postJson(page, "/api/cases", { title: "Timeline null test" });
-    expect(
-      created.ok,
-      `case creation failed: ${String(created.body).slice(0, 200)}`,
-    ).toBe(true);
-    const caseId = String((created.body as { id?: unknown }).id);
+    const bearer = await token(request);
+    const caseId = await newCase(request, bearer, "Timeline null");
 
     // `occurred_at` is omitted deliberately — the schema allows it, and that is the
     // state which used to throw.
-    const event = await postJson(page, `/api/cases/${caseId}/timeline`, {
+    const event = await postJson(request, bearer, `/cases/${caseId}/timeline`, {
       label: "event with no known time",
       uncertain: true,
       source_ref: "CUSTODY-1",
     });
-    expect(event.ok, `timeline post failed: ${String(event.body).slice(0, 200)}`).toBe(
-      true,
-    );
+    expect(event.ok, `timeline post failed: ${String(event.body).slice(0, 200)}`).toBe(true);
     expect((event.body as { occurred_at?: unknown }).occurred_at).toBeNull();
 
     const pageErrors: string[] = [];
@@ -131,14 +134,11 @@ test.describe("timeline", () => {
     expect(pageErrors).toEqual([]);
   });
 
-  test("dated events render their timestamp", async ({ page }) => {
-    const created = await postJson(page, "/api/cases", {
-      title: "Timeline dated test",
-    });
-    expect(created.ok).toBe(true);
-    const caseId = String((created.body as { id?: unknown }).id);
+  test("dated events render their timestamp", async ({ page, request }) => {
+    const bearer = await token(request);
+    const caseId = await newCase(request, bearer, "Timeline dated");
 
-    await postJson(page, `/api/cases/${caseId}/timeline`, {
+    await postJson(request, bearer, `/cases/${caseId}/timeline`, {
       label: "dated event",
       occurred_at: "2026-04-01T09:30:00Z",
     });
@@ -148,5 +148,37 @@ test.describe("timeline", () => {
     await expect(page.getByText("dated event")).toBeVisible();
     // Not the literal "time unknown" fallback, and no crash on a valid timestamp.
     await expect(page.getByText("time unknown")).toHaveCount(0);
+  });
+
+  test("an uploaded file appears as a derived entry, labelled as derived", async ({
+    page,
+    request,
+  }) => {
+    // The gap this closes: the tab used to be permanently empty, because nothing
+    // derived events from the case and its empty state claimed otherwise.
+    const bearer = await token(request);
+    const caseId = await newCase(request, bearer, "Timeline derived");
+
+    const upload = await request.post(`${API_URL}/cases/${caseId}/evidence`, {
+      headers: { Authorization: `Bearer ${bearer}` },
+      multipart: {
+        file: {
+          name: "photo.jpg",
+          mimeType: "image/jpeg",
+          buffer: Buffer.from(
+            "ffd8ffe000104a46494600010100000100010000ffdb004300ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffc00011080001000103012200021101031101ffc4001f0000010501010101010100000000000000000102030405060708090a0b",
+            "hex",
+          ),
+        },
+      },
+    });
+    expect(upload.ok(), `upload failed (${upload.status()})`).toBe(true);
+
+    await page.goto(`/cases/${caseId}`);
+    await page.getByRole("tab", { name: /Timeline/ }).click();
+
+    await expect(page.getByText(/Evidence received/)).toBeVisible();
+    // And it says it is derived, so nobody reads a processing time as an event time.
+    await expect(page.getByText("derived").first()).toBeVisible();
   });
 });

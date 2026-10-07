@@ -1660,7 +1660,29 @@ that might not work — the same argument as the CI security scanners.
       entry is never marked `uncertain` (that would dilute the flag), ids are stable
       across requests (React keys by them, so a regenerated id remounts the list and
       drops focus), and an undated entry stays visible rather than being dropped.
-- [ ] FI-2 Duplicate / near-duplicate evidence detection
+- [ ] FI-2 Duplicate / near-duplicate evidence detection. **Exact duplicates are
+      already handled at ingest** — `IngestService.ingest` looks up the content hash
+      within the case, records a `upload-dedupe` custody row and an audit entry, and
+      returns the existing evidence. So the half of this that is "detect a duplicate"
+      ships; what is missing is *near*-duplicate detection.
+      **Measured before building, and the obvious approach does not work on the
+      fixtures this repository actually has.** Difference hashing (dHash, 64-bit,
+      pure numpy, no weights) over `tests/assets/*.jpg`: the only same-person pair,
+      `turing_a`/`turing_b`, scores a Hamming distance of **31** — *worse* than 15 of
+      the 27 different-person pairs, which range 25–38. Not separated.
+      **The reason is a category error, and it is worth writing down.** `turing_a` and
+      `turing_b` are two photographs of one person; they are not near-duplicate
+      *images*. dHash measures perceptual similarity of the picture, which is the
+      right target and the wrong pairing — and note that `image-prnu` already answers
+      the "same camera" question honestly, which is a different and better-posed
+      question. Detecting near-duplicates needs genuinely near-duplicate pairs: the
+      same image resized, re-encoded, cropped or re-compressed. This repository has
+      none, and manufacturing them from its own fixtures would mean asserting ground
+      truth I created, which is weaker evidence than it sounds.
+      **Not built yet.** The blocker is fixture design, not technique, and it is a
+      smaller blocker than the Phase 9 licence wall — generated pairs are legitimate
+      here because a deterministic algorithm's correctness does not depend on the
+      pairs being real photographs.
 - [ ] FI-3 Redaction tool for exports
 - [ ] FI-4 Multi-case entity linking
 - [ ] FI-5 Agent second-opinion reviewer mode
