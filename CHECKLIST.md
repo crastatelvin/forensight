@@ -1057,7 +1057,13 @@ be made deliberately rather than absorbed.
       hand-written capability list and the hand-written field serialisation — and
       neither was visible from the tests that existed.
 **Exit**
-- [ ] P9.E catalog complete + honestly tiered; every AI module deterministic + sourced
+- [~] P9.E **Half met, and the half that is not is named.** The catalogue is complete
+      for everything this platform scores and **honestly tiered** — Tier B's label
+      served from the backend so the interface cannot contradict it, Tier C a refusal
+      with no scoring path, every AI module deterministic and digest-pinned with
+      golden tests against real bytes. The remaining half is six analyzers (B1–B6) and
+      their three test cases, all blocked on labelled fixtures, recorded with reasons
+      at P9.B1–B6.
 
 ---
 
