@@ -281,6 +281,39 @@ unaffected; the case file remains the record.
 The case id is deliberately kept in the ZIP manifest — a manifest without it cannot be
 matched back to anything, and it identifies a case rather than a person.
 
+### Comparing two agent runs
+
+```bash
+curl -s "localhost:8000/agent/cases/$CASE/second-opinion?first=$RUN_A&second=$RUN_B" \
+  -H "Authorization: Bearer $TOKEN"
+```
+
+Returns both runs and a `comparison` naming where they diverge.
+
+**This is not corroboration, and the response says so unconditionally.** Both runs go
+through the same model and the same provider, so agreement between them is evidence
+about the model's *consistency* and nothing about whether either conclusion is right —
+a confidently wrong model is consistently wrong. Independent corroboration needs an
+independent source: a different model, a different provider, or a human who worked the
+case independently.
+
+What is useful is the **divergence**. A claim present in one run and absent from the
+other is either a gap in the first or noise in the second, and either way it is where
+a human should look. Divergence kinds:
+
+| kind | means |
+|---|---|
+| `only_in_first` / `only_in_second` | one run reached a conclusion the other did not — **the signal** |
+| `different_basis` | both said it, resting on different analyzer results; reads as agreement in a summary and is not |
+| `unsubstantiated` | a claim with no citations at all; `ProvenanceGuard` should make this impossible, so seeing it means the guard was bypassed |
+
+Claims are matched on **the set of result ids behind them**, not their prose — two runs
+reaching one conclusion word it differently, and matching on text would report every
+paraphrase as a disagreement and bury the real ones.
+
+No run is ranked and no winner is declared. Both runs must belong to the case named in
+the path; anything else is a 404.
+
 ### Seeding a parked approval
 
 To exercise the HITL gate by hand — or to reproduce what the browser test arranges —

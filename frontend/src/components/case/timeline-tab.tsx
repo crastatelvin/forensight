@@ -48,7 +48,7 @@ export function TimelineTab({ events }: { events: TimelineEventRead[] | null }) 
         {derived > 0 ? (
           <p className="mb-4 text-[11px] leading-relaxed text-tertiary">
             <strong className="font-medium text-secondary">{derived} derived</strong>{" "}
-            entries come from this case's own records — evidence received, evidence
+            entries come from this case&apos;s own records — evidence received, evidence
             accessed, analyses completed, findings recorded. Their timestamps are when
             the platform recorded each step, not when it happened in the world. Entries
             without a badge were entered by an examiner.

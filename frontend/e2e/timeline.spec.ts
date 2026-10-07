@@ -82,14 +82,19 @@ async function postJson(
   return { ok: response.ok(), status: response.status(), body: text };
 }
 
-async function newCase(request: APIRequestContext, bearer: string, title: string): Promise<string> {
+async function newCase(
+  request: APIRequestContext,
+  bearer: string,
+  title: string,
+): Promise<string> {
   const created = await postJson(request, bearer, "/cases", {
     title,
     number: `E2E-${title.replace(/\W+/g, "").slice(0, 8).toUpperCase()}-${Date.now() % 100000}`,
   });
-  expect(created.ok, `case creation failed (${created.status}): ${String(created.body).slice(0, 200)}`).toBe(
-    true,
-  );
+  expect(
+    created.ok,
+    `case creation failed (${created.status}): ${String(created.body).slice(0, 200)}`,
+  ).toBe(true);
   return String((created.body as { id: unknown }).id);
 }
 
@@ -112,7 +117,9 @@ test.describe("timeline", () => {
       uncertain: true,
       source_ref: "CUSTODY-1",
     });
-    expect(event.ok, `timeline post failed: ${String(event.body).slice(0, 200)}`).toBe(true);
+    expect(event.ok, `timeline post failed: ${String(event.body).slice(0, 200)}`).toBe(
+      true,
+    );
     expect((event.body as { occurred_at?: unknown }).occurred_at).toBeNull();
 
     const pageErrors: string[] = [];

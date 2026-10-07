@@ -51,6 +51,21 @@ memory).
 > all detected. Two limits are stated rather than glossed: a baseline-B signature does
 > not independently establish *when* signing happened, and it does not establish *who*
 > signed it to anyone who has not been given the signer's certificate.
+>
+> **Investigator tooling ships, and it refuses the readings it cannot support.** The
+> case timeline assembles itself from the case's own records — derived on read, so it
+> can never become a permanent record of what the code thought, and every entry says
+> whether its timestamp is when the *platform recorded* a step or when it happened in
+> the world. `near-duplicate` groups images that look alike by difference hash and
+> publishes its own ceiling with them: it tolerates about a 5% crop and cannot separate
+> a duplicate beyond ~10%, and its "no match" reading says *not shown to match* rather
+> than *shown not to match*. Exports redact by named field and by literal string —
+> never by pattern — and every export is **verified against the values it actually
+> removed** before being sent, because a redaction that silently failed is worse than
+> none. Cross-case entity links surface the same person or device in two
+> investigations, scoped in SQL so an unauthorised case is never even read. Agent
+> second-opinion review compares two runs and names where they **disagree** — and is
+> explicit that agreement between two runs of the same model is not corroboration.
 
 ## Monorepo layout
 
