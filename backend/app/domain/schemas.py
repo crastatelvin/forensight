@@ -116,12 +116,36 @@ class CaseAssign(BaseModel):
 class FindingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=512)
     body: str = Field(default="", max_length=20000)
+    #: Analyzer results this finding rests on.
+    #:
+    #: Optional, and a finding without them is created rather than refused — an
+    #: examiner records an observation before they have the analysis to back it. But
+    #: an id that does not resolve on this case is **rejected with a 422** rather
+    #: than stored: a citation pointing at nothing would render in a signed report as
+    #: if it pointed at something.
+    citations: list[uuid.UUID] = Field(default_factory=list, max_length=50)
 
 
 class FindingUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=512)
     body: str | None = Field(default=None, max_length=20000)
     status: str | None = Field(default=None, max_length=32)
+
+
+class FindingCitationRead(BaseModel):
+    """One cited result, as the UI and the report both render it."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    result_id: uuid.UUID
+    evidence_id: uuid.UUID
+    module: str
+    score: float
+    threshold: float
+    tier: str
+    model_version: str
+    not_applicable: bool
+    cited_at: datetime
 
 
 class FindingRead(BaseModel):
@@ -134,6 +158,14 @@ class FindingRead(BaseModel):
     status: str
     created_by: uuid.UUID
     created_at: datetime
+    #: Present so a finding's sourcing is visible wherever the finding is, rather
+    #: than only inside a generated PDF. An unsourced finding that looks identical
+    #: to a sourced one is the problem; the field is what lets a caller see it.
+    citations: list[FindingCitationRead] = Field(default_factory=list)
+
+    @property
+    def is_sourced(self) -> bool:
+        return bool(self.citations)
 
 
 class EntityCreate(BaseModel):

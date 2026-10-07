@@ -330,6 +330,24 @@ async def write_memory(ctx: ToolContext, args: WriteMemoryArgs) -> dict[str, Any
 class UpdateFindingArgs(BaseModel):
     title: str = Field(min_length=1, max_length=512)
     body: str = Field(default="", max_length=20000)
+    #: Analyzer result ids this finding rests on, as recorded in `detail.result_id`
+    #: by `run_analysis` or `list_results`.
+    #:
+    #: Optional, and a finding without it is recorded rather than refused. The model
+    #: has to be able to write down an observation before it can find the results
+    #: backing it. What must not happen is the opposite: a citation that does not
+    #: resolve being quietly dropped, leaving a finding that looks sourced and is
+    #: not. Unresolvable ids come back in `rejected_citations` so the agent can see
+    #: which of its references missed and try again.
+    citations: list[str] = Field(
+        default_factory=list,
+        max_length=50,
+        description=(
+            "Ids of the analyzer results this finding rests on. Get them from "
+            "run_analysis or list_results. Omit if the finding rests on judgement "
+            "rather than analysis -- it will be recorded as unsourced."
+        ),
+    )
 
 
 @define_tool(
@@ -345,7 +363,7 @@ async def update_case_finding(ctx: ToolContext, args: UpdateFindingArgs) -> dict
     from app.agent.repository import record_tool_call  # noqa: F401  (audit parity)
     from app.analysis.repository import list_results_for_case
     from app.domain.repository import append_audit
-    from app.domain.workflow_repo import create_finding
+    from app.domain.workflow_repo import cite_results, create_finding
 
     finding = await create_finding(
         ctx.session,
@@ -354,8 +372,26 @@ async def update_case_finding(ctx: ToolContext, args: UpdateFindingArgs) -> dict
         body=args.body,
         created_by=ctx.actor_id,
     )
-    # A finding with no analyzer result behind it is the exact thing P5.B8 exists
-    # to stop, so record how much of it is actually sourced.
+
+    # Which results this finding rests on — the thing a signed report has to print.
+    # Previously only the *number* of results on the case was recorded, which said
+    # nothing about this finding's warrant and could not be reported on at all.
+    parsed: list[uuid.UUID] = []
+    unparseable: list[str] = []
+    for raw in args.citations:
+        try:
+            parsed.append(uuid.UUID(raw))
+        except (ValueError, AttributeError, TypeError):
+            # Invented ids are the common case, not an edge case: a small model given
+            # "cite your sources" will produce `evidence_id="attached_image"`. Kept as
+            # text and reported back rather than raising, so the agent learns which
+            # reference failed instead of the whole call failing.
+            unparseable.append(raw[:80])
+
+    citations, rejected = await cite_results(
+        ctx.session, finding=finding, case_id=ctx.case_id, result_ids=parsed
+    )
+
     results = await list_results_for_case(ctx.session, ctx.case_id, limit=100)
     await append_audit(
         ctx.session,
@@ -365,13 +401,34 @@ async def update_case_finding(ctx: ToolContext, args: UpdateFindingArgs) -> dict
         payload={
             "run_id": ctx.run_id,
             "title": finding.title,
+            "cited_result_ids": [str(c.result_id) for c in citations],
+            "rejected_citation_ids": [str(r) for r in rejected],
+            "unparseable_citations": unparseable,
             "available_results": len(results),
         },
     )
     return {
         "finding_id": str(finding.id),
         "status": finding.status,
+        "cited_result_ids": [str(c.result_id) for c in citations],
+        # Reported rather than swallowed: a citation that did not resolve must not
+        # leave the finding looking sourced.
+        "rejected_citation_ids": [str(r) for r in rejected],
+        "unparseable_citations": unparseable,
         "available_results": len(results),
+        "sourced": bool(citations),
+        **(
+            {}
+            if citations
+            else {
+                "note": (
+                    "This finding cites no analyzer result and is recorded as "
+                    "unsourced. It will appear in any signed report marked NOT "
+                    "SOURCED. Run an analyzer and pass its result id to make it "
+                    "sourced."
+                )
+            }
+        ),
     }
 
 

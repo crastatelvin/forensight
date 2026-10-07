@@ -32,6 +32,7 @@ from app.config import Settings, get_settings
 from app.domain.router import router as cases_router
 from app.health import gather_readiness
 from app.observability import MetricsMiddleware, configure_logging, metrics_router
+from app.reports.router import router as reports_router
 
 logger = logging.getLogger("forensight")
 
@@ -186,6 +187,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(overlay_router)
     app.include_router(agent_router)
     app.include_router(metrics_router)
+    app.include_router(reports_router)
 
     # A unique-constraint violation is a client mistake, not a server fault.
     #

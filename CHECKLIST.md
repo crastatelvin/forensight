@@ -625,6 +625,48 @@ MinIO, a real worker — not by any test:
 
 ---
 
+**Bugs found while building signed reports (P8)**
+
+All found by generating a real report from a real case and then trying to verify it,
+which is the first moment most of these become visible.
+
+- **`skip_diff=True` silently disabled the verification it was passed for.**
+  pyHanko's flag suppresses the document/signature diff — the one check the module
+  exists to perform. It was passed because it reads like "don't be strict", and a
+  modified document could come back reporting itself intact.
+- **`intact` was not sufficient on its own.** Editing the report's content leaves
+  `intact` False; corrupting the *signature* leaves `intact` True and only `valid`
+  False. Both are now required, because they catch different attacks.
+- **A corrupted signature raised instead of being reported.** A byte flipped inside
+  the signature value left pyHanko unable to identify the certificate, and it raised
+  `SignatureValidationError` — so "this document was tampered with" became a 500. A
+  verifier that errors on precisely the documents it exists to catch is worse than
+  none, because the failure reads as a fault to retry rather than a finding to
+  believe.
+- **`load_pkcs12` returns `None` for some unreadable archives** rather than raising,
+  which wrapped a `None` signer and failed later at signing time with an attribute
+  error on `None` — pointing at the report builder instead of at the key.
+- **`Finding` could not be sourced at all**, from either the API or the agent. The
+  agent recorded a *count* of results on the case, which says nothing about what its
+  finding rests on, and a count cannot be put in a provenance appendix. Fixed with
+  `FindingCitation` and a validation rule that refuses rather than drops.
+- **`_scoped_case` existed as three private copies** in the domain, agent and
+  analysis routers, and a fourth was about to be written for reports. Identical
+  behaviour — not yet drifted — but three copies of an authorisation rule is three
+  places for one of them to be edited and missed, and the missed one is the one that
+  leaks. Now one `scoped_case` in `app/domain/access.py`.
+- **The manifest digest rendered across a page break**, its label at the foot of one
+  page and its value on the next. A value the report explicitly invites you to
+  recompute should not be split. Digests now print as explicit 16-character lines
+  inside a keep-together, so a wrap is visible rather than ambiguous.
+- **The cover read "1 of the 3 findings … rest … are marked".** A legal document
+  that cannot count.
+- **`pdftotext` spliced table columns into digests.** The first digest assertion
+  flattened all whitespace, which merged the *next column's* text into the middle of a
+  64-character hash and reported a correct report as missing its digests. The test was
+  wrong, not the report — worth recording because the same mistake would have been
+  made again by anyone writing the next assertion.
+
 **Bugs found while building the frontend**
 
 All found by driving the real stack. The first three are backend defects the
@@ -710,18 +752,109 @@ UI always has.
 
 ## Phase 8 — Reports (signed) + provenance appendix
 **Build**
-- [ ] P8.B1 WeasyPrint/ReportLab PDF; signed PDF (PAdES) + SHA-256 manifest
-- [ ] P8.B2 Provenance appendix (evidence id, analyzer, score, threshold, version, timestamp, operator, HITL approvals)
-- [ ] P8.B3 Honesty clause + tier disclaimers embedded in report
-- [ ] P8.B4 Report export via object-id download (authz) + audit + chain-of-custody
+- [x] P8.B1 **ReportLab, not WeasyPrint**, and the reason is the container: WeasyPrint
+      needs Cairo, Pango and a stack of system libraries, and this ships as a slim
+      Python image. ReportLab is pip-only and Pillow was already a dependency, so a
+      report is buildable anywhere the API already runs. PAdES baseline-B via
+      **pyHanko**, signed incrementally so the original bytes are preserved verbatim.
+      **No unsigned mode**: the endpoint returns 503 with the provisioning command
+      rather than emitting a PDF that carries no integrity claim, because an unsigned
+      report looks identical to a signed one until someone relies on the difference.
+      Baseline-B rather than B-T because a document timestamp needs a trusted
+      timestamp authority, which a self-hosted lab has no reason to depend on — and
+      the report says so on its face rather than omitting the field.
+      `scripts/provision_signer.py` creates the key into a named docker volume, not
+      into the image or a bind mount, so it never appears in a layer or on a host.
+- [x] P8.B2 Provenance appendix: chain of custody, every agent run, every tool call
+      with its argument and result hashes, and separately the calls that only ran
+      **because a person approved them** — hashed to bind the record to what was
+      approved rather than to a description of it. A finding written by the agent is
+      a change someone authorised, and the report shows who authorised it.
+      **Required a schema change first.** `Finding` had no link to evidence or
+      results; the agent recorded `available_results`, a *count* of results on the
+      case, which says nothing about what that particular finding rests on. Added
+      `FindingCitation` (migration `0007_reports`), which snapshots module, score,
+      threshold, tier, model version and the `not_applicable` refusal at citation
+      time — a snapshot rather than a join, because analysis results get re-run and
+      superseded, and a report generated later must describe the result the finding
+      was drawn from.
+- [x] P8.B3 The honesty clause reaches into the typesetting. A finding with no
+      citations prints under **NOT SOURCED**, set apart from sourced findings, and is
+      never laid out in a way that implies analysis backs it. The cover counts sourced
+      and unsourced separately, because "3 findings" is not enough. Every score
+      carries its threshold, its analyzer version and that analyzer's own disclaimer.
+      A result the analyzer **refused to measure** prints as "could not be measured",
+      never as `0.0000`. Tier-C results appear only under *Attached laboratory
+      results*, in their own section, never among the findings — an external lab's
+      conclusion is not this system's finding, and listing it among them would
+      transfer authorship. A structural test asserts no analyzer claims Tier C, since
+      the plan cuts those domains as AI analyzers.
+- [~] P8.B4 `GET /reports/cases/{id}.pdf` and `POST /reports/verify`. Authz reuses
+      the **one** `scoped_case` helper: it existed as three private copies across the
+      domain, agent and analysis routers, and a fourth was about to be written. Three
+      copies of an authorisation rule is three places for one of them to be edited and
+      missed, and the missed one is the one that leaks. Not drifted yet — the argument
+      is that they were waiting to.
+      Audit records generation with the manifest digest, the signer subject, the
+      certificate fingerprint and the signed PDF's own SHA-256, so a report can be
+      identified and re-checked later. **No chain-of-custody entry**, deliberately:
+      generating a report is a *read*, and a custody entry would claim the evidence
+      moved. Reports are generated, never stored — the verify endpoint takes the PDF
+      back from the reader, which is what an examiner actually has.
 **Test cases**
-- [ ] T8.1 PDF signature verifies; alteration breaks signature
-- [ ] T8.2 Manifest SHA-256 matches referenced evidence/results
-- [ ] T8.3 Provenance appendix full lineage per finding (no unsourced claim)
-- [ ] T8.4 Tier disclaimers present; Tier-C only as attached lab results
-- [ ] T8.5 Report generation recorded in audit + chain-of-custody
+- [x] T8.1 Measured, not asserted. **82 single-byte flips swept across both signed
+      ranges: all 82 detected.** A sample of three offsets passed while a flip
+      elsewhere went unnoticed, because the sample landed outside the signed content —
+      the first version of this test was measuring the wrong thing.
+      Two findings worth recording, both from measuring rather than reasoning:
+      - **`skip_diff=True` was silently disabling the whole check.** pyHanko's flag
+        suppresses the document/signature diff, which is the one thing this module
+        exists to do. Removed; a modified document had been able to come back looking
+        intact.
+      - **`intact` alone is not sufficient.** Editing the content leaves `intact`
+        False; corrupting the *signature* leaves `intact` True and only `valid` False.
+        Both are now required.
+      - **A corrupted signature used to raise.** A byte flipped inside the signature
+        value left pyHanko unable to identify the certificate, and it raised — turning
+        "this was tampered with" into a 500. A verifier that errors on exactly the
+        documents it exists to catch is worse than none, because the failure reads as
+        a fault to retry rather than a finding to believe.
+      **Known limitation, measured and recorded in the module docstring:** the
+      `/Contents` blob is outside the signed range, so altering the signature's own
+      bytes leaves the document digest intact. Detection there depends on pyHanko
+      re-verifying the CMS, and on 0.37 it catches 40 of 61 single-byte flips. A trust
+      root made no difference. A test re-measures this so a pyHanko upgrade that
+      closes it surfaces as a test change rather than passing unnoticed.
+- [x] T8.2 The manifest carries every file's recorded SHA-256, and a digest over all
+      rows sorted canonically. Over **all** evidence, not only the cited subset: a
+      digest over the cited files would let an uncited file be added without the
+      manifest changing, so the manifest would attest to an evidence set the case no
+      longer has. Order-independent, so two labs exporting the same evidence get the
+      same digest. Printed as explicit 16-character lines inside a keep-together —
+      the digest originally rendered at the foot of one page and resumed on the next,
+      and a value the report invites you to recompute should not be split across a
+      page break.
+- [x] T8.3 Every finding resolves to its analyzer, its score against its own threshold,
+      the evidence file and that file's digest, the analyzer version, and the
+      analyzer's own limitation. A citation that does not resolve is **refused, not
+      stored**: the API answers 422 and the agent tool gets the rejected ids back so it
+      can correct them. Silently dropping one would leave a finding that looks sourced
+      and is not. A result belonging to another case is rejected too — the only thing
+      stopping a finding on one case citing provenance that exists solely on another.
+- [x] T8.4 Tier disclaimers present; Tier-C only as attached lab results
+- [~] T8.5 Recorded in the audit chain with the manifest digest, signer subject,
+      certificate fingerprint and the signed PDF's SHA-256. **Not** a chain-of-custody
+      entry, and that is a decision rather than an omission: a report is a read of the
+      case, so a custody entry would assert the evidence moved when it did not. See
+      P8.B4.
 **Exit**
-- [ ] P8.E defensible, tamper-evident, fully-sourced reports
+- [~] P8.E Tamper-evidence is measured (T8.1) and sourcing is enforced (T8.3), but
+      one thing is genuinely absent: **long-term validation (PAdES-LT)**. A baseline-B
+      signature proves the bytes are unchanged; it does not survive the signing
+      certificate's expiry, and a report produced by a lab whose certificate later
+      lapses has no archival-timestamp chain to fall back on. That needs a
+      document-timestamp authority or an archival timestamp, which is a deployment
+      decision rather than a code one — hence partial rather than ticked.
 
 ---
 

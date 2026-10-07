@@ -33,20 +33,13 @@ from app.auth.rbac import CurrentUser, get_current_user, require_roles
 from app.auth.roles import MUTATING_ROLES
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.domain.access import visible_case
-from app.domain.models import Case, Evidence
+from app.domain.access import scoped_case, visible_case
+from app.domain.models import Evidence
 from app.domain.repository import append_audit
 
 router = APIRouter(tags=["analysis"])
 
 _MAX_PAGE = 200
-
-
-async def _scoped_case(session: AsyncSession, case_id: uuid.UUID, user: CurrentUser) -> Case:
-    case = await visible_case(session, case_id, user)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-    return case
 
 
 @router.get("/modules", response_model=list[ModuleRead])
@@ -93,7 +86,7 @@ async def submit_analysis(
     Idempotent: resubmitting identical work returns the existing job (200-style
     reuse via `created`) instead of recomputing (P4.B3/T4.1).
     """
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     evidence = await session.get(Evidence, payload.evidence_id)
     if evidence is None or evidence.case_id != case.id:
         raise HTTPException(status_code=404, detail="Evidence not found")
@@ -151,7 +144,7 @@ async def list_analyses(
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[AnalysisJobRead]:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     rows = await list_jobs_for_case(session, case.id, limit=limit, offset=offset)
     return [AnalysisJobRead.model_validate(r) for r in rows]
 
@@ -164,7 +157,7 @@ async def list_case_results(
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE)] = 50,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[AnalysisResultRead]:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     rows = await list_results_for_case(session, case.id, limit=limit, offset=offset)
     return [AnalysisResultRead.model_validate(r) for r in rows]
 
@@ -223,7 +216,7 @@ async def run_job_now(
     job = await get_job(session, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Analysis job not found")
-    case = await _scoped_case(session, job.case_id, user)
+    case = await scoped_case(session, job.case_id, user)
 
     from app.analysis.models_registry import ModelStore
 

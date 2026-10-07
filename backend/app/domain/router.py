@@ -34,11 +34,11 @@ from app.auth.roles import MUTATING_ROLES, Role
 from app.auth.service import mutation_rate_limit, read_rate_limit
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.domain.access import visible_case
+from app.domain.access import scoped_case, visible_case
 from app.domain.antivirus import ClamAVScanner, InfectedFileError, NoopScanner, Scanner
 from app.domain.exports import export_csv, export_json, export_zip
 from app.domain.ingest import EvidenceValidationError
-from app.domain.models import AuditLog, Case, Evidence
+from app.domain.models import AuditLog, Case, Evidence, Finding
 from app.domain.notifications import Notifier
 from app.domain.repository import (
     append_audit,
@@ -62,6 +62,7 @@ from app.domain.schemas import (
     EntityCreate,
     EntityRead,
     EvidenceRead,
+    FindingCitationRead,
     FindingCreate,
     FindingRead,
     FindingUpdate,
@@ -73,6 +74,8 @@ from app.domain.service import IngestService
 from app.domain.state_machine import IllegalTransitionError, assert_transition
 from app.domain.storage import ObjectStore
 from app.domain.workflow_repo import (
+    citations_for_findings,
+    cite_results,
     create_entity,
     create_finding,
     create_timeline_event,
@@ -116,18 +119,6 @@ def _ingest_service(settings: Settings) -> IngestService:
 
 def _limit(limit: int) -> int:
     return max(1, min(limit, _MAX_PAGE))
-
-
-async def _scoped_case(session: AsyncSession, case_id: uuid.UUID, user: CurrentUser) -> Case:
-    """Load a case the user is allowed to see, or 404.
-
-    A case that exists but belongs to someone else is reported as 404, not 403:
-    a 403 would confirm the id is real to a user with no right to know that.
-    """
-    case = await visible_case(session, case_id, user)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-    return case
 
 
 async def _scoped_evidence(
@@ -237,7 +228,7 @@ async def read_case(  # noqa: D401 - must stay after the literal paths above
     user: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CaseRead:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     return case_to_read(case)
 
 
@@ -248,7 +239,7 @@ async def update_case(
     user: Annotated[CurrentUser, Depends(require_roles(*MUTATING_ROLES))],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CaseRead:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         return case_to_read(case)
@@ -274,7 +265,7 @@ async def transition_case(
     user: Annotated[CurrentUser, Depends(require_roles(*MUTATING_ROLES))],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CaseRead:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     try:
         assert_transition(case.status, payload.target)
     except IllegalTransitionError as exc:
@@ -316,7 +307,7 @@ async def upload_evidence(
     settings: Annotated[Settings, Depends(get_settings)],
     file: Annotated[UploadFile, File()],
 ) -> EvidenceRead:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
 
     service = _ingest_service(settings)
     try:
@@ -371,7 +362,7 @@ async def list_evidence(
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[EvidenceRead]:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     items = await list_case_evidence(session, case.id, limit=_limit(limit), offset=offset)
     return [EvidenceRead.model_validate(e) for e in items]
 
@@ -454,7 +445,7 @@ async def assign_case(
     user: Annotated[CurrentUser, Depends(require_roles(Role.ADMIN, Role.OFFICER))],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> CaseRead:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     target_user = await session.get(User, payload.assigned_to)
     if target_user is None:
         raise HTTPException(status_code=422, detail="Assignee does not exist")
@@ -490,7 +481,7 @@ async def add_finding(
     user: Annotated[CurrentUser, Depends(require_roles(*MUTATING_ROLES))],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> FindingRead:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     finding = await create_finding(
         session,
         case_id=case.id,
@@ -498,15 +489,49 @@ async def add_finding(
         body=payload.body,
         created_by=uuid.UUID(user.id),
     )
+    citations, rejected = await cite_results(
+        session, finding=finding, case_id=case.id, result_ids=payload.citations
+    )
+    if rejected:
+        # Refused rather than stored. A citation that resolved to nothing would be
+        # rendered in a signed report as a reference to a result, and a reader
+        # checking it would find nothing — the report would be making a claim about
+        # provenance that is false.
+        await session.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "these citation ids are not analyzer results on this case: "
+                + ", ".join(str(r) for r in rejected)
+            ),
+        )
     await append_audit(
         session,
         actor_id=uuid.UUID(user.id),
         action="finding.create",
         target=str(finding.id),
-        payload={"case_id": str(case.id)},
+        payload={
+            "case_id": str(case.id),
+            "cited_result_ids": [str(c.result_id) for c in citations],
+        },
     )
     await session.commit()
-    return FindingRead.model_validate(finding)
+    return await finding_read(session, finding)
+
+
+async def finding_read(session: AsyncSession, finding: Finding) -> FindingRead:
+    """A finding with its citations attached.
+
+    The citations are loaded here rather than as a SQLAlchemy relationship because a
+    finding's sourcing has to be *explicit* wherever the finding appears. A lazy
+    relationship means whether sourcing is visible depends on whether something
+    touched it, and a finding that looks sourced on one screen and unsourced on the
+    next is worse than either.
+    """
+    citations = await citations_for_findings(session, [finding.id])
+    read = FindingRead.model_validate(finding)
+    read.citations = [FindingCitationRead.model_validate(c) for c in citations.get(finding.id, [])]
+    return read
 
 
 @router.get("/{case_id}/findings", response_model=list[FindingRead])
@@ -517,8 +542,12 @@ async def get_findings(
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[FindingRead]:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     rows = await list_findings(session, case.id, limit=_limit(limit), offset=offset)
+    out: list[FindingRead] = []
+    for row in rows:
+        out.append(await finding_read(session, row))
+    return out
     return [FindingRead.model_validate(f) for f in rows]
 
 
@@ -534,7 +563,7 @@ async def edit_finding(
     user: Annotated[CurrentUser, Depends(require_roles(*MUTATING_ROLES))],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> FindingRead:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     finding = await get_finding(session, finding_id)
     if finding is None or finding.case_id != case.id:
         raise HTTPException(status_code=404, detail="Finding not found")
@@ -550,7 +579,7 @@ async def edit_finding(
         payload={"fields": sorted(changes)},
     )
     await session.commit()
-    return FindingRead.model_validate(finding)
+    return await finding_read(session, finding)
 
 
 @router.delete(
@@ -562,7 +591,7 @@ async def remove_finding(
     user: Annotated[CurrentUser, Depends(require_roles(*MUTATING_ROLES))],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     finding = await get_finding(session, finding_id)
     if finding is None or finding.case_id != case.id:
         raise HTTPException(status_code=404, detail="Finding not found")
@@ -593,7 +622,7 @@ async def add_entity(
     user: Annotated[CurrentUser, Depends(require_roles(*MUTATING_ROLES))],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> EntityRead:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     entity = await create_entity(
         session,
         case_id=case.id,
@@ -620,7 +649,7 @@ async def get_entities(
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[EntityRead]:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     rows = await list_entities(session, case.id, limit=_limit(limit), offset=offset)
     return [EntityRead.model_validate(e) for e in rows]
 
@@ -634,7 +663,7 @@ async def remove_entity(
     user: Annotated[CurrentUser, Depends(require_roles(*MUTATING_ROLES))],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     entity = await get_entity(session, entity_id)
     if entity is None or entity.case_id != case.id:
         raise HTTPException(status_code=404, detail="Entity not found")
@@ -665,7 +694,7 @@ async def add_timeline_event(
     user: Annotated[CurrentUser, Depends(require_roles(*MUTATING_ROLES))],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> TimelineEventRead:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     event = await create_timeline_event(
         session,
         case_id=case.id,
@@ -693,7 +722,7 @@ async def get_timeline(
     limit: Annotated[int, Query(ge=1, le=_MAX_PAGE)] = 200,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[TimelineEventRead]:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     rows = await list_timeline(session, case.id, limit=_limit(limit), offset=offset)
     return [TimelineEventRead.model_validate(t) for t in rows]
 
@@ -723,7 +752,7 @@ async def export_case(
     user: Annotated[CurrentUser, Depends(get_current_user)],
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> Response:
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     evidence = await list_case_evidence(session, case.id)
 
     await append_audit(

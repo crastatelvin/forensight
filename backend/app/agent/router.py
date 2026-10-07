@@ -1,6 +1,6 @@
 """Agent HTTP surface (Phase 5).
 
-Every route is case-scoped through `_scoped_case`, so an agent run is started
+Every route is case-scoped through `scoped_case`, so an agent run is started
 inside a case the caller may actually see. `run_stream` is SSE rather than
 WebSocket: the traffic is one-directional after the run starts, SSE survives
 proxies, and it needs no extra dependency.
@@ -37,20 +37,12 @@ from app.auth.rbac import CurrentUser, get_current_user, require_roles
 from app.auth.roles import MUTATING_ROLES
 from app.config import Settings, get_settings
 from app.db import get_session
-from app.domain.access import visible_case
-from app.domain.models import Case
+from app.domain.access import scoped_case, visible_case
 from app.domain.repository import append_audit
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
 _MAX_PAGE = 200
-
-
-async def _scoped_case(session: AsyncSession, case_id: uuid.UUID, user: CurrentUser) -> Case:
-    case = await visible_case(session, case_id, user)
-    if case is None:
-        raise HTTPException(status_code=404, detail="Case not found")
-    return case
 
 
 async def _scoped_run(session: AsyncSession, run_id: uuid.UUID, user: CurrentUser) -> AgentRun:
@@ -308,7 +300,7 @@ async def list_case_runs(
     Each entry carries the full run payload including claims, citations and tool
     calls, so a report built from this does not need a second round trip per run.
     """
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     runs = await list_runs(session, case.id, limit=limit)
     return [_run_payload(run, await load_state(session, run.id)) for run in runs]
 
@@ -323,7 +315,7 @@ async def start_run(
 ) -> dict[str, Any]:
     """Start an investigative run. Returns immediately; the run may pause for
     human approval."""
-    case = await _scoped_case(session, case_id, user)
+    case = await scoped_case(session, case_id, user)
     try:
         # An operator's objective is trusted input, so an injection shape here is
         # an error rather than something to sanitise away.

@@ -156,6 +156,47 @@ class Finding(Base):
     )
 
 
+class FindingCitation(Base):
+    """What a finding actually rests on.
+
+    Exists because `Finding` on its own could not support a provenance appendix.
+    The agent recorded `available_results` — a *count* of analyzer results on the
+    case — which says nothing about which of them this particular finding rests on.
+    A count is not a citation, and a report that printed it would be claiming a
+    source it had not identified.
+
+    Snapshots the analyzer's identity at citation time (module, score, threshold,
+    tier, model_version) alongside the live link. The snapshot is not duplication
+    for its own sake: analysis results are re-run and superseded, so a report
+    generated months later must describe the result the finding was drawn from, not
+    whatever now occupies that row. The live `result_id` stays so the link can be
+    followed back.
+    """
+
+    __tablename__ = "finding_citations"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    finding_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("findings.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    result_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    evidence_id: Mapped[uuid.UUID] = mapped_column(nullable=False, index=True)
+    module: Mapped[str] = mapped_column(String(64), nullable=False)
+    score: Mapped[float] = mapped_column(nullable=False)
+    threshold: Mapped[float] = mapped_column(nullable=False)
+    tier: Mapped[str] = mapped_column(String(8), nullable=False)
+    model_version: Mapped[str] = mapped_column(String(128), nullable=False)
+    #: Set when the analyzer declined to measure at all. Carried so the report can
+    #: render "cannot be measured" rather than a zero, which is the whole point of
+    #: the honesty contract surviving into a signed document.
+    not_applicable: Mapped[bool] = mapped_column(default=False, nullable=False)
+    cited_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    finding: Mapped[Finding] = relationship()
+
+
 class Entity(Base):
     __tablename__ = "entities"
 

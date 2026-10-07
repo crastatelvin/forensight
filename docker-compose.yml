@@ -82,6 +82,18 @@ services:
       # Non-empty so submissions queue to a worker instead of only being
       # runnable inline via POST /analyses/jobs/{id}/run.
       QUEUE_URL: redis://redis:6379/1
+      # The report-signing key lives in a named volume rather than the image or a
+      # bind mount. A signing key baked into an image would end up in every layer
+      # and in any registry the image was pushed to, and a bind mount of a single
+      # host file breaks as soon as there is a second host. The passphrase still
+      # comes from .env; the key does not live beside it in source control.
+      #
+      # `REPORT_SIGNING_P12` stays empty here on purpose: with no key provisioned,
+      # the report endpoint refuses to produce anything, which is the honest
+      # default. An unsigned report would look identical to a signed one.
+      REPORT_SIGNING_P12: ${REPORT_SIGNING_P12:-/var/lib/forensight/signing/report-signer.p12}
+    volumes:
+      - signingkeys:/var/lib/forensight/signing
     depends_on:
       postgres:
         condition: service_healthy
@@ -238,6 +250,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  # Report-signing keys, kept out of the image. See the api service above.
+  signingkeys:
   pgdata:
   redisdata:
   miniodata:

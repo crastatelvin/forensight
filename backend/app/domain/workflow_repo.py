@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.models import Entity, Finding, TimelineEvent
+from app.domain.models import Entity, Finding, FindingCitation, TimelineEvent
 
 # Evidence-backed findings can be published; everything else stays a draft.
 FINDING_DRAFT = "draft"
@@ -27,6 +27,92 @@ async def create_finding(
     session.add(finding)
     await session.flush()
     return finding
+
+
+async def cite_results(
+    session: AsyncSession,
+    *,
+    finding: Finding,
+    case_id: uuid.UUID,
+    result_ids: list[uuid.UUID],
+) -> tuple[list[FindingCitation], list[uuid.UUID]]:
+    """Attach analyzer results to a finding as its warrant.
+
+    Returns the citations created and the ids that were **rejected**, so the caller
+    can tell the model which of its references did not resolve rather than silently
+    dropping them. A finding whose citation was quietly discarded looks sourced and
+    is not — which is the failure this whole path exists to prevent.
+
+    A result belonging to another case is rejected rather than accepted: the check is
+    the only thing stopping a finding on one case citing a result that exists only on
+    another.
+    """
+    from app.analysis.models import AnalysisResult
+
+    created: list[FindingCitation] = []
+    rejected: list[uuid.UUID] = []
+    if not result_ids:
+        return created, rejected
+
+    rows = (
+        (
+            await session.execute(
+                select(AnalysisResult).where(
+                    AnalysisResult.case_id == case_id,
+                    AnalysisResult.id.in_(result_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_id = {r.id: r for r in rows}
+
+    for result_id in dict.fromkeys(result_ids):
+        result = by_id.get(result_id)
+        if result is None:
+            rejected.append(result_id)
+            continue
+        status = str(result.payload.get("status", "")) if result.payload else ""
+        citation = FindingCitation(
+            finding_id=finding.id,
+            result_id=result.id,
+            evidence_id=result.evidence_id,
+            module=result.module,
+            score=result.score,
+            threshold=result.threshold,
+            tier=result.tier,
+            model_version=result.model_version,
+            # Snapshot the refusal, so the report can keep saying "could not be
+            # measured" even after the analysis has been re-run and superseded.
+            not_applicable=status == "not_applicable",
+        )
+        session.add(citation)
+        created.append(citation)
+
+    await session.flush()
+    return created, rejected
+
+
+async def citations_for_findings(
+    session: AsyncSession, finding_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[FindingCitation]]:
+    """Citations grouped by finding."""
+    if not finding_ids:
+        return {}
+    rows = (
+        (
+            await session.execute(
+                select(FindingCitation).where(FindingCitation.finding_id.in_(finding_ids))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    grouped: dict[uuid.UUID, list[FindingCitation]] = {}
+    for row in rows:
+        grouped.setdefault(row.finding_id, []).append(row)
+    return grouped
 
 
 async def get_finding(session: AsyncSession, finding_id: uuid.UUID) -> Finding | None:

@@ -167,7 +167,7 @@ _GPS_TAG_IDS: dict[str, int] = {name: tag for tag, name in ExifTags.GPSTAGS.item
 def _raw_dms(gps: dict[Any, Any], tag_name: str) -> list[str]:
     """A DMS triple as strings, for display and for hand-checking."""
     raw = gps.get(_GPS_TAG_IDS.get(tag_name))
-    if not isinstance(raw, (tuple, list)):
+    if not isinstance(raw, tuple | list):
         return []
     out: list[str] = []
     for component in raw:
@@ -199,7 +199,7 @@ def gps_to_decimal(gps: dict[Any, Any]) -> dict[str, Any]:
 
     def _dms(tag_name: str) -> float | None:
         raw = gps.get(_GPS_TAG_IDS.get(tag_name))
-        if not isinstance(raw, (tuple, list)) or not raw:
+        if not isinstance(raw, tuple | list) or not raw:
             return None
         parts: list[float] = []
         for component in raw[:3]:

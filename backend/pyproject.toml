@@ -29,6 +29,8 @@ dependencies = [
     "onnxruntime==1.20.1",
     "numpy<3",
     "opencv-python-headless==4.10.0.84",
+    "pyhanko>=0.37.0",
+    "reportlab>=5.0.1",
 ]
 
 [dependency-groups]

@@ -51,6 +51,15 @@ class Settings(BaseSettings):
 
     # Cookie flags for cookie-based auth flows.
     cookie_secure: bool = Field(default=True)  # override to False for local http
+
+    # --- report signing (P8) ------------------------------------------------
+    # Path to a PKCS#12 holding the report-signing key and certificate. There is no
+    # "unsigned" mode: an unsigned report looks identical to a signed one until
+    # someone relies on the difference, so without a key the report endpoint
+    # refuses rather than quietly serving a PDF that carries no integrity claim.
+    # Create one with scripts/provision_signer.py.
+    report_signing_p12: str = Field(default="")
+    report_signing_passphrase: str = Field(default="")
     cookie_domain: str = Field(default="")
     cookie_samesite: Literal["lax", "strict", "none"] = Field(default="lax")
 

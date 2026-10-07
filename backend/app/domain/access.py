@@ -89,6 +89,23 @@ def assert_can_write(case: Case, user: CurrentUser) -> None:
         raise CaseAccessError(disclose=True)
 
 
+async def scoped_case(session: AsyncSession, case_id: uuid.UUID, user: CurrentUser) -> Case:
+    """Load a case the user may see, or 404.
+
+    Every case-scoped route goes through this. It lived as a private copy in three
+    routers, which is three places for an authorisation rule to be edited and one of
+    them to be missed — and the copy that gets missed is the one that leaks. They had
+    not drifted yet; the argument against them is that they are waiting to.
+
+    A case that exists but belongs to someone else is reported as **404, not 403**: a
+    403 would confirm the id is real to a user with no right to know that it is.
+    """
+    case = await visible_case(session, case_id, user)
+    if case is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+    return case
+
+
 async def visible_case(session: AsyncSession, case_id: uuid.UUID, user: CurrentUser) -> Case | None:
     """Fetch a case only if `user` may see it. None covers both 404 and 403.
 
