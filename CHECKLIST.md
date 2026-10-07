@@ -1660,7 +1660,7 @@ that might not work — the same argument as the CI security scanners.
       entry is never marked `uncertain` (that would dilute the flag), ids are stable
       across requests (React keys by them, so a regenerated id remounts the list and
       drops focus), and an undated entry stays visible rather than being dropped.
-- [ ] FI-2 Duplicate / near-duplicate evidence detection. **Exact duplicates are
+- [x] FI-2 Duplicate / near-duplicate evidence detection. **Exact duplicates are
       already handled at ingest** — `IngestService.ingest` looks up the content hash
       within the case, records a `upload-dedupe` custody row and an audit entry, and
       returns the existing evidence. So the half of this that is "detect a duplicate"
@@ -1683,6 +1683,46 @@ that might not work — the same argument as the CI security scanners.
       smaller blocker than the Phase 9 licence wall — generated pairs are legitimate
       here because a deterministic algorithm's correctness does not depend on the
       pairs being real photographs.
+      **Built as `near-duplicate`, Tier B, pure algorithm, no weights.** 64-bit
+      difference hashing (dHash) over Pillow-decoded pixels. The generated-pair
+      measurement, which is what settled it:
+
+      | | dHash distance |
+      |---|---|
+      | re-encode q60 / resize 50% / resize 75% | 0–1 |
+      | brightness +8% | 0–3 |
+      | centre-crop 5% | 5–14 |
+      | **unrelated images** (28 pairs) | **25–38** |
+
+      Threshold 15, sitting in that gap. **Variants are derived in the test, not
+      committed** — re-encoding each of the eight fixtures would be a second copy of
+      every asset to keep in sync for no gain, and Pillow is pinned in `pyproject.toml`
+      so the derivation is deterministic and the pinned distances hold.
+      **The crop ceiling is the part worth having, and it is asserted.** Per crop
+      fraction, worst same-image fixture: 5% → 14 bits, **10% → 24, 15% → 30, 20%
+      → 41**, against unrelated images whose *minimum* is 25. The ranges stop
+      separating between 5% and 10%, so **this module cannot separate a duplicate
+      from an unrelated image beyond roughly a 10% crop.** A test asserts that
+      touching (`max(cropped) >= min(cross) - 1`) so a future change that quietly
+      widens the crops has to update the stated tolerance rather than let the limit
+      become wrong silently. The payload's "not a match" branch therefore says *not
+      shown to match* and never *shown not to match*.
+      **What a match does not establish**, stated in the disclaimer and the
+      limitations: that two files are the same photograph. A screenshot of a
+      screenshot, two renders of one chart, or a collage from one source all match.
+      Nor is it a manipulation signal, nor a statement about who, where or when.
+      **Distinct from `image-prnu` and the payload says so**: that one asks whether
+      two frames came from the same sensor (a provenance question), this asks whether
+      two images look alike (a triage question). Neither substitutes for the other.
+      Reference is a second evidence item via `reference_evidence_id` — the same
+      case-scoped, hash-verified path `face-compare`, `image-prnu` and
+      `text-authorship` use. An inline `params.reference_text` is ignored rather than
+      used, so a comparison can never rest on an unrecorded document.
+      22 tests, including exact per-transform maxima so a drift in Pillow or the
+      transform is visible rather than silently changing what this reports.
+      **The earlier negative result was mine, and it was a fixture error, not a
+      method error** — recorded above because a wrong measurement left in place would
+      have blocked this item indefinitely on a false premise.
 - [ ] FI-3 Redaction tool for exports
 - [ ] FI-4 Multi-case entity linking
 - [ ] FI-5 Agent second-opinion reviewer mode

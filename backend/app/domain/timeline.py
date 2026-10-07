@@ -172,9 +172,7 @@ async def derive_events(
     return events
 
 
-def merge(
-    derived: list[DerivedEvent], recorded: list[TimelineEvent]
-) -> list[TimelineEntry]:
+def merge(derived: list[DerivedEvent], recorded: list[TimelineEvent]) -> list[TimelineEntry]:
     """Recorded and derived entries together, oldest first, undated last.
 
     Matches the backend's own `asc().nullslast()` ordering so the two agree, and the

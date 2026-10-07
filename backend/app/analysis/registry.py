@@ -67,6 +67,7 @@ def register_all() -> None:
         image_ela,
         image_exif,
         image_prnu,
+        near_duplicate,
         object_detect,
         text_authorship,
     )
@@ -80,6 +81,7 @@ def register_all() -> None:
         face_compare.module,
         geo_correlate.module,
         text_authorship.module,
+        near_duplicate.module,
     ):
         if not is_registered(module.spec.name):
             register(module)

@@ -324,7 +324,7 @@ lever and nothing else should need it.
 
 ### Analyzers
 
-Eight modules ship today. `byte-entropy` is the Phase 4 reference module; the image
+Nine modules ship today. `byte-entropy` is the Phase 4 reference module; the image
 modules are the real forensic techniques. `/capabilities` is authoritative — it is
 generated from the registry, so it cannot drift from what the build actually ships.
 
@@ -338,9 +338,10 @@ generated from the registry, so it cannot drift from what the build actually shi
 | `object-detect` | A | highest confidence among detections of the watchlist classes | pinned weights |
 | `face-compare` | B | cosine similarity between two faces' embeddings | pinned weights + 2 images |
 | `text-authorship` | B | cosine similarity between two documents' stylometric profiles | 2 text documents, ≥3000 words each |
+| `near-duplicate` | B | bit distance between two images' 64-bit difference hashes | 2 images from one case |
 
-`image-prnu`, `face-compare` and `text-authorship` compare two documents and take the
-second as `params.reference_evidence_id` — an evidence id in the same case, resolved
+`image-prnu`, `face-compare`, `text-authorship` and `near-duplicate` compare two
+items and take the second as `params.reference_evidence_id` — an evidence id in the same case, resolved
 case-scoped and hash-verified before the comparison runs.
 
 ```bash
