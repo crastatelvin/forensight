@@ -6,6 +6,7 @@ Wires probes, security middleware, rate limiting, notifications, and the
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
@@ -31,6 +32,7 @@ from app.auth.router import router as auth_router
 from app.capabilities import get_capabilities
 from app.config import Settings, get_settings
 from app.domain.router import router as cases_router
+from app.drain import begin_draining, is_draining
 from app.health import gather_readiness
 from app.observability import MetricsMiddleware, configure_logging, metrics_router
 from app.reports.router import router as reports_router
@@ -93,8 +95,50 @@ def _redis_client(settings: Settings) -> Any:
         return None
 
 
+def _install_signal_handlers() -> None:
+    """Flip readiness on SIGTERM, before uvicorn begins closing sockets.
+
+    uvicorn installs its own SIGTERM handler, and this one is chained rather than
+    replacing it — a handler that stopped uvicorn from shutting down would leave the
+    container hanging until the orchestrator's SIGKILL, which is the opposite of a
+    graceful shutdown.
+
+    The handler does one thing: set a flag. It must not await, log heavily, or touch
+    the database, because it runs on the main thread between bytecodes and anything
+    slow there delays every other signal arriving in the meantime.
+    """
+    import signal
+    from collections.abc import Callable
+    from types import FrameType
+
+    def _chain(previous: object) -> Callable[[int, FrameType | None], None]:
+        """Our handler, then whatever was there before.
+
+        A closure rather than a lambda capturing a loop variable: the previous
+        handler differs per signal, and a late-binding capture would call the last
+        one for both — so Ctrl-C would run the SIGTERM handler's successor too.
+        """
+
+        def handler(signum: int, frame: FrameType | None) -> None:
+            begin_draining(f"signal {signum}")
+            if callable(previous):
+                previous(signum, frame)
+
+        return handler
+
+    for received in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(received, _chain(signal.getsignal(received)))
+        except (ValueError, OSError):  # not the main thread, or unsupported here
+            # A process whose signal handlers cannot be installed still drains: the
+            # lifespan hook sets the same flag on the way out. Draining is not
+            # optional enough to be worth failing startup over.
+            logger.debug("could not install a %s handler; lifespan drain still applies", received)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    _install_signal_handlers()
     # Validate critical configuration at startup.
     _enforce_secret_key(app.state.settings)
     logger.info(
@@ -103,6 +147,17 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.settings.environment,
     )
     yield
+    # Shutdown ordering, and it is the ordering that matters. Readiness is dropped
+    # FIRST, so a load balancer stops routing here before anything is torn down;
+    # then the grace period lets in-flight work finish; only then are connections
+    # released. Tearing down first would mean answering requests against a disposed
+    # pool, which is a 500 rather than a redirect.
+    begin_draining("lifespan shutdown")
+    grace = float(getattr(app.state.settings, "shutdown_grace_seconds", 0.0) or 0.0)
+    if grace > 0:
+        logger.info("draining for %.1fs before closing", grace)
+        await asyncio.sleep(grace)
+
     # Release pooled connections; without this gunicorn workers leak sockets
     # across every reload and the Redis client is never closed.
     client = getattr(app.state, "redis", None)
@@ -217,7 +272,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/readyz", tags=["health"])
     async def readyz() -> JSONResponse:
-        """Readiness: 200 only when all deps reachable (test T0.1)."""
+        """Readiness: 200 only when all deps reachable (test T0.1) and not draining.
+
+        A draining process reports *not* ready even when every dependency answers,
+        and that is the point: `/readyz` is the load balancer's only signal, so this
+        is where a shutdown has to become visible. Answering 200 until the socket
+        closes would mean the balancer routes new requests here for the whole grace
+        period and cuts every one of them off.
+
+        `/healthz` stays 200 throughout. Liveness asks "is this process worth
+        restarting", and a draining process is not broken — restarting it would
+        abandon the work the drain exists to finish.
+        """
+        if is_draining():
+            return JSONResponse(
+                status_code=503,
+                content={"ready": False, "draining": True, "dependencies": {}},
+            )
         statuses = await gather_readiness(app.state.settings)
         ready = all(s.ok for s in statuses)
         payload = {

@@ -1098,7 +1098,38 @@ be made deliberately rather than absorbed.
       than about the tool's mood. That verification caught a silent restore failure on
       its first run, which is the argument for building it that way — see T10.3.
       Still to do: MinIO-side replication, and PITR documentation.
-- [ ] P10.B3 Graceful shutdown, readiness/liveness, horizontal scaling API+workers
+- [x] P10.B3 Graceful shutdown + readiness/liveness. `app/drain.py`, SIGTERM handler,
+      `SHUTDOWN_GRACE_SECONDS`.
+      **The order is the feature.** Readiness drops *first*, because `/readyz` is the
+      load balancer's only signal — if it keeps answering until the socket dies, the
+      balancer routes new requests here for the whole grace period and cuts every one
+      off. Then the grace period, then connections are released. Tearing down first
+      would mean answering requests against a disposed pool: a 500 rather than a
+      redirect.
+      **New work refused, in-flight work continues, and the two are separated on
+      purpose.** A new agent run or analysis gets a 503 naming the retry — refusing
+      costs one retry, while starting work that will be killed costs the caller the
+      work and leaves a half-written row behind. Reads keep serving throughout: a read
+      costs nothing and finishes immediately, so refusing it only makes a routine
+      deploy look like an incident.
+      **The drain reports itself explicitly** (`"draining": true`) and reports *no*
+      dependency failures, because nothing has been torn down yet and a dashboard
+      showing Postgres as failed during a deploy sends somebody to the wrong system.
+      `/healthz` deliberately stays 200: liveness asks "is this worth restarting", and
+      a draining process is not broken — restarting it abandons the in-flight report
+      the drain exists to finish, and the orchestrator then watches it die again.
+      The signal handler **chains** uvicorn's rather than replacing it: replacing would
+      stop uvicorn shutting down and leave the container hanging until SIGKILL, which
+      is the opposite of graceful and invisible until the grace period expires.
+      **Grace defaults to zero, deliberately.** The right value is entirely a function
+      of how long this deployment's slowest operation takes, and a default either
+      truncates reports or stalls every rolling deploy. It has to be set on purpose.
+      **Horizontal scaling is not built.** The drain flag is per-process, which is
+      correct under a balancer (each pod gets its own SIGTERM and must answer for
+      itself — a shared flag would have one process advertising itself as ready while
+      another drains), but nothing here drains the Postgres connection pool against a
+      load balancer or runs multiple replicas under compose. Recorded as not done
+      rather than implied.
 - [x] P10.B4 Egress control. `app/agent/egress.py` + `EGRESS_ALLOWED_HOSTS`.
       **The surface is one call, and the docstring says so rather than implying
       coverage.** `app/agent/llm.py` holds the only outbound HTTP in `app/`; Postgres
@@ -1173,7 +1204,12 @@ be made deliberately rather than absorbed.
       separately from "no model configured", because those are different problems with
       different fixes and the operator has to be told which they have.
 - [ ] T10.6 Android profile runs CPU analyzer + agent turn; GPU reports unavailable
-- [ ] T10.7 Graceful shutdown drains jobs; readiness flips before termination
+- [x] T10.7 Readiness flips before termination; new work refused; reads survive.
+      Ten tests. The **ordering** assertions are the load-bearing ones, because every
+      way a shutdown can go wrong presents the same symptom — requests failing — and
+      what differs is whether the caller gets a clean retry or a half-written report.
+      The signal handler is tested by invoking the installed handler rather than by
+      sending a real SIGTERM, which would take the test runner down with it. before termination
 **Exit**
 - [ ] P10.E observable, recoverable, load-tested, air-gap-capable; Android demo runs; docs complete
 

@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import drain
 from app.agent.graph import AgentGraph, load_state
 from app.agent.llm import ModelError, resolve_model
 from app.agent.repository import (
@@ -39,6 +40,7 @@ from app.config import Settings, get_settings
 from app.db import get_session
 from app.domain.access import scoped_case, visible_case
 from app.domain.repository import append_audit
+from app.drain import is_draining
 
 router = APIRouter(prefix="/agent", tags=["agent"])
 
@@ -315,6 +317,12 @@ async def start_run(
 ) -> dict[str, Any]:
     """Start an investigative run. Returns immediately; the run may pause for
     human approval."""
+    if is_draining():
+        # An agent run is the longest thing this system does. Starting one in the
+        # seconds before the process dies means a run row, a tool call and a partial
+        # report with no owner, and the operator's objective is gone with it.
+        raise HTTPException(status_code=503, detail=drain.refusal("new agent runs"))
+
     case = await scoped_case(session, case_id, user)
     try:
         # An operator's objective is trusted input, so an injection shape here is

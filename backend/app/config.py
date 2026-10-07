@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     #: and the reason this control needs no "mode" flag to be meaningful. See
     #: `app/agent/egress.py`.
     egress_allowed_hosts: str = Field(default="")
+    #: Seconds to keep serving in-flight work after readiness drops.
+    #:
+    #: Zero by default, because the right value depends entirely on how long this
+    #: deployment's slowest operation takes and a wrong default either truncates
+    #: reports or stalls every rolling deploy. Set it deliberately.
+    shutdown_grace_seconds: float = Field(default=0.0, ge=0.0, le=300.0)
     llm_api_key: str = Field(default="")
     llm_embed_model: str = Field(default="")
     #: Must match the pgvector column width in migration 0006, and the width the

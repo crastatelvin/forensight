@@ -13,6 +13,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import drain
 from app.analysis import lab_only, registry
 from app.analysis.overlay import router as overlay_router
 from app.analysis.queue import enqueue_analysis_job
@@ -36,6 +37,7 @@ from app.db import get_session
 from app.domain.access import scoped_case, visible_case
 from app.domain.models import Evidence
 from app.domain.repository import append_audit
+from app.drain import is_draining
 
 router = APIRouter(tags=["analysis"])
 
@@ -112,6 +114,11 @@ async def submit_analysis(
     Idempotent: resubmitting identical work returns the existing job (200-style
     reuse via `created`) instead of recomputing (P4.B3/T4.1).
     """
+    if is_draining():
+        # 503, not 409 or 400: this is "not this instance's problem, try another",
+        # which is what a client, a load balancer and a retry loop all understand.
+        raise HTTPException(status_code=503, detail=drain.refusal("new analyses"))
+
     case = await scoped_case(session, case_id, user)
     evidence = await session.get(Evidence, payload.evidence_id)
     if evidence is None or evidence.case_id != case.id:
