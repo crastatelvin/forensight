@@ -1686,3 +1686,34 @@ that might not work — the same argument as the CI security scanners.
 - [ ] FI-3 Redaction tool for exports
 - [ ] FI-4 Multi-case entity linking
 - [ ] FI-5 Agent second-opinion reviewer mode
+
+## Open defect found while verifying FI-1 (not caused by it)
+
+`e2e/journey.spec.ts` → *"an action parked for approval stays answerable after a
+reload"* **times out at its 180 s budget when the full suite runs, and passes in
+isolation in ~15 s.** Recorded rather than left as an unexplained flake.
+
+The mechanism is measured, not guessed. The failure is
+`locator.click: Test timeout of 180000ms exceeded` waiting for the Findings tab after
+the approval is answered — and answering it lets the agent continue, which costs a
+real `qwen2.5:3b` call through Ollama. The test's own comment already documents this
+class of problem ("the budget is the model's, not the browser's"); what it has not yet
+done is stop depending on the model's speed.
+
+**Attribution, stated precisely.** Playwright runs files alphabetically with one
+worker, so `a11y`, `journey` and then `timeline` — the three new timeline tests run
+*after* the failing one and cannot cause it. Confirmed by running `journey` + `a11y`
+alone: 12 passed. Restarting the API first (to rule out the in-memory auth rate
+limiter accumulating across runs) did not clear it. The derived timeline endpoint is
+not the cost either: 13 ms against 8 ms for the plain one.
+
+**What would actually fix it:** the test asserts browser behaviour — that a parked
+action is answerable after a reload, which is the bug it was written for. That needs
+no live model at all. The approval endpoint already parks an action without one, so
+the continuation after approval is the only part that needs the model, and it could be
+stubbed the way `agent_fakes.py` stubs the rest. Left undone deliberately rather than
+patched with a longer timeout, because raising the budget hides the dependency instead
+of removing it.
+- [ ] FI-3 Redaction tool for exports
+- [ ] FI-4 Multi-case entity linking
+- [ ] FI-5 Agent second-opinion reviewer mode
