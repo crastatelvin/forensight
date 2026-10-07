@@ -93,14 +93,19 @@ async def test_requests_are_counted_per_route_and_status(client: AsyncClient) ->
     route label is the *template* (`/cases/{case_id}`), not the concrete path, which
     is what keeps a per-case id from creating a new time series on every request.
     """
-    assert not series(
-        "forensight_http_requests_total", "route"
-    ), "nothing has been requested yet; the assertions below would pass vacuously"
+    # A delta, not an absolute. The first draft asserted "nothing has been requested
+    # yet" as a precondition, which passed when this file ran alone and failed in the
+    # full suite — by then other tests had made requests. A test whose precondition
+    # depends on what ran before it is not order-independent.
+    before = _total("forensight_http_requests_total")
+    for _ in range(3):
+        await client.get("/readyz")
+    after = _total("forensight_http_requests_total")
 
-    await client.get("/readyz")
+    assert after >= before + 3, f"three requests were made and the counter went {before} -> {after}"
     assert series(
         "forensight_http_requests_total", "route"
-    ), "a request was made and no route series appeared"
+    ), "requests were counted but no route series appeared"
 
     # The template, not the concrete path: a UUID in a label is a cardinality bomb.
     for route in series("forensight_http_requests_total", "route"):
