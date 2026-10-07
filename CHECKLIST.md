@@ -917,7 +917,28 @@ UI always has.
       being hunted.
 - [ ] X3 Contract tests for agent tools
 - [ ] X4 Agent eval harness (cites sources, respects HITL)
-- [ ] X5 Golden tests for every analyzer (no simulation)
+- [x] X5 Golden tests for every analyzer, on generated fixtures, no simulation.
+      Exact floats are pinned, not `approx`: the analyzer's `model_version` already
+      records the library versions behind a score, so a bump *should* be a reviewed
+      act, and these tests are what make it visible. A golden test loosened to
+      approximate would record nothing worth recording.
+      **Found dead logic.** Every EXIF fixture this project had tripped only
+      `no_exif` — each one either carried no metadata or was stripped down from
+      something that had none. So `no_datetime_original`, `no_camera_identification`
+      and `datetime_inconsistent` were executed by *nothing*: three of the module's
+      four indicators, and the only ones that actually describe provenance. Added
+      `exif_with(**tags)` to build a case carrying exactly the tags given, and a
+      golden assertion per indicator. A module can pass every test it has while half
+      its logic never runs.
+      The object-detect golden uses the committed `bus.jpg` with its digest pinned,
+      because a synthetic gradient exercises the decode path rather than the model —
+      and it asserts the *class names*, since a detector reporting different objects
+      would still pass a count. A second test asserts the detector **cannot** find a
+      firearm, which is the documented limitation; if a future model swap changed
+      that, the documentation is forced to be revisited rather than going stale.
+      The face-compare golden asserts the direction, not the cosine: two different
+      people must not compare above threshold, on any threshold this deployment
+      might legitimately set.
 - [ ] X6 CI security: Bandit, Semgrep, pip-audit, Trivy, gitleaks (pip-audit still advisory)
 - [x] X7 Ruff lint + format clean; mypy strict on `app`
 - [x] X8 Compose core profile boots, migrates, and serves in CI

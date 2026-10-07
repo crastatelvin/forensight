@@ -334,3 +334,39 @@ EDITED_EXIF: dict[str, Any] = {
     "Model": "Canon EOS 5D Mark IV",
     "Software": "Adobe Photoshop 26.0 (Windows)",
 }
+
+
+def exif_with(
+    width: int = 128,
+    height: int = 128,
+    **tags: object,
+) -> bytes:
+    """A JPEG carrying exactly the EXIF tags given, and nothing else.
+
+    Built here rather than committed as a binary so the test asserts on what it
+    claims to contain rather than on a file's provenance — and, more usefully, so a
+    case can be constructed that trips *one specific* metadata indicator.
+
+    That specificity was the gap: every EXIF fixture this project had tripped only
+    `no_exif`, because each one either carried no metadata at all or was stripped
+    down from something that had none. So the three indicators that actually
+    describe provenance — a missing capture timestamp, an unidentified camera, and a
+    modification date with no matching capture date — were never executed by
+    anything. A module can pass every test it has while half its logic is dead.
+    """
+    image = Image.fromarray(_gradient(width, height), mode="RGB")
+    exif = Image.Exif()
+    for name, value in tags.items():
+        tag = getattr(ExifTags.Base, name, None)
+        if tag is None:
+            raise KeyError(f"{name} is not an ExifTags.Base member")
+        exif[tag] = value
+    buffer = io.BytesIO()
+    image.save(buffer, format="JPEG", quality=90, exif=exif)
+    return buffer.getvalue()
+
+
+#: A capture timestamp, as Pillow writes it. Named because it appears in three
+#: fixtures and the format is easy to get subtly wrong.
+CAPTURED = "2026:01:02 03:04:05"
+MODIFIED = "2026:06:07 08:09:10"
