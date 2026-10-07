@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agent.repository import AgentRun, AgentToolCall
 from app.analysis.models import AnalysisResult
 from app.analysis.repository import list_results_for_case
+from app.auth.models import User
 from app.domain.models import Case, ChainOfCustody, Evidence, Finding, FindingCitation
 
 #: Tier C means "an accredited laboratory's result, attached to this case". It is
@@ -63,6 +65,11 @@ class FindingView:
     body: str
     status: str
     created_at: datetime
+    #: Who recorded it. T8.3 asks for the operator on every finding and the report was
+    #: printing a date instead, which identifies *when* and not *who* — the less
+    #: useful half of the two. Resolved from the user record; a UUID on the face of a
+    #: signed report tells a reader nothing they can act on.
+    operator: str
     citations: tuple[CitationView, ...]
 
     @property
@@ -88,6 +95,24 @@ class ManifestRow:
     cited: bool
 
 
+@dataclass(frozen=True)
+class ApprovalView:
+    """A human decision, with the person who made it.
+
+    T8.3 asks for HITL approvals in the provenance appendix and the first version
+    printed only hashes — which bind the record to *what* was approved but not *who*.
+    The approving identity exists only in the audit log: `agent_tool_calls` records
+    that an action was approved, never by whom, because that is what the audit chain
+    is for.
+    """
+
+    action_id: str
+    tool: str
+    args_hash: str
+    operator: str
+    approved_at: datetime
+
+
 @dataclass
 class ReportData:
     """Everything the builder draws on."""
@@ -99,6 +124,11 @@ class ReportData:
     custody: list[ChainOfCustody]
     runs: list[AgentRun]
     tool_calls: list[AgentToolCall] = field(default_factory=list)
+    approvals: list[ApprovalView] = field(default_factory=list)
+    #: Actor identity resolved per custody entry. Carried separately rather than
+    #: attached to the ORM row, so the query result stays a plain read.
+    custody_operators: dict[str, str] = field(default_factory=dict)
+    operators: dict[str, str] = field(default_factory=dict)
     manifest: list[ManifestRow] = field(default_factory=list)
     manifest_digest: str = ""
 
@@ -224,6 +254,43 @@ async def gather(session: AsyncSession, case: Case) -> ReportData:
     by_evidence = {str(e.id): e for e in evidence}
     by_result = {str(r.id): r for r in results}
 
+    # Who approved what. The approving identity exists only in the audit chain:
+    # `agent_tool_calls` records *that* an action was approved, never by whom, and
+    # that separation is the point of the chain.
+    approvals = await _approvals(session, case.id)
+
+    # Who did what. One query for every actor on the case rather than one per row:
+    # an N+1 across a report's appendix is a slow report, and the set of actors is
+    # small and bounded by the case's size.
+    actor_ids = {
+        *[str(f.created_by) for f in findings],
+        *[str(c.actor_id) for c in custody],
+        *[str(a["actor_id"]) for a in approvals if a["actor_id"]],
+    }
+    operators: dict[str, str] = {}
+    if actor_ids:
+        actors = (
+            (
+                await session.execute(
+                    select(User).where(
+                        User.__table__.c.id.in_([uuid.UUID(a) for a in actor_ids if _is_uuid(a)])
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for actor in actors:
+            operators[str(actor.id)] = f"{actor.email} ({actor.role})"
+
+    def operator_of(actor_id: object) -> str:
+        """A person's identity, or an honest statement that it is unknown.
+
+        Deliberately not the raw UUID. If the user record is gone the report says so
+        rather than printing an identifier the reader cannot look up.
+        """
+        return operators.get(str(actor_id), "unknown — the user record no longer exists")
+
     by_finding: dict[str, list[CitationView]] = {}
     for row in citations:
         evidence_row = by_evidence.get(str(row.evidence_id))
@@ -260,6 +327,7 @@ async def gather(session: AsyncSession, case: Case) -> ReportData:
             body=f.body,
             status=f.status,
             created_at=f.created_at,
+            operator=operator_of(f.created_by),
             citations=tuple(by_finding.get(str(f.id), [])),
         )
         for f in findings
@@ -285,6 +353,18 @@ async def gather(session: AsyncSession, case: Case) -> ReportData:
         results=results,
         custody=custody,
         runs=runs,
+        custody_operators={str(c.id): operator_of(c.actor_id) for c in custody},
+        approvals=[
+            ApprovalView(
+                action_id=str(row["action_id"]),
+                tool=str(row["tool"]),
+                args_hash=str(row["args_hash"]),
+                operator=operator_of(row["actor_id"]),
+                approved_at=row["approved_at"],
+            )
+            for row in approvals
+        ],
+        operators=operators,
         tool_calls=tool_calls,
         manifest=manifest,
         manifest_digest=canonical_manifest(manifest),
@@ -322,3 +402,69 @@ def as_audit_payload(data: ReportData, *, signed: bool) -> dict[str, Any]:
 def human_approvals(data: ReportData) -> int:
     """How many actions a person authorised. Reported on the cover."""
     return len(data.human_approved_calls)
+
+
+def _is_uuid(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+async def _approvals(session: AsyncSession, case_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Every human approval recorded for this case, from the audit chain.
+
+    Read from `AuditLog` rather than from the tool-call rows because that is the only
+    place the *actor* is recorded. `agent_tool_calls.approved_action_id` says an
+    action was approved; the audit entry says by whom and when, and it is
+    hash-chained, so it is also the entry a reader can rely on.
+
+    Scoped to this case's runs. The payload carries the run id precisely so this is
+    a filter rather than a guess — an approval from another case must never appear in
+    this case's provenance.
+    """
+    from app.domain.models import AuditLog
+
+    rows = (
+        (
+            await session.execute(
+                select(AuditLog)
+                .where(AuditLog.action.in_(["agent.action.approve"]))
+                .order_by(AuditLog.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # `select(AgentRun.id)` yields bare UUID scalars, not model instances — selecting
+    # the column rather than the row is what keeps this from loading every checkpoint
+    # on the case to read one id.
+    run_ids = {
+        str(run_id)
+        for run_id in (
+            (await session.execute(select(AgentRun.id).where(AgentRun.case_id == case_id)))
+            .scalars()
+            .all()
+        )
+    }
+
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        payload = row.payload if isinstance(row.payload, dict) else {}
+        run_id = payload.get("run_id")
+        if run_id is None or str(run_id) not in run_ids:
+            # Not this case's run. Excluded rather than trusted: the payload is
+            # untyped JSON, so the only way to be sure is to check.
+            continue
+        out.append(
+            {
+                "action_id": row.target,
+                "tool": payload.get("tool", ""),
+                "args_hash": payload.get("args_hash", ""),
+                "actor_id": str(row.actor_id) if row.actor_id else "",
+                "approved_at": row.created_at,
+            }
+        )
+    return out

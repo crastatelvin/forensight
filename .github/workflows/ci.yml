@@ -108,6 +108,22 @@ jobs:
           SEED_ADMIN_EMAIL: ci-e2e@example.com
           SEED_ADMIN_PASSWORD: ci-e2e-password-not-real
 
+      # A signing key so the report journey exercises a real signature rather than
+      # only the "no key configured" refusal. Generated inside the container so it
+      # never exists outside the run.
+      - name: Provision a report signer
+        run: |
+          docker compose exec -T api python scripts/provision_signer.py \
+            --passphrase ci-only-passphrase-not-a-secret
+        env:
+          REPORT_SIGNING_PASSPHRASE: ci-only-passphrase-not-a-secret
+
+      # Restarted so the api picks up the passphrase it was started without.
+      - name: Restart the api with the signing passphrase
+        run: docker compose up -d api
+        env:
+          REPORT_SIGNING_PASSPHRASE: ci-only-passphrase-not-a-secret
+
       - name: Run Playwright
         working-directory: frontend
         env:

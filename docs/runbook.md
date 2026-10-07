@@ -201,6 +201,51 @@ ships. An analyzer with a `model_key` and no provisioned artifact is reported
 unavailable with the reason "pinned weights are not provisioned", which is a
 different problem from "no GPU on this host" and needs a different fix.
 
+### Report signing
+
+Case reports are PAdES-signed, and **there is no unsigned mode**. With no key
+configured, `GET /reports/cases/{id}.pdf` answers 503 naming the provisioning
+command rather than emitting a PDF that carries no integrity claim — an unsigned
+report looks byte-for-byte like a signed one until someone relies on the
+difference.
+
+```bash
+# Runs inside the container so the key is written straight into the volume and
+# never lands on a host filesystem or in an image layer.
+docker compose exec api python scripts/provision_signer.py
+```
+
+It prompts for a passphrase and writes a PKCS#12 at mode 0600 into the
+`signingkeys` volume. Set `REPORT_SIGNING_PASSPHRASE` in `.env` — the passphrase
+belongs in the environment, not beside the key and not in version control.
+
+**Distribute the certificate, not the key.** To read the certificate back out for
+anyone who needs to verify reports:
+
+```bash
+docker compose exec api python - <<'PY'
+from cryptography.hazmat.primitives.serialization import Encoding, pkcs12
+raw = open("/var/lib/forensight/signing/report-signer.p12", "rb").read()
+_pw = input("passphrase: ").encode()
+_k, cert, _ = pkcs12.load_key_and_certificates(raw, _pw)
+print(cert.public_bytes(Encoding.PEM).decode())
+PY
+```
+
+Verification (`POST /reports/verify`, or the **Check a report** panel) answers two
+questions separately, and the distinction is load-bearing:
+
+| Result | Means |
+|---|---|
+| `intact: true`, `trusted: true` | Bytes unchanged since signing, and the signer chains to a certificate you supplied. |
+| `intact: true`, `trusted: false` | Bytes unchanged. Signer **unconfirmed** — self-signed is normal here. Not a failure. |
+| `intact: false` | The document does not match its signature. It has been altered. |
+
+A signing key that is replaced does not invalidate reports signed with the old one
+for integrity purposes — the bytes are still verifiably unaltered — but readers will
+no longer see it as *trusted* unless they hold the old certificate. Keep the old
+certificate; that is what makes historical reports verifiable.
+
 ### Job status
 
 | Status | Meaning |

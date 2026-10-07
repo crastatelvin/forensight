@@ -805,6 +805,7 @@ def _case_with_one_cited_finding() -> object:
             body="Error-level analysis shows a resave pattern.",
             status="draft",
             created_at=stamp,
+            operator="examiner@example.org (officer)",
             citations=(citation,),
         )
     ]
@@ -822,6 +823,7 @@ def _unsourced_finding(title: str) -> object:
         body="Recorded by hand during physical inspection.",
         status="draft",
         created_at=dt.datetime(2026, 1, 2, tzinfo=dt.UTC),
+        operator="examiner@example.org (officer)",
         citations=(),
     )
 
@@ -851,6 +853,7 @@ def _tier_c_finding(title: str) -> object:
         body="Attached by the examiner from the accredited laboratory's report.",
         status="draft",
         created_at=stamp,
+        operator="examiner@example.org (officer)",
         citations=(citation,),
     )
 
@@ -1015,6 +1018,7 @@ async def test_a_citation_snapshots_the_refusal_to_measure(
                     body="",
                     status="draft",
                     created_at=finding.created_at,
+                    operator="examiner@example.org (officer)",
                     citations=(
                         CitationView(
                             result_id=str(citation.result_id),
@@ -1088,3 +1092,256 @@ async def test_a_report_is_not_generated_for_a_case_you_cannot_see(
     response = await client.get(f"/reports/cases/{cid}.pdf", headers=stranger)
     # 404 rather than 403: a 403 would confirm the case id is real.
     assert response.status_code == 404, response.text
+
+
+# --- T8.3: the operator and the approvals are named, not just hashed ----
+
+
+def test_every_finding_names_the_person_who_recorded_it() -> None:
+    """T8.3 asks for the operator; a date is not an operator.
+
+    The report printed "recorded <date>" and nothing else, which identifies *when*
+    and not *who* — the less useful half. A signed record has to say which person
+    made each assertion, or it is an unattributed claim with a timestamp.
+    """
+    data = _case_with_one_cited_finding()
+    text = _flat(build_pdf(data, SignerInfo(subject="s", fingerprint="f" * 64)))
+
+    assert "examiner@example.org" in text, "the finding's author is not named"
+    assert "officer" in text, "the author's role is not shown"
+
+
+def test_an_unresolvable_author_says_so_rather_than_printing_a_uuid() -> None:
+    """A deleted user record must not leave a bare UUID on a signed page.
+
+    A UUID identifies nothing a reader can act on, and printing one implies the
+    system resolved an identity when it did not. The report says the record is gone.
+    """
+    data = _case_with_one_cited_finding()
+    data.findings[0] = dataclasses.replace(
+        data.findings[0],
+        operator="unknown — the user record no longer exists",
+    )
+    text = _flat(build_pdf(data, SignerInfo(subject="s", fingerprint="f" * 64)))
+    assert (
+        "theuserrecordnolongerexists" in text
+    ), "a deleted author should be stated, not left as an id the reader cannot resolve"
+    assert "unknown" in text
+
+
+async def test_an_approval_names_the_person_who_approved_it(
+    sessionmaker_fixture: object,
+) -> None:
+    """The HITL line of T8.3, and it is the one that was missing entirely.
+
+    `agent_tool_calls` records *that* an action was approved, never by whom — the
+    approving identity exists only in the hash-chained audit log. The report has to
+    join the two, or the provenance appendix says a person authorised a change
+    without saying who.
+    """
+    from app.agent.repository import AgentRun, record_tool_call
+    from app.analysis.models import AnalysisResult
+    from app.domain.models import Evidence
+    from app.domain.repository import append_audit
+
+    async with sessionmaker_fixture() as session:  # type: ignore[operator]
+        from app.auth.models import User
+
+        # Create the user and take its id from the row, rather than inventing a
+        # UUID alongside it. A first draft did the latter, so the approval referenced
+        # a user that did not exist — and the report correctly said "unknown", which
+        # looked like a report bug rather than a test bug.
+        user = User(
+            email="approver@example.org",
+            hashed_password="x",
+            # A real role. "supervisor" does not exist in this system.
+            role="admin",
+            is_active=True,
+            is_superuser=False,
+            is_verified=True,
+        )
+        session.add(user)
+        await session.flush()
+        approver = user.id
+        case = Case(number="APPR-1", title="Approved", owner_id=approver)
+        session.add(case)
+        await session.flush()
+
+        evidence = Evidence(
+            case_id=case.id,
+            filename="a.jpg",
+            sha256="a" * 64,
+            content_type="image/jpeg",
+            size_bytes=1,
+            storage_key="k",
+            uploaded_by=approver,
+        )
+        session.add(evidence)
+        await session.flush()
+
+        result = AnalysisResult(
+            job_id=uuid.uuid4(),
+            case_id=case.id,
+            evidence_id=evidence.id,
+            module="byte-entropy",
+            idempotency_key="k",
+            score=7.8,
+            threshold=7.5,
+            model_version="1.0.0",
+            tier="B",
+            disclaimer="Triage only.",
+            payload={},
+        )
+        session.add(result)
+        await session.flush()
+
+        run = AgentRun(
+            case_id=case.id,
+            thread_id="t",
+            objective="record a finding",
+            requested_by=approver,
+            model="scripted",
+        )
+        session.add(run)
+        await session.flush()
+
+        from app.agent.types import ToolCall, ToolResult
+
+        await record_tool_call(
+            session,
+            run_id=run.id,
+            case_id=case.id,
+            call=ToolCall(name="update_case_finding", args={"title": "x"}, call_id="write"),
+            result=ToolResult(
+                call_id="write", name="update_case_finding", ok=True, output={"ok": True}
+            ),
+            approved_action_id="act-1",
+        )
+        await append_audit(
+            session,
+            actor_id=approver,
+            action="agent.action.approve",
+            target="act-1",
+            payload={"run_id": str(run.id), "tool": "update_case_finding", "args_hash": "h" * 64},
+        )
+        await session.commit()
+
+        from app.reports.builder import SignerInfo, build_pdf
+        from app.reports.repository import gather
+
+        data = await gather(session, case)
+        text = _flat(build_pdf(data, SignerInfo(subject="s", fingerprint="f" * 64)))
+
+    assert data.approvals, "the approval was not picked up from the audit chain"
+    assert data.approvals[0].tool == "update_case_finding"
+    assert "approver@example.org" in text, "the approver is not named in the report"
+    assert "update_case_finding" in text
+
+
+async def test_an_approval_from_another_case_never_leaks_in(
+    sessionmaker_fixture: object,
+) -> None:
+    """The audit payload carries the run id precisely so this can be filtered.
+
+    The payload is untyped JSON, so the only way to be sure an approval belongs to
+    this case is to check. Trusting the absence of a foreign run id would put
+    another case's provenance in this case's signed report.
+    """
+    from app.agent.repository import AgentRun
+    from app.domain.repository import append_audit
+
+    owner = uuid.uuid4()
+    async with sessionmaker_fixture() as session:  # type: ignore[operator]
+        mine = Case(number="LEAK-A", title="Mine", owner_id=owner)
+        theirs = Case(number="LEAK-B", title="Theirs", owner_id=owner)
+        session.add_all([mine, theirs])
+        await session.flush()
+
+        their_run = AgentRun(
+            case_id=theirs.id,
+            thread_id="t",
+            objective="theirs",
+            requested_by=owner,
+            model="scripted",
+        )
+        session.add(their_run)
+        await session.flush()
+
+        await append_audit(
+            session,
+            actor_id=owner,
+            action="agent.action.approve",
+            target="act-theirs",
+            payload={"run_id": str(their_run.id), "tool": "update_case_finding"},
+        )
+        await session.commit()
+
+        from app.reports.repository import gather
+
+        data = await gather(session, mine)
+
+    assert data.approvals == [], "another case's approval appeared in this report"
+
+
+async def test_the_chain_of_custody_names_who_handled_each_item(
+    sessionmaker_fixture: object,
+) -> None:
+    """A custody chain with no names in it is a log, not a chain.
+
+    It records that an item was handled and when, but not who was accountable —
+    which is the one question a chain of custody exists to answer. The report
+    resolved every actor from the user table for exactly this.
+    """
+    from app.auth.models import User
+    from app.domain.models import Evidence
+    from app.domain.repository import record_custody
+
+    async with sessionmaker_fixture() as session:  # type: ignore[operator]
+        handler = User(
+            email="handler@example.org",
+            hashed_password="x",
+            role="officer",
+            is_active=True,
+            is_superuser=False,
+            is_verified=True,
+        )
+        session.add(handler)
+        await session.flush()
+
+        case = Case(number="CUST-1", title="Custody", owner_id=handler.id)
+        session.add(case)
+        await session.flush()
+
+        evidence = Evidence(
+            case_id=case.id,
+            filename="seized.jpg",
+            sha256="e" * 64,
+            content_type="image/jpeg",
+            size_bytes=10,
+            storage_key="k",
+            uploaded_by=handler.id,
+        )
+        session.add(evidence)
+        await session.flush()
+
+        await record_custody(
+            session,
+            evidence_id=evidence.id,
+            actor_id=handler.id,
+            action="examine",
+            detail="opened in the lab",
+        )
+        await session.commit()
+
+        from app.reports.builder import SignerInfo, build_pdf
+        from app.reports.repository import gather
+
+        data = await gather(session, case)
+        assert data.custody_operators, "no operator was resolved for the custody entry"
+        assert data.custody_operators[list(data.custody_operators)[0]].startswith(
+            "handler@example.org"
+        )
+        text = _flat(build_pdf(data, SignerInfo(subject="s", fingerprint="f" * 64)))
+
+    assert "handler@example.org" in text, "the custody chain does not name who handled it"
+    assert "examine" in text

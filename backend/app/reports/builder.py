@@ -476,7 +476,8 @@ def _findings(data: ReportData, s: dict[str, ParagraphStyle]) -> list[Any]:
         block: list[Any] = [
             Paragraph(f"{index}. {_esc(finding.title)}", s["h2"]),
             Paragraph(
-                f"status {_esc(finding.status)} &middot; recorded " f"{_dt(finding.created_at)}",
+                f"status {_esc(finding.status)} &middot; recorded by "
+                f"{_esc(finding.operator)} on {_dt(finding.created_at)}",
                 s["small"],
             ),
         ]
@@ -492,9 +493,9 @@ def _findings(data: ReportData, s: dict[str, ParagraphStyle]) -> list[Any]:
             block += [
                 Paragraph(
                     "NOT SOURCED &mdash; this finding rests on no analyzer result. "
-                    "It is a human assertion recorded on the case, included for "
+                    f"It is an assertion by {_esc(finding.operator)}, recorded for "
                     "completeness of the record. Nothing in this system supports or "
-                    "contradicts it.",
+                    "contradicts it, and no analysis was run to check it.",
                     s["alert"],
                 )
             ]
@@ -719,18 +720,22 @@ def _provenance(data: ReportData, s: dict[str, ParagraphStyle]) -> list[Any]:
     if data.custody:
         names = {str(e.id): e.filename for e in data.evidence}
         rows: list[list[Any]] = [
-            [Paragraph(h, s["cell_head"]) for h in ("When (UTC)", "File", "Action", "Detail")]
+            [Paragraph(h, s["cell_head"]) for h in ("When (UTC)", "By", "File", "Action", "Detail")]
         ]
         for row in data.custody:
             rows.append(
                 [
                     Paragraph(_dt(row.created_at, fmt="%Y-%m-%d %H:%M"), s["cell"]),
+                    # A chain of custody records who handled the item. A timestamp with
+                    # no name beside it is a log, not a chain — it says when, not who
+                    # was accountable.
+                    Paragraph(_esc(data.custody_operators.get(str(row.id), "unknown")), s["cell"]),
                     Paragraph(_esc(names.get(str(row.evidence_id), "&mdash;")), s["cell"]),
                     Paragraph(_esc(row.action), s["cell"]),
                     Paragraph(_esc(row.detail), s["cell"]),
                 ]
             )
-        out.append(_table(rows, [26 * mm, 34 * mm, 34 * mm, 66 * mm]))
+        out.append(_table(rows, [24 * mm, 30 * mm, 26 * mm, 26 * mm, 54 * mm]))
     else:
         out.append(Paragraph("No custody entries recorded.", s["body"]))
 
@@ -767,29 +772,39 @@ def _provenance(data: ReportData, s: dict[str, ParagraphStyle]) -> list[Any]:
                 s["body"],
             )
         )
+        # The audit chain is the source for *who* approved; the tool-call row is the
+        # source for the result hash. Neither alone carries both, so the two are
+        # joined on the action id.
+        by_action = {str(c.approved_action_id): c for c in approved}
         rows = [
             [
                 Paragraph(h, s["cell_head"])
-                for h in ("Tool", "Arguments (SHA-256)", "Result (SHA-256)", "Approval", "When")
+                for h in ("Approved by", "When", "Tool", "Arguments (SHA-256)", "Result (SHA-256)")
             ]
         ]
-        for call in approved:
+        for view in data.approvals or []:
+            call = by_action.get(view.action_id)
+            tool = view.tool or (call.tool if call else "")
+            args_hash = view.args_hash or (call.args_hash if call else "")
             rows.append(
                 [
-                    Paragraph(_esc(call.tool), s["cell"]),
-                    Paragraph(_wrap_hash(call.args_hash), s["cell"]),
+                    Paragraph(_esc(view.operator), s["cell"]),
+                    Paragraph(_dt(view.approved_at, fmt="%Y-%m-%d %H:%M"), s["cell"]),
+                    Paragraph(_esc(tool), s["cell"]),
+                    Paragraph(_wrap_hash(args_hash), s["cell"]),
                     Paragraph(
-                        _wrap_hash(call.result_hash) if call.result_hash else "&mdash;", s["cell"]
+                        _wrap_hash(call.result_hash) if call and call.result_hash else "&mdash;",
+                        s["cell"],
                     ),
-                    Paragraph(_wrap_hash(call.approved_action_id), s["cell"]),
-                    Paragraph(_dt(call.created_at, fmt="%Y-%m-%d %H:%M"), s["cell"]),
                 ]
             )
-        out.append(_table(rows, [30 * mm, 40 * mm, 36 * mm, 34 * mm, 20 * mm]))
+        out.append(_table(rows, [34 * mm, 24 * mm, 30 * mm, 42 * mm, 34 * mm]))
     else:
         out.append(
             Paragraph(
-                "No automated action on this case required a person's approval.",
+                "No automated action on this case required a person's approval. Had "
+                "one been proposed and approved, it would appear here with the "
+                "person who approved it.",
                 s["body"],
             )
         )
