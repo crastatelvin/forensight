@@ -886,7 +886,13 @@ UI always has.
 
 ## Phase 9 — Expand analyzers + Tier-B/Tier-C handling
 **Build**
-- [ ] P9.B1 Fingerprint — NIST NBIS (MINDTCT+BOZORTH3)
+- [ ] P9.B1 Fingerprint — NIST NBIS. **Dropped deliberately.** Spoof detection (PAD)
+      and individualization are different techniques; the only reachable fingerprint
+      dataset is CC BY-NC-ND-4.0, whose NoDerivatives clause forbids the derived golden
+      set; and NBIS itself is unavailable here (no pip package, no apt package,
+      libfprint's GitHub 404s from this network — it is C). Vendoring libfprint's
+      sources into the image is a real image-size and supply-chain cost nobody has
+      agreed to. Recorded as dropped rather than left quietly open.
 - [ ] P9.B2 Speaker — SpeechBrain ECAPA-TDNN
 - [ ] P9.B3 Deepfake — Xception/EfficientNet ONNX
 - [ ] P9.B4 Gunshot audio — YAMNet/PANNs
@@ -999,7 +1005,7 @@ each of the six. Results, so the next person does not repeat this:
 | Fingerprints (B1) | `UniDataPro/biometric-fingerprint-spoofing`, CC BY-NC-**ND**-4.0 | Two disqualifiers. It is **spoof detection (PAD)**, not individualization — a different problem from NBIS matching, so a golden test on it would not test what B1 asks. And **ND** forbids derivatives, which a derived golden fixture set is. |
 | Fingerprints (B1, alt) | `ArwaAbdul/Fingerprint_split_90_10` | No licence stated at all. Not usable for a project that pins licensing. |
 | Speaker pairs (B2) | `DynamicSuperbPrivate/SpeakerVerification_Voxceleb1Train` | VoxCeleb is research-only with a signed agreement; the HF mirror is not the licence. |
-| Deepfake (B3) | `nuriachandra/Deepfake-Eval-2024`, CC BY-SA-4.0 | Correct licence and plausible, but `datasets-server` returns **no feature columns** for it, so it is not in a fetchable standard layout. Would need manual inspection before any of it could be pinned. |
+| Deepfake (B3) | `nuriachandra/Deepfake-Eval-2024`, CC BY-SA-4.0 | **Retracted — it is `gated: manual`.** I recommended this one earlier on the strength of its licence alone and was wrong. It requires institutional email, institution, and attested prior work in deepfake detection; its terms restrict use to evaluation. Every *ungated* deepfake set found states **no licence at all**. |
 | Handwriting (B5) | `1aurent/individuality-of-handwriting` | Licence tag reads `license:unknown`. |
 | Authorship (B6) | `manu/eli5_authorship_attribution` | Only 5 downloads, no licence stated, and it is Reddit/ELI5 authorship — not the forensic authorship the plan means. |
 
@@ -1023,18 +1029,40 @@ up — which is worth having, and is not what T9.1 asks for. Pinning it would le
 module with no working weights, or weights for the wrong task, pass the phase's exit
 criterion. That is precisely the simulation this project exists to refuse.
 
-**What would actually unblock them, in the order I would do it:**
-1. **B3 deepfake first** — it has the one candidate with a clean licence (CC BY-SA-4.0)
-   and a real published benchmark behind the model. Confirming that dataset's layout is
-   a bounded piece of work, and it would prove the whole acquisition path end to end
-   before the other five are attempted.
-2. **A per-dataset `FIXTURES.md`** recording source URL, licence text, and the SHA-256
-   of every pinned file, alongside `fetch_models.sh`. Without that, "we pinned a
-   fixture" is unfalsifiable two months later.
-3. **B1 needs a decision, not a search.** Spoof detection and individualization are
-   different techniques, and NBIS is unavailable here. Either vendor libfprint's C
-   sources into the image (a real image-size and supply-chain cost, and a deliberate
-   decision), or drop B1 and say so.
+**The two decisions, made.**
+
+- **ShareAlike is refused for fixtures**, despite this repository having no `LICENSE`
+  file and so nothing for SA to conflict with today. Fixtures are copied *into* the
+  repo, so the obligation would attach silently to whoever adds a licence later,
+  binding them to a term they never chose. **There is still no `LICENSE` file**, which
+  is a real gap for a project intended to be open source.
+- **B1 (NBIS fingerprint) is dropped rather than left open.** Spoof detection and
+  individualization are different techniques, the only reachable fingerprint set is
+  ND-licensed, and NBIS itself is unavailable here (no pip package, no apt package,
+  libfprint 404s). Vendoring libfprint's C sources into the image is a real image-size
+  and supply-chain cost that nobody has agreed to. Leaving it ticked-but-empty would
+  have been worse than saying so.
+
+**What was built instead: `scripts/fetch_fixtures.py`, a licence gate.**
+
+The research showed the blocker is *licensing*, not downloading — so the licensing
+question is now answered in code rather than in prose. It refuses, with a reason:
+
+- **gated** sources (`nuriachandra/Deepfake-Eval-2024` among them), because a gate is a
+  human accepting terms and fetching around it puts those terms into the repository;
+- **unstated** licences, because unstated is not permission and that is the common case;
+- **ND**, because a golden fixture set is a derivative;
+- **SA**, per the decision above;
+- everything not on a closed allowlist, so `other` and `unknown` cannot slip through.
+
+Gating happens **before any network call**, asserted by a test whose fetch function
+*raises* if invoked — otherwise the gate would be advisory and would already have
+pulled bytes from a source whose terms say it should not have. Every pin records URL,
+SHA-256, licence and role in a manifest, so the provenance is readable at the point of
+use rather than only in the git history. This mirrors `fetch_models.sh`.
+
+Fourteen tests, and the refusals are the tests: a gate never seen refusing is a gate
+that might not work — the same argument as the CI security scanners.
 
 - [ ] T9.1 Each new Tier-A analyzer has deterministic golden tests
 - [ ] T9.2 NBIS matching high / non-matching low on fixtures

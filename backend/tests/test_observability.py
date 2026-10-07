@@ -161,7 +161,6 @@ async def test_a_scrape_is_counted_but_no_rule_alerts_on_it(client: AsyncClient)
     scrape every 15 seconds is a flat, reliable source of traffic with nothing to do
     with anyone's latency or error rate.
     """
-    before = series("forensight_http_requests_total", "route")
     await client.get("/metrics")
     assert "/metrics" in series("forensight_http_requests_total", "route")
 
