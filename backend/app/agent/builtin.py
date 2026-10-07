@@ -16,12 +16,29 @@ from __future__ import annotations
 import uuid
 from typing import Any, cast
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.agent.tools import Tool, ToolContext, ToolError, define_tool
 
 
-class RunAnalysisArgs(BaseModel):
+class ToolArgs(BaseModel):
+    """Base for every tool's argument model.
+
+    `extra="forbid"` is the load-bearing part. Pydantic's default is to *ignore*
+    unknown fields, which means a model that invents `confidence=0.9` gets a
+    confident-looking result back and no indication that its constraint was
+    discarded. Forbidding turns that into a legible validation error the model can
+    read and correct — which is the whole reason it can retry successfully.
+
+    Found by the tool contract tests (`tests/test_agent_tool_contracts.py`), which
+    exist to catch exactly this in a tool added later rather than in one reviewed
+    today.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RunAnalysisArgs(ToolArgs):
     evidence_id: uuid.UUID = Field(description="Evidence to analyse")
     module: str = Field(default="byte-entropy", description="Analyzer module name", max_length=64)
     params: dict[str, Any] = Field(default_factory=dict, description="Module parameters")
@@ -183,8 +200,14 @@ def _model_store(settings: Any) -> Any:
     return ModelStore(settings)
 
 
-class GetCaseArgs(BaseModel):
-    include_evidence: bool = Field(default=True)
+class GetCaseArgs(ToolArgs):
+    include_evidence: bool = Field(
+        default=True,
+        description=(
+            "Include the case's evidence list. Turn it off when only the case's own "
+            "metadata is wanted, which is a much smaller answer."
+        ),
+    )
 
 
 @define_tool(
@@ -220,8 +243,13 @@ async def get_case(ctx: ToolContext, args: GetCaseArgs) -> dict[str, Any]:
     return out
 
 
-class SearchEvidenceArgs(BaseModel):
-    limit: int = Field(default=20, ge=1, le=100)
+class SearchEvidenceArgs(ToolArgs):
+    limit: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum evidence items to return. Defaults to 20.",
+    )
 
 
 @define_tool(
@@ -258,9 +286,18 @@ async def search_evidence(ctx: ToolContext, args: SearchEvidenceArgs) -> dict[st
     return {"evidence": out}
 
 
-class RecallMemoryArgs(BaseModel):
-    query: str = Field(min_length=1, max_length=2000)
-    limit: int = Field(default=5, ge=1, le=50)
+class RecallMemoryArgs(ToolArgs):
+    query: str = Field(
+        min_length=1,
+        max_length=2000,
+        description="Free text to search earlier notes for.",
+    )
+    limit: int = Field(
+        default=5,
+        ge=1,
+        le=50,
+        description="Maximum notes to return, most relevant first.",
+    )
 
 
 @define_tool(
@@ -288,14 +325,31 @@ async def recall_memory(ctx: ToolContext, args: RecallMemoryArgs) -> dict[str, A
     return {"memories": rows}
 
 
-class WriteMemoryArgs(BaseModel):
-    content: str = Field(min_length=1, max_length=8000)
-    kind: str = Field(default="semantic", pattern="^(episodic|semantic)$")
+class WriteMemoryArgs(ToolArgs):
+    content: str = Field(
+        min_length=1,
+        max_length=8000,
+        description=(
+            "The note itself, in plain text. Notes are searched by meaning later, so "
+            "write what the observation *is* rather than a conclusion about it."
+        ),
+    )
+    kind: str = Field(
+        default="semantic",
+        pattern="^(episodic|semantic)$",
+        description=(
+            "'semantic' for durable knowledge about this case; 'episodic' for "
+            "something that happened during a run."
+        ),
+    )
 
 
 @define_tool(
     name="write_memory",
-    description="Store a durable note for this case.",
+    description=(
+        "Store a durable note for this case. Changes record state, so it requires "
+        "human approval before it is applied."
+    ),
     args_model=WriteMemoryArgs,
     state_changing=True,
 )
@@ -327,9 +381,13 @@ async def write_memory(ctx: ToolContext, args: WriteMemoryArgs) -> dict[str, Any
     return {"memory_id": str(row.id), "sanitised": findings}
 
 
-class UpdateFindingArgs(BaseModel):
-    title: str = Field(min_length=1, max_length=512)
-    body: str = Field(default="", max_length=20000)
+class UpdateFindingArgs(ToolArgs):
+    title: str = Field(min_length=1, max_length=512, description="One line stating the finding.")
+    body: str = Field(
+        default="",
+        max_length=20000,
+        description="The reasoning and observations behind it, in plain text.",
+    )
     #: Analyzer result ids this finding rests on, as recorded in `detail.result_id`
     #: by `run_analysis` or `list_results`.
     #:
@@ -432,9 +490,21 @@ async def update_case_finding(ctx: ToolContext, args: UpdateFindingArgs) -> dict
     }
 
 
-class QueryCasesArgs(BaseModel):
-    q: str = Field(min_length=1, max_length=256)
-    limit: int = Field(default=20, ge=1, le=100)
+class QueryCasesArgs(ToolArgs):
+    q: str = Field(
+        min_length=1,
+        max_length=256,
+        description=(
+            "Text to match against case number, title and description. Scoped to "
+            "cases this run's user may see, so a match is not a leak."
+        ),
+    )
+    limit: int = Field(
+        default=20,
+        ge=1,
+        le=100,
+        description="Maximum cases to return.",
+    )
 
 
 @define_tool(

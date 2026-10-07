@@ -915,7 +915,23 @@ UI always has.
       because `/auth/login` allows five attempts a minute and a suite that signs in
       per test spends the budget and fails on a 429 that looks nothing like the bug
       being hunted.
-- [ ] X3 Contract tests for agent tools
+- [x] X3 Tool contracts, asserted against the **registry** rather than tool by
+      tool. A per-tool suite is a list someone has to remember to extend, and the
+      tool added without one is exactly the tool nobody checked.
+      Four contracts, in descending order of damage: `state_changing` matches an
+      explicit list (a writing tool with the flag unset applies changes with no human
+      in the loop and nothing objects); every state-changing tool's description says
+      a person must approve it; every argument is described and required-ness is
+      honest; every tool's schema reaches the model intact.
+      **Found three real violations on the first run:**
+      - **No args model forbade unknown fields.** Pydantic ignores them by default, so
+        a model that invents `confidence=0.9` gets a confident-looking result back and
+        no indication its constraint was discarded. Fixed once, in a `ToolArgs` base
+        class, so a tool added tomorrow cannot skip it.
+      - **`write_memory` never said it needed human approval.** `update_case_finding`
+        did. The model proposing a write had no way to know a person would be asked.
+      - **Most argument fields had no description** — the model emits arguments from
+        the schema, so an undescribed field is one it guesses at.
 - [ ] X4 Agent eval harness (cites sources, respects HITL)
 - [x] X5 Golden tests for every analyzer, on generated fixtures, no simulation.
       Exact floats are pinned, not `approx`: the analyzer's `model_version` already
