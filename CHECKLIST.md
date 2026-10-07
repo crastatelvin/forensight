@@ -1180,17 +1180,35 @@ be made deliberately rather than absorbed.
         container-network name, so `"not a url at all"` was permitted as local. Hosts
         are now validated as hostnames *before* classification; otherwise the control's
         classification can be talked past by a typo.
-- [~] P10.B5 Ops docs + load testing — **runbooks done; load tests, pen-test and two
-      guides not done.** `docs/runbook.md` covers report signing, job statuses,
-      seeding a parked approval and the model store, and is written from things that
-      broke. **Not done: `locustfile.py` and T10.4.** A load test here needs a
-      decision before it needs code: what "sustains throughput" means when the
-      expensive work is an ONNX forward pass on a shared CPU and the queue depth is
-      the only real buffer. Writing a Locust file that asserts a number nobody chose
-      would produce a green check that means nothing — the same failure the backup
-      exit code turned out to be. **Not done: threat model and admin guide.** The
-      security posture is documented where it was built (egress, backups, signing,
-      Tier-C refusals), but those are decisions, not a document an auditor reads.
+- [~] P10.B5 Ops docs done; **load tests and a penetration test not done.**
+      **Threat model brought up to date, and it had drifted badly.** It was written
+      for Phase 0–3 and still said the agent, analyzers, reports and frontend "need
+      their own pass" — all of which shipped without it. A security document describing
+      a system smaller than the one deployed is *worse* than none, because it is read
+      as current. That is the same failure mode as the stale capability list, and it is
+      now called out in the document itself so the next drift is recognisable.
+      Phases 5–10 are now covered: signed reports, pinned model artifacts, the analyzer
+      registry's isolation, queue provenance, the drain ordering, egress, backups, and
+      the security-gate verification. Added a section stating the agent's authority
+      plainly (cannot write without a person, cannot cite what does not exist, cannot
+      widen its own scope, cannot reach the network) — followed by the statement that
+      the *residual* risk is not a jailbreak but a correctly-scoped, correctly-cited
+      agent whose conclusion a human still reads as a finding, which is what the
+      tiering is for and which no prompt hardening substitutes for.
+      **Open items are now written down**, because an open item nobody recorded is an
+      open item nobody is working on: audit tail truncation, per-IP-only rate limiting,
+      the absent `analysis_jobs_total` samples, no pen-test, and no PITR.
+      Admin guide now covers egress, backups, draining, the constrained-host profile
+      and alerting — including the three shutdown behaviours that surprise people
+      (`/healthz` stays 200, reads keep working, `dependencies` is empty).
+      **Not done: `locustfile.py` and T10.4.** It needs a decision before it needs
+      code — what "sustains throughput" means when the expensive work is an ONNX
+      forward pass on a shared CPU and queue depth is the only real buffer. A Locust
+      file asserting a number nobody chose is a green check that means nothing, which
+      is the same failure `pg_restore`'s exit code turned out to be.
+      **Not done: penetration test.** Bandit, Semgrep, pip-audit, Trivy and gitleaks
+      run in CI and are themselves proven to fail on planted problems — that is
+      evidence the scanners work, not evidence the application has no findings.
 - [x] P10.B6 Constrained-host profile (`android-dev`): CPU-only ONNX, capped local
       model, GPU modules degraded cleanly.
       **Found a profile that could not run the platform.** `worker` was in `core`
