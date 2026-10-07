@@ -31,6 +31,8 @@ from app.agent.repository import (
     list_tool_calls,
     update_run,
 )
+from app.agent.second_opinion import describe as second_opinion_describe
+from app.agent.second_opinion import summarise
 from app.agent.security import InjectionDetected, validate_operator_instruction
 from app.agent.tools import tool_catalog
 from app.agent.types import AgentState, Citation, Decision, RunStatus, Step
@@ -371,6 +373,89 @@ async def start_run(
         case_title=case.title,
     ).begin(state)
     return _run_payload(run, await load_state(session, run.id))
+
+
+@router.get("/cases/{case_id}/second-opinion")
+async def second_opinion(
+    case_id: uuid.UUID,
+    first: uuid.UUID,
+    second: uuid.UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> dict[str, Any]:
+    """Compare two runs over the same case and name where they disagree.
+
+    **This is not corroboration, and the response says so unconditionally.** Both runs
+    go through the same model and the same provider, so agreement between them is
+    evidence about the model's consistency and nothing about whether either conclusion
+    is right — a confidently wrong model is consistently wrong. Independent
+    corroboration needs an independent source.
+
+    The output is therefore **divergence**: claims one run reached and the other did
+    not, and claims both made while resting on different analyzer results. No run is
+    ranked and no winner is declared; picking for the examiner removes the judgement
+    that made them the examiner.
+
+    Claims are matched on the **set of result ids behind them**, not their prose —
+    two runs reaching one conclusion word it differently, and the citations are what
+    identify it.
+
+    Both runs are read through `_scoped_run`, so a run belonging to another case or
+    another officer's case is a plain 404 and discloses nothing.
+    """
+    case = await scoped_case(session, case_id, user)
+    first_run = await _scoped_run(session, first, user)
+    first_state = await load_state(session, first_run.id)
+    second_run = await _scoped_run(session, second, user)
+
+    if first_run.case_id != case.id or second_run.case_id != case.id:
+        # Both runs are individually readable by this caller, but they belong to a
+        # different case than the one in the path. Comparing across cases would answer
+        # a question about two investigations at once, which is not what was asked.
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    second_state = await load_state(session, second_run.id)
+
+    # Serialised exactly as `AgentState.to_dict` builds them, so the citation shape
+    # compared here is the shape stored in the checkpoint rather than a second one.
+    def _claims(state: AgentState | None) -> list[dict[str, Any]]:
+        if state is None:
+            return []
+        return [
+            {"text": c.text, "citations": [citation.as_dict() for citation in c.citations]}
+            for c in state.claims
+        ]
+
+    first_claims = _claims(first_state)
+    second_claims = _claims(second_state)
+
+    payload = summarise(
+        first_run=first_run.id,
+        second_run=second_run.id,
+        first_claims=first_claims,
+        second_claims=second_claims,
+    )
+
+    await append_audit(
+        session,
+        actor_id=uuid.UUID(user.id),
+        action="agent.second_opinion.read",
+        target=str(case.id),
+        payload={
+            "first_run": str(first_run.id),
+            "second_run": str(second_run.id),
+            "divergence_count": payload["divergence_count"],
+        },
+    )
+    await session.commit()
+
+    return {
+        "case_id": str(case.id),
+        "first": _run_payload(first_run, first_state),
+        "second": _run_payload(second_run, second_state),
+        "comparison": payload,
+        **second_opinion_describe(),
+    }
 
 
 @router.get("/runs/{run_id}")

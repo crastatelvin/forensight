@@ -1818,7 +1818,48 @@ that might not work — the same argument as the CI security scanners.
       because it trusted the duplicate. Nothing renders entities yet, so nothing had
       broken, which is the only reason it is worth fixing now rather than when the
       first entity UI reads `undefined`.
-- [ ] FI-5 Agent second-opinion reviewer mode
+- [x] FI-5 Agent second-opinion reviewer mode. `GET /agent/cases/{id}/second-opinion
+      ?first=&second=` — two runs over the same objective, side by side, with their
+      disagreements named.
+      **A second opinion from the same model is not corroboration, and the design is
+      built so it cannot be misread.** `resolve_model` picks one provider; a second run
+      through it is a second *sample* from the same distribution, not a second witness.
+      If both runs agree that is evidence about the model's **consistency and nothing
+      about whether either conclusion is right** — a confidently wrong model is
+      consistently wrong, and agreement is exactly what that looks like. Two agreeing
+      reports presented as corroboration would be the most misleading thing this system
+      could do with its own output, so `is_corroboration: false` is set
+      **unconditionally** — including when the runs happen to agree, which is the case
+      most likely to be over-read.
+      **The output is divergence, not a verdict.** What is useful about running an
+      investigation twice is where the two *disagree*: a claim present in one and
+      absent from the other is either a gap in the first or noise in the second, and
+      either way it is where a human should look. **No run is ranked and no winner is
+      declared** — picking for the examiner removes the judgement that made them the
+      examiner.
+      **Claims are matched on the set of result ids behind them, not their prose.** Two
+      runs reaching one conclusion word it differently, and matching on text would
+      report every paraphrase as a disagreement and bury the real ones. Three divergence
+      kinds: `only_in_first` / `only_in_second` (the signal), `different_basis` (both
+      said it, resting on different evidence — reads as agreement in a summary and is
+      not), and `unsubstantiated` (a claim with **no citations at all**, which
+      `ProvenanceGuard` should make impossible; it appearing means the guard was
+      bypassed, so it surfaces rather than being treated as a link whose signature
+      happens to be empty).
+      Both runs are read through `_scoped_run`, so a run from another case or another
+      officer's case is a plain 404 and discloses nothing; a run readable on its own but
+      belonging to a different case than the path names is also 404, because comparing
+      across two investigations at once is not what was asked. Claims serialise through
+      the same shape `AgentState.to_dict` builds, so what is compared is what is stored
+      in the checkpoint rather than a second serialisation that could drift. Reads are
+      audited as `agent.second_opinion.read`.
+      **One test bug worth recording**: `test_no_winner_is_ever_declared` swept the whole
+      payload for the words "winner", "preferred" and "rank" — and failed on the
+      disclaimer text *"this module names no winner and ranks nothing"*, i.e. on the
+      very sentence making the guarantee. Narrowed to scan field *names* with the prose
+      fields excluded. A substring assertion over prose is how a test ends up demanding
+      the removal of the warning it was written to enforce.
+      11 tests.
 
 ## Open defect found while verifying FI-1 (not caused by it)
 
