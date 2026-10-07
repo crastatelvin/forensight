@@ -1429,6 +1429,29 @@ that might not work — the same argument as the CI security scanners.
 
 ---
 
+## Licensing
+- [x] Apache 2.0 for the source, with the model weights explicitly excluded.
+      **There was no `LICENSE` file at all** while this project was described as
+      completely open source, which is the sort of gap that is invisible until
+      someone tries to use or contribute to it.
+      Chosen over MIT for the **patent grant** — a lab may well deploy this
+      commercially, and Apache 2.0 grants patent rights explicitly where MIT grants
+      none. Its attribution requirements also fit how this project already works: every
+      weight is digest-pinned and its source recorded, which is the same discipline
+      section 4(d) codifies.
+      **`THIRD_PARTY_NOTICES.md` exists because a licence on the code does nothing for a
+      file downloaded from someone else's server.** It names each pinned artifact, its
+      upstream, its digest and its terms — which is checkable rather than aspirational,
+      because the digest in `fetch_models.sh` is the digest you get.
+      It also flags the question that is easy to miss: **training-data terms are
+      separate from the weights' own licence.** SFace and YuNet are MIT in the OpenCV
+      Zoo and were trained on VGGFace2 and WIDER FACE respectively; the weights' licence
+      says nothing about the training data's.
+      Note: the README build status was also stale ("Phase 5 complete; Phase 6
+      begun") and is now current. A README that describes a smaller project than the
+      one shipped is the same drift as a stale capability list — it is just read more
+      often.
+
 ## Cross-cutting quality gates (enforced every phase)
 - [x] X1 pytest unit+integration on live Postgres + MinIO (CI `integration` job)
 - [x] X2 Playwright E2E against the real compose stack (CI `e2e` job). 11

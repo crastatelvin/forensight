@@ -4,13 +4,14 @@ Production-grade forensic investigation platform: evidence vault with WORM
 storage, hash-chained audit, chain-of-custody, and a real AI agent (tools +
 memory).
 
-> Build status: **Phase 5 complete; Phase 6 begun** (see `CHECKLIST.md`).
+> Build status: **Phases 0–8 complete; Phase 9–10 partially** (see `CHECKLIST.md`,
+> which records what is *not* done and why).
 > The agent core is real: it plans, calls typed and audited tools, refuses to
 > assert anything it cannot cite to an analyzer result, and pauses for human
 > approval before changing state. A live model (`qwen2.5:3b`) drives the tool loop
 > end to end and produces a sourced report — see `CHECKLIST.md` T5.10.
 >
-> **Phase 6 complete.** Six analyzers ship. `byte-entropy` is a deterministic
+> **Seven analyzers ship.** `byte-entropy` is a deterministic
 > reference module. The
 > image modules are real forensic techniques — `image-ela` scores compression
 > anomalies against the image's own error baseline, `image-exif` scores
@@ -25,6 +26,15 @@ memory).
 > threshold is the model vendor's published operating point, not one calibrated on
 > this deployment.
 
+> **Operations ship too, and are tested rather than asserted.** Backups verify
+> **cryptographically** — evidence is content-addressed, so `verify` recomputes each
+> digest rather than checking that a file exists — and refuse to restore a backup that
+> does not verify. Egress is enforced by a host allowlist whose empty value permits no
+> public host, so air-gapped is the default rather than a mode someone must switch on.
+> Shutdown drops readiness *before* tearing anything down. Alert rules are checked
+> against the metrics this build actually emits, because a rule that parses but never
+> fires produces a permanently green board.
+>
 > **Signed reports ship.** A case report is a PAdES-signed PDF carrying a SHA-256
 > manifest of the evidence and a provenance appendix — every finding resolved to its
 > analyzer, its score against its own threshold, the evidence digest, the analyzer
@@ -176,3 +186,24 @@ frames share a **camera**, never whether they share a person.
 
 Tier-A/B analyzer outputs are **investigative leads / visual similarity**, not
 courtroom individualization. This disclaimer is baked into the UI and reports.
+
+Tier-C disciplines — DNA, toxicology, pollen, entomology, ignitable-liquid and
+explosive residue, odour profiling — have **no scoring path at all**. Requesting one is
+refused with an explanation of what the discipline is and what to do instead, and no
+job row is created. That is deliberate: those are analytical-forensic disciplines where
+a plausible-looking score from a general-purpose model is most dangerous, because the
+output resembles data and lands in a report beside real findings. There is no
+`unsupported` status for them either — that would mean "this host cannot run it",
+implying a fix exists, and there is no host on which one does.
+
+## Licence
+
+Source code is **Apache 2.0** — see `LICENSE`.
+
+The **model weights are not covered by it.** They are fetched at provisioning time and
+digest-verified, and each keeps its own upstream terms; see
+`THIRD_PARTY_NOTICES.md`. Nothing third-party is committed to this repository.
+
+If you are considering a commercial deployment, read that file: the weights' terms
+are a separate question from the code's, and training-data terms are a further
+question again from the weights' own licence.
