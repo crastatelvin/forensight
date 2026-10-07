@@ -897,7 +897,54 @@ UI always has.
 - [ ] P9.B3 Deepfake — Xception/EfficientNet ONNX
 - [ ] P9.B4 Gunshot audio — YAMNet/PANNs
 - [ ] P9.B5 Handwriting/document similarity
-- [ ] P9.B6 Text authorship/phishing — DistilBERT
+- [x] P9.B6 Text authorship — `text-authorship`, Tier B. **Not DistilBERT, and the
+      measurement is the reason.** The plan named a DistilBERT model; tried first as the
+      obvious reading and it does not work. Two things were measured before anything
+      was written:
+      1. **A sentence-embedding model is the wrong tool.** `all-MiniLM-L6-v2` over
+         public-domain prose: same-author 0.12–0.49, different-author 0.04–0.48 —
+         the ranges overlap almost entirely. It is trained to score *what a passage is
+         about*, so it measures topic, and a score from it would look like authorship
+         attribution while measuring something else. That is the one substitution this
+         project refuses.
+      2. **Function-word stylometry is the right tool and still does not separate.**
+         Burrows' function-word list plus punctuation frequencies, on the committed
+         fixtures (three public-domain authors, two ~6000-word passages each):
+         same-author **0.9339–0.9882**, different-author **0.8865–0.9574** — an
+         overlap of **0.0235**. An Austen/Melville pair scores higher than one of the
+         same-author pairs.
+      **So the threshold is 0.94 and does not separate, and that is recorded rather than
+      tuned away.** Moving the number until the fixtures divide would have produced a
+      green test and a dishonest threshold. A 20 000-word probe *does* separate cleanly
+      (same 0.990 vs worst different 0.964) — deliberately not adopted, because fixing
+      a fixture size at the point where it makes the technique look good is fitting the
+      evidence to the result. Bigger fixtures are the honest next step, at ~100 KB each.
+      **No weights.** Pure numpy, fully deterministic, runs unchanged on the
+      constrained-host profile. This also dropped a 90 MB ONNX model and a tokenizer
+      dependency that would have been pinned for a module with nothing to compute.
+      Refuses short text, a missing reference, undecodable bytes, and two identical
+      documents (cosine 1.0 by definition is a tautology, not authorship evidence).
+      The reference is a second **evidence item** via `reference_evidence_id`, reusing
+      the executor's existing case-scoped, hash-verified resolution — the same path
+      `face-compare` and `image-prnu` use.
+      **Three defects found by building it, none by reading it:**
+      1. **The CLI gate rejected every fetch.** `check_gated` compared the flag's
+         *string* against `False` and `"auto"`, so the documented `--gated false`
+         was treated as gated and refused everything. The unit tests all passed
+         because they called the function with a bool — the path a user actually
+         takes was never exercised. Now covered by a test that walks the string forms.
+      2. **A silent zero.** The first passage derivation rejected any block containing
+         a newline and found **0 usable paragraphs out of 2696** — because Gutenberg
+         hard-wraps prose at ~70 columns. An empty result looks like "nothing to cut"
+         rather than "the filter is wrong", and it raised `IndexError` three frames
+         later instead of saying so.
+      3. **The test duplicated the code under test.** `fetch_all` gained a filename
+         suffix; the refetch test still spelled out the old path by hand, so it went on
+         pre-creating a file the code no longer looked at — its setup kept passing
+         while the behaviour it exists to test stopped being exercised. The rule now
+         has one owner (`fixture_path`) and the test asks for it.
+      Pattern worth keeping: in all three the test suite was green and the code was
+      wrong, and two of the three were only visible by running the tool.
 - [x] P9.B7 Geospatial correlation. `geo-correlate`, Tier B, pure algorithm.
       **No Shapely, no PostGIS.** The plan named both. What this actually needs is a
       distance between two points on a sphere — haversine over `math` — and the
@@ -1064,9 +1111,23 @@ use rather than only in the git history. This mirrors `fetch_models.sh`.
 Fourteen tests, and the refusals are the tests: a gate never seen refusing is a gate
 that might not work — the same argument as the CI security scanners.
 
-- [ ] T9.1 Each new Tier-A analyzer has deterministic golden tests
-- [ ] T9.2 NBIS matching high / non-matching low on fixtures
-- [ ] T9.3 Speaker same>threshold / different<threshold
+- [x] T9.1 Deterministic golden tests for the new analyzers. `text-authorship`
+      (`tests/test_golden_authorship.py`, 13 tests) on six pinned public-domain
+      passages. **The load-bearing test asserts a negative result**: same-author
+      similarity is *not* required to exceed the worst different-author pair, and the
+      measured ranges are pinned to five decimals. If a future change makes them
+      separate, that test fails and says to update the module and the threshold — so
+      the separation cannot appear quietly in a golden file and be read as evidence
+      the module works. The exact ranges also carry the pair counts (3 same-author,
+      12 different-author), because a run that stopped comparing everything would
+      otherwise still pass the range assertions.
+      The determinism test is worth noting: there are no weights, so this module does
+      not need the drift guard every other analyzer here needs — asserted rather than
+      assumed. And the fixture is checked for length directly, because a shortened
+      fixture would make the module refuse while the refusal tests kept passing, so
+      every pinned number would be describing a different experiment.
+- [ ] T9.2 NBIS matching high / non-matching low on fixtures — blocked, see P9.B1
+- [ ] T9.3 Speaker same>threshold / different<threshold — blocked, see P9.B2
 - [x] T9.4 Tier-B always labeled "not an identity match", in the disclaimer, the
       tier vocabulary, the capabilities list and the report. Nine tests, and the
       part worth having is the **reverse** checks: Tier A must *not* claim to refuse

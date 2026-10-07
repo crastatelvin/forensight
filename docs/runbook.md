@@ -324,8 +324,9 @@ lever and nothing else should need it.
 
 ### Analyzers
 
-Three modules ship today. `byte-entropy` is the Phase 4 reference module;
-`image-ela` and `image-exif` are the first real forensic techniques (P6.B3).
+Eight modules ship today. `byte-entropy` is the Phase 4 reference module; the image
+modules are the real forensic techniques. `/capabilities` is authoritative — it is
+generated from the registry, so it cannot drift from what the build actually ships.
 
 | Module | Tier | Score means | Needs |
 |---|---|---|---|
@@ -333,14 +334,26 @@ Three modules ship today. `byte-entropy` is the Phase 4 reference module;
 | `image-ela` | A | fraction of pixels with anomalously high error level | JPEG input |
 | `image-exif` | B | fraction of metadata indicators that fired | JPEG input |
 | `image-prnu` | B | correlation against a reference sensor fingerprint | 2 images from one camera |
+| `geo-correlate` | B | distance from the evidence's own GPS to a supplied place | image with EXIF GPS + `compare_to` |
 | `object-detect` | A | highest confidence among detections of the watchlist classes | pinned weights |
 | `face-compare` | B | cosine similarity between two faces' embeddings | pinned weights + 2 images |
+| `text-authorship` | B | cosine similarity between two documents' stylometric profiles | 2 text documents, ≥3000 words each |
+
+`image-prnu`, `face-compare` and `text-authorship` compare two documents and take the
+second as `params.reference_evidence_id` — an evidence id in the same case, resolved
+case-scoped and hash-verified before the comparison runs.
 
 ```bash
 curl -X POST localhost:8000/cases/$CASE/analyses \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"module":"image-ela","evidence_id":"'$EVID'"}'
 ```
+
+**`text-authorship` does not currently separate authors.** On its six public-domain
+fixtures, same-author similarity falls to 0.934 while a different-author pair reaches
+0.957. The threshold is a screening value that flags a pair for a human to read, not
+a determination — see `CHECKLIST.md` P9.B6 for the measurements and why the number was
+not moved until the fixtures divided.
 
 ### Model-backed analyzers
 

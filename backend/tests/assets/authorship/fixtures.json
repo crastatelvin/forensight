@@ -1,0 +1,65 @@
+{
+  "count": 6,
+  "fixtures": [
+    {
+      "licence": "publicdomain",
+      "note": "passage 0 cut from the pinned Project Gutenberg source pg1342.txt",
+      "observed": "f6ea322249d406e2acbdd8767be790d83de422f97907be6654124c7efe48a088",
+      "path": "authorship-austen-0-f6ea322249d406e2.txt",
+      "role": "authorship/austen/0",
+      "sha256": "f6ea322249d406e2acbdd8767be790d83de422f97907be6654124c7efe48a088",
+      "status": "derived",
+      "url": "gutenberg:austen#0"
+    },
+    {
+      "licence": "publicdomain",
+      "note": "passage 1 cut from the pinned Project Gutenberg source pg1342.txt",
+      "observed": "e1a170c13795ef5bf4d8d065b7b84c2fa095522aa68feaa37a8685f98e4b6ce4",
+      "path": "authorship-austen-1-e1a170c13795ef5b.txt",
+      "role": "authorship/austen/1",
+      "sha256": "e1a170c13795ef5bf4d8d065b7b84c2fa095522aa68feaa37a8685f98e4b6ce4",
+      "status": "derived",
+      "url": "gutenberg:austen#1"
+    },
+    {
+      "licence": "publicdomain",
+      "note": "passage 0 cut from the pinned Project Gutenberg source pg1661.txt",
+      "observed": "34c0d685788d4f9140d46f529c479adac5d895d4ceb66a7a85752c528be08b46",
+      "path": "authorship-melville-0-34c0d685788d4f91.txt",
+      "role": "authorship/melville/0",
+      "sha256": "34c0d685788d4f9140d46f529c479adac5d895d4ceb66a7a85752c528be08b46",
+      "status": "derived",
+      "url": "gutenberg:melville#0"
+    },
+    {
+      "licence": "publicdomain",
+      "note": "passage 1 cut from the pinned Project Gutenberg source pg1661.txt",
+      "observed": "2dec0b590616154c20c9dff8214f613bbdb46fb4553391caeb7c0c14984edf9c",
+      "path": "authorship-melville-1-2dec0b590616154c.txt",
+      "role": "authorship/melville/1",
+      "sha256": "2dec0b590616154c20c9dff8214f613bbdb46fb4553391caeb7c0c14984edf9c",
+      "status": "derived",
+      "url": "gutenberg:melville#1"
+    },
+    {
+      "licence": "publicdomain",
+      "note": "passage 0 cut from the pinned Project Gutenberg source pg84.txt",
+      "observed": "8ac9fc19166ca788edb324ef1bcd67581638f3f0c62131ee272aaf89d9e07606",
+      "path": "authorship-shelley-0-8ac9fc19166ca788.txt",
+      "role": "authorship/shelley/0",
+      "sha256": "8ac9fc19166ca788edb324ef1bcd67581638f3f0c62131ee272aaf89d9e07606",
+      "status": "derived",
+      "url": "gutenberg:shelley#0"
+    },
+    {
+      "licence": "publicdomain",
+      "note": "passage 1 cut from the pinned Project Gutenberg source pg84.txt",
+      "observed": "a35eb52439bb3ca0817dbc7e4806a7ec504ecc886b1cdac15da9e2e3d1849437",
+      "path": "authorship-shelley-1-a35eb52439bb3ca0.txt",
+      "role": "authorship/shelley/1",
+      "sha256": "a35eb52439bb3ca0817dbc7e4806a7ec504ecc886b1cdac15da9e2e3d1849437",
+      "status": "derived",
+      "url": "gutenberg:shelley#1"
+    }
+  ]
+}

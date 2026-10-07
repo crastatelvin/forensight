@@ -63,14 +63,26 @@ def test_nd_is_refused_with_its_reason_stated() -> None:
     assert "NoDerivatives" in message
 
 
-def test_sa_is_refused_even_though_this_repo_has_no_licence() -> None:
+def test_sa_is_refused_and_this_repo_now_actually_has_a_licence() -> None:
     """A deliberate decision, tested so it cannot change by accident.
 
-    There is no `LICENSE` file here, so ShareAlike conflicts with nothing today. It is
-    refused anyway because fixtures get copied into the repository and the obligation
-    would then bind whoever adds a licence later to a term they never chose.
+    This test used to assert the opposite of what its name said: that there was *no*
+    `LICENSE` file, so ShareAlike conflicted with nothing and was refused on foresight
+    alone. The repository now carries Apache 2.0, so there is a real conflict and the
+    foresight argument is no longer the only thing holding it up.
+
+    Both halves are asserted. The refusal is the decision; the licence being present
+    is the reason it is now a compatibility question rather than a precaution, and
+    dropping the licence file would otherwise silently make this test assert something
+    stale again.
     """
-    assert not pathlib.Path(__file__).resolve().parents[2].joinpath("LICENSE").exists()
+    licence = pathlib.Path(__file__).resolve().parents[2].joinpath("LICENSE")
+    assert licence.exists(), (
+        "the repository is Apache 2.0 now, so ShareAlike fixtures conflict with it "
+        "directly rather than only by foresight. If that licence changed, update this "
+        "test's reasoning rather than deleting the assertion."
+    )
+    assert "Apache License" in licence.read_text()
 
     with pytest.raises(ff.FixtureRefused, match="ShareAlike"):
         ff.Fixture(url="u", sha256="a" * 64, licence="cc-by-sa-4.0", role="f/p").check_licence()
@@ -268,7 +280,7 @@ def test_a_present_fixture_with_the_wrong_bytes_is_re_fetched(tmp_path: pathlib.
     fixture = ff.Fixture(
         url="https://example.org/x", sha256=digest, licence="cc-by-4.0", role="f/p"
     )
-    destination = tmp_path / f"{fixture.role.replace('/', '-')}-{digest[:16]}"
+    destination = ff.fixture_path(tmp_path, fixture)
     destination.write_bytes(b"corrupted by something")
 
     class _Response:
@@ -308,3 +320,20 @@ def test_an_unreachable_source_is_refused_with_the_url(tmp_path: pathlib.Path) -
         ff.urllib.request.urlopen = original  # type: ignore[assignment]
 
     assert not destination.exists()
+
+
+def test_the_cli_string_form_of_gated_is_understood() -> None:
+    """`--gated false` is the ordinary invocation, and it must not be read as gated.
+
+    The first version compared the flag's *string* against `False` and `"auto"`, so
+    the documented command refused every fetch with "this dataset is gated". The unit
+    tests all passed because they called the function with a bool — the path a user
+    actually takes was never exercised.
+
+    A test that only covers the function and not its own CLI is how that survived.
+    """
+    for value in ("false", "no", "0", "", "auto"):
+        ff.check_gated(value)  # must not raise
+    for value in ("manual", "true", "yes", "1", "external", "auto-approval"):
+        with pytest.raises(ff.FixtureRefused, match="gated"):
+            ff.check_gated(value)

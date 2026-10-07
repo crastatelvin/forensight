@@ -43,11 +43,39 @@ Everything is fetched at provisioning time and digest-verified.
 
 ## Fixtures
 
-No forensic fixtures are pinned yet. `scripts/fetch_fixtures.py` exists and enforces a
-licence allowlist — it refuses gated sources, sources with no stated licence, and
-CC BY-ND and CC BY-SA — but the Phase 9 fixture sets are not currently obtainable in a
-form that satisfies it. See `CHECKLIST.md` under P9.B1–B6 for the per-analyzer
-research, including why each candidate was rejected.
+### Public-domain prose (`text-authorship`)
+
+Six excerpts in `backend/tests/assets/authorship/`, cut deterministically from three
+novels downloaded from [Project Gutenberg](https://www.gutenberg.org). They are in the
+United States public domain, which places them outside copyright entirely — the
+clearest licence position available and the reason these were chosen over every
+labelled dataset researched for Phase 9.
+
+| Author | Work | Gutenberg ID |
+|---|---|---|
+| Jane Austen | *Pride and Prejudice* | 1342 |
+| Herman Melville | *Moby-Dick* | 1661 |
+| Mary Shelley | *Frankenstein* | 84 |
+
+The full texts are 450 KB–1.3 MB each and are not committed; the excerpts are, at
+~6000 words each. `scripts/fetch_fixtures.py --gutenberg` re-derives them from a
+digest-verified source and refuses to write bytes that do not match the pin, so a
+changed derivation fails loudly instead of silently invalidating the pinned scores.
+
+**These fixtures do not support the conclusion one might assume.** The six excerpts do
+not separate by author — same-author similarity falls to 0.934 while a different-author
+pair reaches 0.957. `tests/test_golden_authorship.py` asserts that overlap rather than
+tuning a threshold until it disappears, and `CHECKLIST.md` under P9.B6 records why
+fixing the fixture size at the point where it flatters the technique was rejected.
+
+### Not pinned
+
+The remaining Phase 9 fixture sets (fingerprint, speaker, deepfake, gunshot,
+handwriting) are not obtainable in a form the allowlist accepts — every ungated
+candidate states no licence, and the ones that do are gated, non-commercial, or No
+Derivatives. `scripts/fetch_fixtures.py` enforces the allowlist and refuses all of
+them. See `CHECKLIST.md` under P9.B1–B5 for the per-analyzer research, including why
+each candidate was rejected.
 
 ## Reporting a licence problem
 

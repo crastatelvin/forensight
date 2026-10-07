@@ -11,7 +11,7 @@ memory).
 > approval before changing state. A live model (`qwen2.5:3b`) drives the tool loop
 > end to end and produces a sourced report — see `CHECKLIST.md` T5.10.
 >
-> **Seven analyzers ship.** `byte-entropy` is a deterministic
+> **Eight analyzers ship.** `byte-entropy` is a deterministic
 > reference module. The
 > image modules are real forensic techniques — `image-ela` scores compression
 > anomalies against the image's own error baseline, `image-exif` scores
@@ -20,7 +20,11 @@ memory).
 > YOLOv4 weights on
 > `onnxruntime`, and `face-compare` runs pinned YuNet + SFace for one-to-one face
 > verification; both are digest-verified before load and the agent invokes them
-> through `run_analysis`. **Two capabilities are honestly missing**: the object
+> through `run_analysis`. `text-authorship` compares function-word and punctuation
+> frequencies across two documents — pure numpy, no weights, and its threshold
+> **does not separate the six public-domain fixtures it was measured on**, which
+> `CHECKLIST.md` records rather than tunes away. **Three capabilities are honestly
+> missing**: the object
 > detector cannot find weapons (COCO has no firearm class, so its watchlist is
 > `knife`/`scissors` and a nil result says nothing about guns), and the face
 > threshold is the model vendor's published operating point, not one calibrated on
@@ -52,7 +56,7 @@ memory).
 |---|---|
 | `backend/` | FastAPI API gateway (auth, REST, WebSocket, OpenAPI) |
 | `backend/app/agent/` | Autonomous agent: graph, tools, provenance guard, memory, HITL |
-| `backend/workers/` | Analysis workers (Dramatiq; four analyzers registered, see `docs/runbook.md`) |
+| `backend/workers/` | Analysis workers (Dramatiq; eight analyzers registered, see `docs/runbook.md`) |
 | `frontend/` | Next.js (App Router, TypeScript, Tailwind v4); case workspace, agent console, evidence viewer, report download and signature check |
 | `backend/app/reports/` | Signed report generation (PAdES), the evidence manifest, and the provenance appendix |
 | `infra/` | Docker Compose, deployment, observability configs |
@@ -156,8 +160,13 @@ Two independent layers, both required:
 | `image-ela` | A | fraction of pixels with anomalously high error levels |
 | `image-exif` | B | fraction of metadata indicators that fired |
 | `image-prnu` | B | correlation against a reference sensor fingerprint |
+| `geo-correlate` | B | distance from the evidence's own GPS to a supplied place |
 | `object-detect` | A | highest confidence among watchlist detections |
 | `face-compare` | B | cosine similarity between two faces' embeddings |
+| `text-authorship` | B | cosine similarity between two documents' stylometric profiles |
+
+Four of these load pinned weights; the other four are pure algorithms and run
+unchanged on the constrained-host profile.
 
 All run on CPU; no GPU module has been written, so nothing depends on one.
 
@@ -179,8 +188,10 @@ it) is recorded as `not_applicable` with no result row, so "could not measure" i
 never rendered as "measured zero". Each module documents its own limitations in the
 result payload — that `object-detect` cannot detect firearms because COCO has no
 firearm class, that `face-compare` verifies (1:1) but never identifies (1:N)
-against a threshold not calibrated here, and that `image-prnu` reports whether two
-frames share a **camera**, never whether they share a person.
+against a threshold not calibrated here, that `image-prnu` reports whether two
+frames share a **camera**, never whether they share a person, and that
+`text-authorship` compares writing habits rather than identifying a person, with a
+threshold that does not currently separate authors.
 
 ## Honesty clause
 

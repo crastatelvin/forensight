@@ -68,6 +68,7 @@ def register_all() -> None:
         image_exif,
         image_prnu,
         object_detect,
+        text_authorship,
     )
 
     for module in (
@@ -78,6 +79,7 @@ def register_all() -> None:
         object_detect.module,
         face_compare.module,
         geo_correlate.module,
+        text_authorship.module,
     ):
         if not is_registered(module.spec.name):
             register(module)
