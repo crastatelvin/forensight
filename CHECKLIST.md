@@ -1064,7 +1064,7 @@ be made deliberately rather than absorbed.
 ## Phase 10 — Hardening, observability, ops, Android dev profile
 **Build**
 - [ ] P10.B1 OpenTelemetry traces API->agent->worker; Prometheus+Grafana; Loki; Sentry (Prometheus + Loki config done)
-- [~] P10.B2 Backups — **built and verified; the round trip is not yet green.**
+- [x] P10.B2 Backups — pg_dump + cryptographic verification + verified restore.
       `scripts/backup.py` with `create` / `verify` / `restore`. What is finished and
       tested: the dump, the manifest, and **cryptographic verification**.
       Evidence is content-addressed (the object key *is* the SHA-256, see
@@ -1087,14 +1087,6 @@ be made deliberately rather than absorbed.
       chunked hashing of a multi-megabyte file. Every one asserts the *failure
       message names the evidence record*, because "the backup is incomplete" is not
       actionable at 3am.
-      **Not finished: `test_backup_restores_and_every_digest_reproduces`.** The
-      restore applies and the post-restore verification then correctly reports the
-      evidence missing — the verification is doing its job and the restore is not
-      doing its. Cause: a `pg_restore` into an empty database without the `vector`
-      extension cannot create the schema, and its non-zero exit code is deliberately
-      tolerated (see below), so the failure is silent until verification catches it.
-      Fix is to provision the extensions on the target *before* `--clean` drops them,
-      or to drop `--clean` for an empty target. **Untested until then.**
       **Also found, and it changes the design: `pg_restore`'s exit code cannot be
       trusted.** A PG18 `pg_dump` client against a PG16 server emits
       `SET transaction_timeout = 0`, which PG16 does not know — so `pg_restore`
@@ -1103,7 +1095,8 @@ be made deliberately rather than absorbed.
       wrote. So the archive is applied and then **verified**: every digest the manifest
       records must be readable out of the restored database. That is a stronger
       guarantee than any exit code, because it is a statement about the data rather
-      than about the tool's mood.
+      than about the tool's mood. That verification caught a silent restore failure on
+      its first run, which is the argument for building it that way — see T10.3.
       Still to do: MinIO-side replication, and PITR documentation.
 - [ ] P10.B3 Graceful shutdown, readiness/liveness, horizontal scaling API+workers
 - [ ] P10.B4 Egress control for air-gapped/local-LLM mode
@@ -1112,11 +1105,30 @@ be made deliberately rather than absorbed.
 **Test cases**
 - [ ] T10.1 Trace spans API->agent->worker with correct parent/child
 - [ ] T10.2 Prometheus scrapes; Grafana renders; alert fires on synthetic errors
-- [~] T10.3 Backup → restore reproduces DB + evidence; hashes verify. **The
-      verification half is complete and green** — eight tests, each asserting that a
-      specific, differently-damaged backup is rejected and that the message names the
-      evidence. The restore half is blocked on P10.B2's target-extension problem,
-      recorded there. Ticked only when a real round trip goes green.
+- [x] T10.3 Backup → restore reproduces DB + evidence; hashes verify. Nine tests.
+      **The round trip runs end to end**: a real `pg_dump`, a real `pg_restore` into a
+      real second database, and every recorded digest recomputed from the restored
+      bytes — checked against digests captured *before* the backup rather than against
+      the backup's own inventory, so a self-consistent backup that lost evidence still
+      fails.
+      **Found by making it run, not by reading it.** Three bugs the design had not
+      anticipated:
+      - **Extensions are per-database.** An empty restore target has no pgvector, so
+        the schema cannot be created — and because the restore deliberately tolerates
+        `pg_restore`'s exit code (see P10.B2), that failure was *silent* until the
+        post-restore check reported four evidence records missing for a reason that
+        had nothing to do with the backup. This is the argument for verifying the
+        restore rather than trusting the tool's mood.
+      - **`pg_restore`'s diagnostics were being discarded**, because `allow_errors`
+        swallows them and the post-restore check reports the *consequence*. "4 evidence
+        records missing" with no indication of what `pg_restore` actually said is not
+        debuggable. Its output is now attached to the failure.
+      - **The test passed two different databases to one operation.** `pg_dump` was
+        given the development DSN while the manifest was read from the isolated scratch
+        database, so the archive and the manifest described different systems. That is
+        the failure a backup tool must never have, and it was in the test.
+      Each of the eight negative tests asserts the failure message names the specific
+      evidence record — "the backup is incomplete" is not actionable at 3am.
 - [ ] T10.4 Locust: queue sustains throughput; no job loss; latency SLO
 - [ ] T10.5 Air-gapped: outbound blocked; local Ollama serves agent
 - [ ] T10.6 Android profile runs CPU analyzer + agent turn; GPU reports unavailable

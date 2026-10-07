@@ -37,6 +37,7 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -295,6 +296,7 @@ async def restore(
 
     manifest = json.loads((backup_dir / MANIFEST_NAME).read_text())
     target = _dsn(target_database_url)
+    _ensure_extensions(target)
 
     # `allow_errors` on pg_restore is deliberate, and the check immediately after is
     # why. A newer pg_dump against an older server emits preamble statements the
@@ -307,7 +309,7 @@ async def restore(
     # records must be readable out of the restored database. That is a stronger
     # guarantee than any exit code, because it is a statement about the data rather
     # than about the tool's mood.
-    _run(
+    pg_restore_result = _run(
         [
             "pg_restore",
             "--clean",
@@ -319,6 +321,10 @@ async def restore(
         ],
         allow_errors=True,
     )
+    # Kept for the failure message below. `allow_errors` makes pg_restore's own
+    # diagnostics invisible, and the post-restore check reports the *consequence*;
+    # without these the operator gets "4 evidence records missing" and no idea why.
+    restore_stderr = (pg_restore_result.stderr or pg_restore_result.stdout or "").strip()
 
     # The *async* URL, not `_dsn(target)`: that one drops `+asyncpg` for pg_restore,
     # and handing the result to the async reader asks SQLAlchemy for psycopg2, which
@@ -333,13 +339,18 @@ async def restore(
         elif restored_digests[evidence_id] != row["sha256"]:
             mismatched.append(evidence_id)
     if missing or mismatched:
+        # pg_restore's own diagnostics are attached because `allow_errors` makes them
+        # invisible, and this check reports the *consequence*. Without them the
+        # operator gets "4 evidence records missing" and no idea why.
+        detail = restore_stderr[-600:] if restore_stderr else "(pg_restore said nothing)"
         raise BackupError(
             f"the restore did not reproduce the evidence: {len(missing)} missing "
             f"({', '.join(missing[:3])}...), {len(mismatched)} with a different digest "
-            f"({', '.join(mismatched[:3])}...). Treat the target as untrustworthy."
+            f"({', '.join(mismatched[:3])}...). Treat the target as untrustworthy. "
+            f"pg_restore reported: {detail}"
         )
 
-    restored = 0
+    restored_objects = 0
     if settings is not None:
         from app.domain.storage import ObjectStore
 
@@ -347,9 +358,53 @@ async def restore(
         for row in manifest["evidence"]:
             data = (backup_dir / EVIDENCE_DIR / row["sha256"]).read_bytes()
             store.put_evidence(key=row["sha256"], data=data, content_type=row["content_type"])
-            restored += 1
+            restored_objects += 1
 
-    return {"evidence_verified": verified, "evidence_restored": restored}
+    return {"evidence_verified": verified, "evidence_restored": restored_objects}
+
+
+#: Extensions the schema depends on. Per-database, so an empty target has none of
+#: them, and a restore of a schema carrying `vector` columns cannot create its
+#: tables without pgvector.
+#:
+#: Hardcoded rather than read from the source database because there is no reliable
+#: way to ask an archive what it needs; and because these are the two this schema
+#: actually uses. `--clean` does not drop them: an extension is only dropped if the
+#: archive contains a `DROP EXTENSION`, and pg_dump of a single database does not
+#: emit one.
+_REQUIRED_EXTENSIONS = ("vector", "pgcrypto")
+
+
+def _ensure_extensions(dsn: str) -> None:
+    """Install the extensions this schema needs, on the target, before restoring.
+
+    The failure this prevents is the quiet one. `pg_restore --clean` on an empty
+    target reports the missing `vector` type, continues, and exits non-zero — which
+    `restore` deliberately tolerates, because the exit code cannot be trusted (see
+    below). So the schema is never created, the restore "succeeds", and the only
+    thing that notices is the post-restore verification, reporting evidence as
+    missing for a reason that has nothing to do with the backup.
+    """
+    for extension in _REQUIRED_EXTENSIONS:
+        result = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            # Resolved by absolute path so the result does not depend on PATH.
+            [
+                shutil.which("psql") or "psql",
+                dsn,
+                "-tAc",
+                f"CREATE EXTENSION IF NOT EXISTS {extension}",
+            ],  # noqa: S607
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+        if result.returncode != 0 and "already exists" not in result.stderr:
+            raise BackupError(
+                f"could not install the {extension!r} extension on the restore target: "
+                f"{result.stderr.strip()[:300]}. A schema carrying it cannot be "
+                f"restored without it."
+            )
 
 
 async def _digests_in(database_url: str) -> dict[str, str]:

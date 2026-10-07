@@ -158,7 +158,10 @@ async def test_backup_restores_and_every_digest_reproduces(
 
     backup_dir = tmp_path / "backup"
     manifest = await backup.create(
-        backup_dir, database_url=DSN, settings=None, read_object=fake_store._store.get_evidence
+        backup_dir,
+        database_url=scratch_database,
+        settings=None,
+        read_object=fake_store._store.get_evidence,
     )
     assert manifest["evidence_count"] >= 4, "the seeded evidence is missing from the backup"
 
@@ -204,7 +207,10 @@ async def test_verification_catches_a_missing_object(
     written = await _seed_evidence(scratch_database, fake_store._store, count=3)
     backup_dir = tmp_path / "backup"
     manifest = await backup.create(
-        backup_dir, database_url=DSN, settings=None, read_object=fake_store._store.get_evidence
+        backup_dir,
+        database_url=scratch_database,
+        settings=None,
+        read_object=fake_store._store.get_evidence,
     )
 
     victim = written[0][1]
@@ -229,7 +235,10 @@ async def test_verification_catches_a_corrupted_object(
     written = await _seed_evidence(scratch_database, fake_store._store, count=2)
     backup_dir = tmp_path / "backup"
     manifest = await backup.create(
-        backup_dir, database_url=DSN, settings=None, read_object=fake_store._store.get_evidence
+        backup_dir,
+        database_url=scratch_database,
+        settings=None,
+        read_object=fake_store._store.get_evidence,
     )
 
     victim = written[0][1]
@@ -255,7 +264,10 @@ async def test_verification_catches_a_missing_database_dump(
     await _seed_evidence(scratch_database, fake_store._store, count=1)
     backup_dir = tmp_path / "backup"
     await backup.create(
-        backup_dir, database_url=DSN, settings=None, read_object=fake_store._store.get_evidence
+        backup_dir,
+        database_url=scratch_database,
+        settings=None,
+        read_object=fake_store._store.get_evidence,
     )
 
     (backup_dir / backup.DUMP_NAME).unlink()
@@ -276,12 +288,15 @@ async def test_restore_refuses_a_backup_that_does_not_verify(
     written = await _seed_evidence(scratch_database, fake_store._store, count=2)
     backup_dir = tmp_path / "backup"
     await backup.create(
-        backup_dir, database_url=DSN, settings=None, read_object=fake_store._store.get_evidence
+        backup_dir,
+        database_url=scratch_database,
+        settings=None,
+        read_object=fake_store._store.get_evidence,
     )
     (backup_dir / backup.EVIDENCE_DIR / written[0][1]).unlink()
 
     with pytest.raises(backup.BackupError, match="does not verify"):
-        await backup.restore(backup_dir, target_database_url=DSN, settings=None)
+        await backup.restore(backup_dir, target_database_url=scratch_database, settings=None)
 
 
 async def test_create_refuses_to_backup_evidence_that_does_not_match_its_digest(
@@ -313,7 +328,7 @@ async def test_create_refuses_to_backup_evidence_that_does_not_match_its_digest(
     with pytest.raises(backup.BackupError) as caught:
         await backup.create(
             tmp_path / "backup",
-            database_url=DSN,
+            database_url=scratch_database,
             settings=None,
             read_object=lying_reader,
         )
@@ -328,7 +343,7 @@ async def test_create_refuses_to_backup_evidence_that_does_not_match_its_digest(
 
 
 def _psql(dsn: str, sql: str) -> None:
-    subprocess.run(  # noqa: S603 - fixed argv, no shell
+    subprocess.run(  # noqa: S603 - fixed argv, no shell  # noqa: S603 - fixed argv, no shell
         [
             shutil.which("psql") or "psql",
             dsn.replace("postgresql+asyncpg", "postgresql"),
