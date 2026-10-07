@@ -250,7 +250,7 @@ def test_the_signal_handler_is_installed_and_chains() -> None:
 
     from app.main import _install_signal_handlers
 
-    original = signal.getsignal(signal.SIGTERM)
+    original = {s: signal.getsignal(s) for s in (signal.SIGTERM, signal.SIGINT)}
     calls: list[int] = []
 
     def previous(signum: int, _frame: object) -> None:
@@ -268,5 +268,11 @@ def test_the_signal_handler_is_installed_and_chains() -> None:
             int(signal.SIGTERM)
         ], "the previous handler was not chained; uvicorn would not shut down"
     finally:
-        signal.signal(signal.SIGTERM, original)
+        # BOTH signals, because `_install_signal_handlers` installs both. Restoring
+        # only SIGTERM left a SIGINT handler that latches the drain flag for the rest
+        # of the session — so the first Ctrl-C (or a SIGINT from anything else) made
+        # every later readiness check report 503 and every later agent request 503,
+        # with the failures pointing at health and the agent rather than at this file.
+        for sig, handler in original.items():
+            signal.signal(sig, handler)
         drain.reset()

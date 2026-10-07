@@ -77,6 +77,15 @@ async def sessionmaker_fixture() -> AsyncIterator[async_sessionmaker[AsyncSessio
 async def app(
     settings: Settings, sessionmaker_fixture: async_sessionmaker[AsyncSession]
 ) -> FastAPI:
+    # Stand in for process startup. `ASGITransport` never runs lifespan events, so the
+    # app's own "a starting process begins ready" reset does not fire under test — and
+    # without it a drain flag set by any earlier test leaks forward, showing up as
+    # health checks returning 503 and every agent request refused, with the failures
+    # pointing nowhere near the flag.
+    from app.drain import reset as drain_reset
+
+    drain_reset()
+
     application = create_app(settings)
     application.state.rate_limiter = InMemoryRateLimiter()
     # Install an in-memory notifier so tests never reach for Redis.

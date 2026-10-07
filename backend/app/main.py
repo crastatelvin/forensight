@@ -33,6 +33,7 @@ from app.capabilities import get_capabilities
 from app.config import Settings, get_settings
 from app.domain.router import router as cases_router
 from app.drain import begin_draining, is_draining
+from app.drain import reset as drain_reset
 from app.health import gather_readiness
 from app.observability import MetricsMiddleware, configure_logging, metrics_router
 from app.reports.router import router as reports_router
@@ -138,6 +139,15 @@ def _install_signal_handlers() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # A starting process has not been asked to stop. Clearing here is the counterpart
+    # to draining on the way out, and it is what makes the sequence
+    # ready -> drain -> exit true for each process rather than once per interpreter.
+    #
+    # Without it the shutdown drain leaks: any host that builds and tears down more
+    # than one app in a process — every test that uses the `app` fixture — leaves the
+    # flag set, and the next app starts life refusing every request. The failures
+    # then point at health checks and the agent rather than at shutdown.
+    drain_reset()
     _install_signal_handlers()
     # Validate critical configuration at startup.
     _enforce_secret_key(app.state.settings)
