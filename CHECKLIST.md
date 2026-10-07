@@ -1099,7 +1099,41 @@ be made deliberately rather than absorbed.
       its first run, which is the argument for building it that way — see T10.3.
       Still to do: MinIO-side replication, and PITR documentation.
 - [ ] P10.B3 Graceful shutdown, readiness/liveness, horizontal scaling API+workers
-- [ ] P10.B4 Egress control for air-gapped/local-LLM mode
+- [x] P10.B4 Egress control. `app/agent/egress.py` + `EGRESS_ALLOWED_HOSTS`.
+      **The surface is one call, and the docstring says so rather than implying
+      coverage.** `app/agent/llm.py` holds the only outbound HTTP in `app/`; Postgres
+      and MinIO are on the deployment's own network. A test **AST-scans `app/`** and
+      fails if a second outbound client appears — because the moment one does, this
+      control silently stops covering anything while still reporting that the
+      deployment is air-gapped. A grep for `http` would have found comments.
+      **An allowlist of hosts, not a mode flag.** One concept rather than a switch
+      and a list that can disagree, and *empty means no public host* — the air-gapped
+      default. Defaulting to permissive makes the control opt-in, and a control that
+      must be switched on before it does anything is one most deployments never
+      switch on. Local and container-network endpoints (`localhost`, `127.0.0.1`,
+      `ollama`, `host.docker.internal`) are always permitted: running a local model is
+      what an air-gapped deployment does, and requiring it on the list would teach
+      operators the control is noise.
+      `.local` is deliberately **not** treated as local — mDNS names resolve on a LAN,
+      and one can be claimed by any host on it. A permitted-looking name that any
+      machine on the network can take is exactly what this control exists to stop.
+      Schemes can be pinned (`https://api.example.com` permits TLS only), because a
+      permitted hostname reached over plaintext is a permitted hostname anyone on the
+      path can read.
+      Checked when the client is built, inside `resolve_model` **before the provider
+      branch** — asserted structurally via AST, since a check inside the cloud branch
+      would be routed around by any other provider spelling. The refusal names the
+      host, the setting, and the reason, because "connection refused" at 3am sends
+      the operator to the wrong file.
+      **Two holes found in my own policy by the tests:**
+      - **`host.docker.internal` was blocked.** Dotted, so not covered by the
+        single-label rule — and it is exactly the address an operator reaches for when
+        running a local model on the host. A hole in a control whose whole job is to
+        have none.
+      - **Malformed input was classified as local.** Every dotless host is a
+        container-network name, so `"not a url at all"` was permitted as local. Hosts
+        are now validated as hostnames *before* classification; otherwise the control's
+        classification can be talked past by a typo.
 - [ ] P10.B5 Load tests (Locust); pen-test pass; docs (runbooks, threat model, admin guide)
 - [ ] P10.B6 Android dev profile: CPU-only ONNX + small Ollama; GPU degraded
 **Test cases**
@@ -1130,7 +1164,14 @@ be made deliberately rather than absorbed.
       Each of the eight negative tests asserts the failure message names the specific
       evidence record — "the backup is incomplete" is not actionable at 3am.
 - [ ] T10.4 Locust: queue sustains throughput; no job loss; latency SLO
-- [ ] T10.5 Air-gapped: outbound blocked; local Ollama serves agent
+- [x] T10.5 Air-gapped: outbound blocked, local model still serves the agent.
+      Fourteen tests. The negative ones matter most: an empty allowlist permits
+      nothing public; a `.local` name is treated as egress; a scheme-pinned entry does
+      not permit plaintext; a malformed URL is refused rather than crashing or being
+      waved through; and `resolve_model` raises `EgressBlocked` for a cloud provider
+      while a local one is unaffected. A cloud provider being *blocked* is asserted
+      separately from "no model configured", because those are different problems with
+      different fixes and the operator has to be told which they have.
 - [ ] T10.6 Android profile runs CPU analyzer + agent turn; GPU reports unavailable
 - [ ] T10.7 Graceful shutdown drains jobs; readiness flips before termination
 **Exit**

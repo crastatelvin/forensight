@@ -97,6 +97,11 @@ class Settings(BaseSettings):
     llm_provider: str = Field(default="")
     llm_model: str = Field(default="")
     llm_base_url: str = Field(default="")
+    #: Hosts this deployment may send case-related prompts to. Empty permits nothing
+    #: beyond local and container-network endpoints, which is the air-gapped default
+    #: and the reason this control needs no "mode" flag to be meaningful. See
+    #: `app/agent/egress.py`.
+    egress_allowed_hosts: str = Field(default="")
     llm_api_key: str = Field(default="")
     llm_embed_model: str = Field(default="")
     #: Must match the pgvector column width in migration 0006, and the width the

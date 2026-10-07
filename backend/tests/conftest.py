@@ -43,6 +43,13 @@ def _settings(**overrides: object) -> Settings:
         "llm_provider": "ollama",
         "llm_model": "scripted-test-model",
         "llm_base_url": "http://llm.invalid/v1",
+        # The egress allowlist, permitted explicitly rather than by disabling the
+        # control. `llm.invalid` is a public-looking name by design — it is reserved
+        # and can never resolve — so a test deployment pointing at it is doing exactly
+        # what the control exists to catch, and the honest way to make it work is to
+        # allowlist it. Turning the control off here would have made every test pass
+        # and the control untested in the suite's own default configuration.
+        "egress_allowed_hosts": "llm.invalid",
     }
     base.update(overrides)
     return Settings(**base)  # type: ignore[arg-type]

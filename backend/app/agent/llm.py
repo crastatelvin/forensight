@@ -180,6 +180,12 @@ def resolve_model(settings: Any) -> ChatModel:
     `LLM_PROVIDER` decides: `ollama` for a local model, `cloud` (or anything
     else) for the hosted default.
     """
+    # Before anything is chosen, so a disallowed provider cannot be reached by
+    # picking a different branch below.
+    from app.agent.egress import check_settings
+
+    check_settings(settings)
+
     provider = str(getattr(settings, "llm_provider", "")).strip().lower()
     model = getattr(settings, "llm_model", "") or ""
     base = getattr(settings, "llm_base_url", "") or ""
