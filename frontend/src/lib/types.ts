@@ -112,6 +112,25 @@ export interface ModuleRead {
   unavailable_reason: string;
 }
 
+/**
+ * One analyzer result a finding rests on.
+ *
+ * A snapshot, not a live join: the analyzer's identity and its refusal state are
+ * recorded when the finding is written, so a report generated after the analysis has
+ * been re-run still describes the result the finding was actually drawn from.
+ */
+export interface FindingCitationRead {
+  result_id: string;
+  evidence_id: string;
+  module: string;
+  score: number;
+  threshold: number;
+  tier: string;
+  model_version: string;
+  not_applicable: boolean;
+  cited_at: string;
+}
+
 /** `FindingRead` */
 export interface FindingRead {
   id: string;
@@ -121,6 +140,10 @@ export interface FindingRead {
   status: string;
   created_by: string;
   created_at: string;
+  /** Present so sourcing is visible wherever a finding appears, not only in a PDF. */
+  citations: FindingCitationRead[];
+  /** Mirrors the API's own property; a finding with none is a bare assertion. */
+  is_sourced: boolean;
 }
 
 /** `TimelineEventRead` */

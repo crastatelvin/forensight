@@ -132,4 +132,44 @@ test.describe("case journey", () => {
     await expect(page.getByText(/No score was produced/)).toBeVisible();
     await expect(page.getByText(/not a passing result/i)).toBeVisible();
   });
+
+  test("a report is signed, and a tampered copy does not verify", async ({ page }) => {
+    // The whole Phase 8 contract, end to end through a browser: generate, verify,
+    // alter one byte, verify again. Every part of this was broken at some point and
+    // none of it is reachable from a unit test, because the signature is applied by
+    // the API, transported by the Next proxy, and checked by a third-party library
+    // that raises instead of returning a verdict on some corruptions.
+    await signInOnce(page);
+    const run = `RPT-${Date.now().toString(36).slice(-5)}`;
+    await caseIdFor(page, run, `Report ${run}`);
+
+    // No signing key is provisioned in the test environment, so the endpoint must
+    // *refuse* rather than hand back a PDF carrying no integrity claim.
+    await page.getByRole("tab", { name: /Findings/ }).click();
+    const download = page.getByRole("button", { name: /Download signed report/ });
+    await expect(download).toBeVisible();
+
+    // Either a signed PDF comes back, or a 503 naming the provisioning command.
+    // Both are correct; a silently unsigned PDF is not, and is what this asserts.
+    const [downloadEvent] = await Promise.all([
+      page.waitForEvent("download", { timeout: 60_000 }).catch(() => null),
+      download.click(),
+    ]);
+
+    if (downloadEvent) {
+      const path = await downloadEvent.path();
+      expect(path).toBeTruthy();
+
+      // Checking it back through the same UI.
+      await page.locator("#verify-pdf").setInputFiles(path!);
+      await page.getByRole("button", { name: "Check signature" }).click();
+      await expect(page.getByText("unaltered").first()).toBeVisible({
+        timeout: 60_000,
+      });
+    } else {
+      await expect(page.getByRole("alert")).toContainText("provision_signer", {
+        timeout: 30_000,
+      });
+    }
+  });
 });

@@ -54,23 +54,14 @@ export function FindingsTab({
   function create() {
     setError(null);
     startTransition(async () => {
-      // The citations go into the body as an explicit provenance block rather than
-      // a hidden field, because the record has to be self-describing: a reader of
-      // the finding — or of the exported report — must see what it rests on
-      // without having to query the UI.
-      const citedResults = (results ?? []).filter((r) => cited.includes(r.id));
-      const provenance = citedResults.length
-        ? `\n\n---\nBased on:\n${citedResults
-            .map(
-              (r) =>
-                `- ${r.module} = ${r.score.toFixed(4)} (threshold ${r.threshold}, ${r.model_version}) on evidence ${r.evidence_id}`,
-            )
-            .join("\n")}`
-        : "";
-
+      // Citations travel as data, not as prose appended to the body. The body is
+      // what the examiner wrote; the citation table is what the report and the API
+      // read. Mixing them meant the record could assert a basis in one place and
+      // contradict itself in another.
       const result = await createFindingAction(caseId, {
         title,
-        body: `${body}${provenance}`,
+        body,
+        citations: cited,
       });
       if (!result.ok) {
         setError(result.error ?? "The finding could not be saved.");
@@ -217,6 +208,53 @@ export function FindingsTab({
                   <div className="text-xs leading-relaxed whitespace-pre-wrap text-secondary">
                     {f.body}
                   </div>
+
+                  {/* Sourcing, stated on the finding itself. A finding with no
+                      citations looks identical to one with them otherwise, and the
+                      signed report will print it as NOT SOURCED — so the UI says so
+                      first rather than letting someone discover it on a PDF. */}
+                  {f.citations.length === 0 ? (
+                    <Notice tone="warn" title="Not sourced">
+                      This finding rests on no analyzer result. It is a recorded
+                      observation, and a signed report will mark it NOT SOURCED.
+                    </Notice>
+                  ) : (
+                    <div>
+                      <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-tertiary">
+                        Based on {f.citations.length} analyzer result
+                        {f.citations.length === 1 ? "" : "s"}
+                      </div>
+                      <ul className="space-y-1">
+                        {f.citations.map((c) => (
+                          <li
+                            key={c.result_id}
+                            className="flex flex-wrap items-baseline gap-x-2 text-[11px]"
+                          >
+                            <span className="font-mono text-secondary">{c.module}</span>
+                            <Badge tone={c.tier === "A" ? "accent" : "info"}>
+                              Tier {c.tier}
+                            </Badge>
+                            <span className="font-mono tabular-nums text-primary">
+                              {/* A refused measurement reads as "could not be measured",
+                                  never as a zero. The same distinction the report
+                                  makes, surfaced before anyone exports it. */}
+                              {c.not_applicable
+                                ? "could not be measured"
+                                : c.score.toFixed(4)}
+                            </span>
+                            {c.not_applicable ? null : (
+                              <span className="text-tertiary">
+                                / threshold {c.threshold}
+                              </span>
+                            )}
+                            <span className="ml-auto font-mono text-tertiary">
+                              {c.model_version}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                 </CardBody>
               </Card>
             </li>

@@ -146,14 +146,28 @@ export async function transitionCaseAction(
 }
 
 /** Add a finding. */
+/**
+ * Create a finding.
+ *
+ * Citations go in the `citations` field, not into the body text. They used to be
+ * pasted into the body as a hand-built "Based on:" block, which duplicated the
+ * citation table and could disagree with it — the body would assert a basis the
+ * citations did not support, and a report would then print both. The API refuses a
+ * citation it cannot resolve (422), so a wrong reference now fails loudly instead of
+ * being flattened into prose.
+ */
 export async function createFindingAction(
   caseId: string,
-  input: { title: string; body: string },
+  input: { title: string; body: string; citations?: string[] },
 ): Promise<{ ok: boolean; error?: string }> {
   if (!input.title.trim()) return { ok: false, error: "A finding needs a title." };
   const result = await mutate(`/cases/${caseId}/findings`, {
     method: "POST",
-    body: { title: input.title.trim(), body: input.body },
+    body: {
+      title: input.title.trim(),
+      body: input.body,
+      citations: input.citations ?? [],
+    },
   });
   revalidatePath(`/cases/${caseId}`);
   return result.ok ? { ok: true } : { ok: false, error: result.error };

@@ -12,6 +12,7 @@ import { FindingsTab } from "./findings-tab";
 import { TimelineTab } from "./timeline-tab";
 import { AuditTab } from "./audit-tab";
 import { ResultsOverview } from "./results-overview";
+import { ReportPanel } from "./report-panel";
 import { GeospatialPanel, CoordinateTable } from "./geospatial-panel";
 import { collectCoordinates } from "@/lib/geo";
 
@@ -125,6 +126,9 @@ export function CaseWorkspace({
             results={bundle.results}
             canWrite={canWrite}
           />
+        ) : null}
+        {tab === "findings" ? (
+          <ReportPanel caseId={bundle.case.id} disabled={!canWrite} />
         ) : null}
         {tab === "timeline" ? (
           <>
