@@ -1064,7 +1064,47 @@ be made deliberately rather than absorbed.
 ## Phase 10 — Hardening, observability, ops, Android dev profile
 **Build**
 - [ ] P10.B1 OpenTelemetry traces API->agent->worker; Prometheus+Grafana; Loki; Sentry (Prometheus + Loki config done)
-- [ ] P10.B2 Backups: pg_dump + MinIO replication; documented PITR
+- [~] P10.B2 Backups — **built and verified; the round trip is not yet green.**
+      `scripts/backup.py` with `create` / `verify` / `restore`. What is finished and
+      tested: the dump, the manifest, and **cryptographic verification**.
+      Evidence is content-addressed (the object key *is* the SHA-256, see
+      `app/domain/storage.py`), so verification is a digest comparison rather than a
+      structural one. For every row the database records, `verify` hashes the backed-up
+      copy and compares it to the recorded digest — a truncated object, a partial
+      write and a silently-substituted file all fail, with nothing to interpret.
+      Digests come from the *database*, not the backup's own inventory, so a backup
+      that is internally consistent but missing evidence is caught too.
+      `create` refuses to write evidence whose bytes disagree with its recorded
+      digest, so a corrupt store fails at backup time — where it is diagnosable —
+      rather than producing an archive that fails its own verification later, in a
+      directory named by a timestamp.
+      `restore` writes to a named target and has **no in-place path and no
+      `--force`**: a restore tool that can overwrite the system it protects will
+      eventually be aimed at it by someone in a hurry.
+      **Eight tests green.** They cover a missing object, a same-length corrupted
+      object (the case a size check misses), a missing database dump, refusal to
+      restore an unverified backup, refusal to back up mismatched evidence, and
+      chunked hashing of a multi-megabyte file. Every one asserts the *failure
+      message names the evidence record*, because "the backup is incomplete" is not
+      actionable at 3am.
+      **Not finished: `test_backup_restores_and_every_digest_reproduces`.** The
+      restore applies and the post-restore verification then correctly reports the
+      evidence missing — the verification is doing its job and the restore is not
+      doing its. Cause: a `pg_restore` into an empty database without the `vector`
+      extension cannot create the schema, and its non-zero exit code is deliberately
+      tolerated (see below), so the failure is silent until verification catches it.
+      Fix is to provision the extensions on the target *before* `--clean` drops them,
+      or to drop `--clean` for an empty target. **Untested until then.**
+      **Also found, and it changes the design: `pg_restore`'s exit code cannot be
+      trusted.** A PG18 `pg_dump` client against a PG16 server emits
+      `SET transaction_timeout = 0`, which PG16 does not know — so `pg_restore`
+      exits non-zero having *applied the archive*. A restore tool that treats that
+      exit code as the answer to "did the restore work" fails on every archive it just
+      wrote. So the archive is applied and then **verified**: every digest the manifest
+      records must be readable out of the restored database. That is a stronger
+      guarantee than any exit code, because it is a statement about the data rather
+      than about the tool's mood.
+      Still to do: MinIO-side replication, and PITR documentation.
 - [ ] P10.B3 Graceful shutdown, readiness/liveness, horizontal scaling API+workers
 - [ ] P10.B4 Egress control for air-gapped/local-LLM mode
 - [ ] P10.B5 Load tests (Locust); pen-test pass; docs (runbooks, threat model, admin guide)
@@ -1072,7 +1112,11 @@ be made deliberately rather than absorbed.
 **Test cases**
 - [ ] T10.1 Trace spans API->agent->worker with correct parent/child
 - [ ] T10.2 Prometheus scrapes; Grafana renders; alert fires on synthetic errors
-- [ ] T10.3 Backup->restore reproduces DB+evidence; hashes verify
+- [~] T10.3 Backup → restore reproduces DB + evidence; hashes verify. **The
+      verification half is complete and green** — eight tests, each asserting that a
+      specific, differently-damaged backup is rejected and that the message names the
+      evidence. The restore half is blocked on P10.B2's target-extension problem,
+      recorded there. Ticked only when a real round trip goes green.
 - [ ] T10.4 Locust: queue sustains throughput; no job loss; latency SLO
 - [ ] T10.5 Air-gapped: outbound blocked; local Ollama serves agent
 - [ ] T10.6 Android profile runs CPU analyzer + agent turn; GPU reports unavailable
