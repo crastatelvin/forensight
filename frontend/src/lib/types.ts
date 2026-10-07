@@ -176,13 +176,23 @@ export interface TimelineEventRead {
   derived?: boolean;
 }
 
-/** `EntityRead` */
+/**
+ * `EntityRead` — mirrors the backend `EntityRead` exactly.
+ *
+ * This type previously declared `label`, which the API has never sent; the field is
+ * `value`. Same defect as `TimelineEventRead` above: a hand-written duplicate of a
+ * backend schema, written from an assumption rather than from the wire, and `tsc`
+ * unable to notice because it trusted the duplicate. Nothing renders entities yet, so
+ * nothing has broken — which is the only reason it is worth fixing now rather than
+ * when the first entity UI appears and reads `undefined`.
+ */
 export interface EntityRead {
   id: string;
   case_id: string;
   kind: string;
-  label: string;
+  value: string;
   attributes: Record<string, unknown>;
+  created_at: string;
 }
 
 /** `AuditEntryRead` */

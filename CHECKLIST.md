@@ -1770,7 +1770,54 @@ that might not work — the same argument as the CI security scanners.
       values were still present. Exactly the silent pass this module exists to prevent,
       now flattened and covered.
       21 tests.
-- [ ] FI-4 Multi-case entity linking
+- [x] FI-4 Multi-case entity linking. `GET /cases/{id}/entities/links` — entities on this
+      case that also appear on another case the caller can already see. A person,
+      vehicle, device or address recurring across two investigations is one of the more
+      valuable things a case system can surface, and it is invisible while entities are
+      scoped to a single case.
+      **A link is a candidate, never an identity.** Two cases both containing
+      `person: "Jane Doe"` is evidence that two people with the same name were
+      recorded, not that they are the same person — likewise a vendor-recycled serial
+      and a re-let address. `is_candidate_only` is in every link and the disclaimer
+      says what it cannot establish.
+      **Matching is exact on a case-folded, whitespace-collapsed value, and nothing
+      fuzzy.** Case-folding and whitespace are not judgement calls; the Unicode NFC
+      normalisation matters specifically for entity resolution, because the same name
+      from two machines arrives in different normal forms and byte equality would report
+      one person as two. Beyond that: nothing. No edit distance, no initials, no
+      phonetics. **A confidence score on a guess reads as a judgement**, and in a
+      forensic tool that is the failure mode rather than a feature — so
+      `"Jane Doe"` vs `"Jane Do"` returns no link at all, which is the honest answer
+      and is asserted.
+      **Cross-case reads are the whole risk, handled in SQL.** `case_scope_filter` goes
+      onto the `Case` join, *not* onto the results: filtering in Python would still
+      load an unauthorised case off disk and only scrub the response, and a co-occurrence
+      is reported **only when the caller can see both cases**. Reporting "this name also
+      appears somewhere you cannot see" would confirm both the existence and the content
+      of a case the caller was refused — the exact thing the 404-on-out-of-scope rule
+      exists to prevent, so an invisible occurrence is omitted entirely rather than
+      hinted at. A test asserts a link to another officer's case is absent, *not*
+      redacted, and a reviewer/admin sees the same data the officer cannot — same query,
+      different authorisation.
+      A positive control asserts the scope filter is **not over-tight** for the cases a
+      caller owns. **That test was wrong the first time and the bug is worth recording**:
+      its `_user()` helper generated a random user id, so "both cases owned by one
+      officer" was in fact owned by neither and asserted a link that scoping correctly
+      suppressed. It failed rather than passing — which is the only reason it was caught
+      at all, and a reminder that a green fixture is not the same as a correct one.
+      Duplicate values within one case collapse to one link; two rows are not two
+      findings. Searching for links is audited as `entity.links.read` with the *count*
+      rather than the values — the act of asking who searched for cross-case links is
+      itself a record worth keeping. The explanation of what matching does and does not
+      attempt is served from the backend, not duplicated into a client.
+      14 tests.
+      **Also fixed here:** `EntityRead` in `frontend/src/lib/types.ts` declared
+      `label`, which the API has never sent — the field is `value`. Sixth
+      hand-written duplicate of a backend schema in this session, and the same defect
+      as `TimelineEventRead`: written from an assumption, and `tsc` unable to notice
+      because it trusted the duplicate. Nothing renders entities yet, so nothing had
+      broken, which is the only reason it is worth fixing now rather than when the
+      first entity UI reads `undefined`.
 - [ ] FI-5 Agent second-opinion reviewer mode
 
 ## Open defect found while verifying FI-1 (not caused by it)

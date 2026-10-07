@@ -39,6 +39,7 @@ from app.domain.access import scoped_case, visible_case
 from app.domain.antivirus import ClamAVScanner, InfectedFileError, NoopScanner, Scanner
 from app.domain.exports import export_csv, export_json, export_zip
 from app.domain.ingest import EvidenceValidationError
+from app.domain.links import describe, find_links
 from app.domain.models import AuditLog, Case, Evidence, Finding
 from app.domain.notifications import Notifier
 from app.domain.redaction import RedactionError
@@ -673,6 +674,49 @@ async def get_entities(
     case = await scoped_case(session, case_id, user)
     rows = await list_entities(session, case.id, limit=_limit(limit), offset=offset)
     return [EntityRead.model_validate(e) for e in rows]
+
+
+@router.get("/{case_id}/entities/links")
+async def entity_links(
+    case_id: uuid.UUID,
+    user: Annotated[CurrentUser, Depends(get_current_user)],
+    session: Annotated[AsyncSession, Depends(get_session)],
+    limit: Annotated[int, Query(ge=1, le=_MAX_PAGE)] = 100,
+) -> dict[str, Any]:
+    """Entities on this case that also appear on another case the caller can see.
+
+    **Only cases the caller may already open are read or reported.** A co-occurrence
+    involving an invisible case is omitted entirely rather than hinted at — reporting
+    "this name also appears somewhere you cannot see" would confirm both the existence
+    and the content of a case the caller was refused, which is what the 404-on-
+    out-of-scope rule exists to prevent. The scope predicate is applied in SQL, so
+    unauthorised rows are never loaded.
+
+    A link is a **candidate, not an identification**: two people can share a name.
+    Matching is exact on a case-folded, whitespace-collapsed value, and no fuzzy
+    comparison is attempted — see `app/domain/links.py` for why a confidence score on a
+    guess is worse than no link.
+    """
+    case = await scoped_case(session, case_id, user)
+    found = await find_links(session, case_id=case.id, user=user, limit=_limit(limit))
+
+    await append_audit(
+        session,
+        actor_id=uuid.UUID(user.id),
+        action="entity.links.read",
+        target=str(case.id),
+        # The count, not the values: who searched for cross-case links is itself a
+        # record worth keeping, and a link search is exactly the kind of act that
+        # should not go unlogged even though its results are legitimately visible.
+        payload={"case_id": str(case.id), "link_count": len(found)},
+    )
+    await session.commit()
+    return {
+        "case_id": str(case.id),
+        "links": [link.to_dict() for link in found],
+        "count": len(found),
+        **describe(),
+    }
 
 
 @router.delete(
