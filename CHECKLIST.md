@@ -988,36 +988,53 @@ UI always has.
       trace left.
 **Test cases**
 
-**B1–B6 measured, and deliberately not built. Recorded as a finding rather than
-delivered as six modules with plumbing-only tests.**
+**B1–B6 researched, not assumed. What was actually checked, and what came back.**
 
-| Item | Verdict | Why |
+I searched Hugging Face and the canonical upstream sources for a labelled fixture for
+each of the six. Results, so the next person does not repeat this:
+
+| Need | Best candidate found | Verdict |
 |---|---|---|
-| B1 NBIS fingerprint | **Blocked** | Checked, not assumed. No pip package (`pynbis`/`nbispython` do not exist), no apt package on this image, and libfprint's GitHub returns 404 from here. NBIS is C. Not buildable in a slim Python image without vendoring a native build. |
-| B2 Speaker ECAPA | **Blocked on fixtures** | ONNX exports exist (Wespeaker ECAPA-TDNN). Needs labelled same/different-speaker audio pairs. |
-| B3 Deepfake | **Blocked on fixtures** | Real, benchmarked ONNX does exist (Deep-Fake-Detector-v2, CommunityForensics-DeepfakeDet-ViT). Needs real/AI pairs with known labels. |
-| B4 Gunshot YAMNet | **Blocked on fixtures** | ONNX export exists. Needs real gunshot recordings with known labels. |
-| B5 Handwriting | **Blocked on fixtures** | No pinned model with a published benchmark; same shape as B3's problem, worse. |
-| B6 DistilBERT | **Blocked on fixtures, and on premise** | DistilBERT off the shelf does not detect authorship or phishing — that needs a fine-tuned classifier. Shipping base DistilBERT under that name would be claiming a model does something it was never trained for. |
+| Gunshot audio (B4) | `ashraq/esc50`, 4.2k downloads, ungated | **No gunshot class.** All 50 ESC-50 classes fetched and listed; the closest are `chainsaw`, `hand_saw`, `drilling` is absent too. ESC-50 cannot serve B4. |
+| Fingerprints (B1) | `UniDataPro/biometric-fingerprint-spoofing`, CC BY-NC-**ND**-4.0 | Two disqualifiers. It is **spoof detection (PAD)**, not individualization — a different problem from NBIS matching, so a golden test on it would not test what B1 asks. And **ND** forbids derivatives, which a derived golden fixture set is. |
+| Fingerprints (B1, alt) | `ArwaAbdul/Fingerprint_split_90_10` | No licence stated at all. Not usable for a project that pins licensing. |
+| Speaker pairs (B2) | `DynamicSuperbPrivate/SpeakerVerification_Voxceleb1Train` | VoxCeleb is research-only with a signed agreement; the HF mirror is not the licence. |
+| Deepfake (B3) | `nuriachandra/Deepfake-Eval-2024`, CC BY-SA-4.0 | Correct licence and plausible, but `datasets-server` returns **no feature columns** for it, so it is not in a fetchable standard layout. Would need manual inspection before any of it could be pinned. |
+| Handwriting (B5) | `1aurent/individuality-of-handwriting` | Licence tag reads `license:unknown`. |
+| Authorship (B6) | `manu/eli5_authorship_attribution` | Only 5 downloads, no licence stated, and it is Reddit/ELI5 authorship — not the forensic authorship the plan means. |
 
-The models are obtainable. **The labelled fixtures are not**, and T9.1 requires
-deterministic golden tests — which means ground truth, which means real paired
-samples: two people speaking, a real and an AI image, an actual gunshot. This
-repository has no such fixtures and there is no legitimate way to manufacture them.
+**The pattern is consistent and it is the actual blocker.** The models exist as
+pinnable ONNX — Deep-Fake-Detector-v2, CommunityForensics-DeepfakeDet-ViT, YAMNet,
+ECAPA-TDNN are all on the Hub. What does not exist is a *labelled forensic fixture
+set* that is simultaneously (a) fetchable in a standard layout, (b) licensed for the
+task, and (c) licensed permissively enough to derive golden tests from.
 
-**A module tested against synthetic fixtures tests the plumbing, not the technique.**
-A deepfake detector handed a synthetic gradient returns a number, and a golden test
-pinning that number proves the ONNX graph is wired up — which is worth having and is
-not what T9.1 asks for. Pinning it would let a module with no working weights, or
-weights for the wrong task, pass the phase's exit criterion. That is precisely the
-simulation this project exists to refuse, so the honest state is recorded instead.
+This is a worse answer than "blocked" — it is a concrete, checkable statement of what
+each blocker is, so the next attempt starts from evidence rather than from a guess.
 
-**What would unblock them, in order of cost:** (1) a fixture acquisition step that
-pins labelled pairs by digest the way `fetch_models.sh` pins weights — legitimate
-for public datasets with redistribution terms checked, and the single change that
-unblocks five of six; (2) for B1 specifically, a decision about vendoring libfprint's
-C sources into the image, which is a real image-size and supply-chain cost and should
-be made deliberately rather than absorbed.
+**Also verified, still true:** NBIS itself is unavailable here. No pip package
+(`pynbis`/`nbispython` do not exist), no apt package on this image, and libfprint's
+GitHub returns 404 from this network. It is C.
+
+**And the standing argument holds regardless.** A module tested against synthetic
+fixtures tests the plumbing, not the technique: a deepfake detector handed a synthetic
+gradient returns a number, and a golden test pinning it proves the ONNX graph is wired
+up — which is worth having, and is not what T9.1 asks for. Pinning it would let a
+module with no working weights, or weights for the wrong task, pass the phase's exit
+criterion. That is precisely the simulation this project exists to refuse.
+
+**What would actually unblock them, in the order I would do it:**
+1. **B3 deepfake first** — it has the one candidate with a clean licence (CC BY-SA-4.0)
+   and a real published benchmark behind the model. Confirming that dataset's layout is
+   a bounded piece of work, and it would prove the whole acquisition path end to end
+   before the other five are attempted.
+2. **A per-dataset `FIXTURES.md`** recording source URL, licence text, and the SHA-256
+   of every pinned file, alongside `fetch_models.sh`. Without that, "we pinned a
+   fixture" is unfalsifiable two months later.
+3. **B1 needs a decision, not a search.** Spoof detection and individualization are
+   different techniques, and NBIS is unavailable here. Either vendor libfprint's C
+   sources into the image (a real image-size and supply-chain cost, and a deliberate
+   decision), or drop B1 and say so.
 
 - [ ] T9.1 Each new Tier-A analyzer has deterministic golden tests
 - [ ] T9.2 NBIS matching high / non-matching low on fixtures
