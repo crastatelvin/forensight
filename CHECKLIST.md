@@ -1356,7 +1356,25 @@ be made deliberately rather than absorbed.
       The signal handler is tested by invoking the installed handler rather than by
       sending a real SIGTERM, which would take the test runner down with it. before termination
 **Exit**
-- [ ] P10.E observable, recoverable, load-tested, air-gap-capable; Android demo runs; docs complete
+- [~] P10.E **Not exited, and the gaps are named.** What Phase 10 delivers is real:
+      backups that verify cryptographically and restore (T10.3), egress enforced with
+      the surface AST-pinned (T10.5), a graceful drain in the correct order (T10.7),
+      a constrained-host profile that can actually run the platform (T10.6), alert
+      rules proven to fire (T10.2), a load check measuring no job loss (T10.4), and a
+      threat model brought back in line with the code.
+      **Four things stand between this and a clean exit**, each recorded where it is
+      built rather than only here:
+      1. **OpenTelemetry traces (P10.B1/T10.1).** Needs the SDK in a slim image, span
+         context across a queue boundary, and a collector in CI. Half-instrumented spans
+         are worse than none.
+      2. **A penetration test (P10.B5).** CI scanners that are themselves proven to
+         fail prove the scanners work, not that the application has no findings.
+      3. **PITR and MinIO-side replication (P10.B2).** `pg_dump` is a logical backup;
+         point-in-time recovery needs WAL archiving.
+      4. **Nine Phase 9 items (B1–B6, T9.1–T9.3)** blocked on labelled fixtures that
+         cannot be manufactured, with the enabler named.
+      **Grafana dashboards are not asserted** against a rendering Prometheus; only
+      Prometheus and the rules are.
 
 ---
 
