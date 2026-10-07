@@ -987,6 +987,38 @@ UI always has.
       and was told no — and with no job row written, that audit entry is the only
       trace left.
 **Test cases**
+
+**B1–B6 measured, and deliberately not built. Recorded as a finding rather than
+delivered as six modules with plumbing-only tests.**
+
+| Item | Verdict | Why |
+|---|---|---|
+| B1 NBIS fingerprint | **Blocked** | Checked, not assumed. No pip package (`pynbis`/`nbispython` do not exist), no apt package on this image, and libfprint's GitHub returns 404 from here. NBIS is C. Not buildable in a slim Python image without vendoring a native build. |
+| B2 Speaker ECAPA | **Blocked on fixtures** | ONNX exports exist (Wespeaker ECAPA-TDNN). Needs labelled same/different-speaker audio pairs. |
+| B3 Deepfake | **Blocked on fixtures** | Real, benchmarked ONNX does exist (Deep-Fake-Detector-v2, CommunityForensics-DeepfakeDet-ViT). Needs real/AI pairs with known labels. |
+| B4 Gunshot YAMNet | **Blocked on fixtures** | ONNX export exists. Needs real gunshot recordings with known labels. |
+| B5 Handwriting | **Blocked on fixtures** | No pinned model with a published benchmark; same shape as B3's problem, worse. |
+| B6 DistilBERT | **Blocked on fixtures, and on premise** | DistilBERT off the shelf does not detect authorship or phishing — that needs a fine-tuned classifier. Shipping base DistilBERT under that name would be claiming a model does something it was never trained for. |
+
+The models are obtainable. **The labelled fixtures are not**, and T9.1 requires
+deterministic golden tests — which means ground truth, which means real paired
+samples: two people speaking, a real and an AI image, an actual gunshot. This
+repository has no such fixtures and there is no legitimate way to manufacture them.
+
+**A module tested against synthetic fixtures tests the plumbing, not the technique.**
+A deepfake detector handed a synthetic gradient returns a number, and a golden test
+pinning that number proves the ONNX graph is wired up — which is worth having and is
+not what T9.1 asks for. Pinning it would let a module with no working weights, or
+weights for the wrong task, pass the phase's exit criterion. That is precisely the
+simulation this project exists to refuse, so the honest state is recorded instead.
+
+**What would unblock them, in order of cost:** (1) a fixture acquisition step that
+pins labelled pairs by digest the way `fetch_models.sh` pins weights — legitimate
+for public datasets with redistribution terms checked, and the single change that
+unblocks five of six; (2) for B1 specifically, a decision about vendoring libfprint's
+C sources into the image, which is a real image-size and supply-chain cost and should
+be made deliberately rather than absorbed.
+
 - [ ] T9.1 Each new Tier-A analyzer has deterministic golden tests
 - [ ] T9.2 NBIS matching high / non-matching low on fixtures
 - [ ] T9.3 Speaker same>threshold / different<threshold
