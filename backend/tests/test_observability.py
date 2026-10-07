@@ -50,6 +50,16 @@ def sample(name: str, labels: dict[str, str]) -> float | None:
     return None
 
 
+def _total(name: str) -> float:
+    """Sum of every series of a counter."""
+    total = 0.0
+    for line in exposition().splitlines():
+        found = re.match(rf"^{re.escape(name)}\{{.*\}} ([0-9.e+-]+)$", line)
+        if found:
+            total += float(found.group(1))
+    return total
+
+
 def series(name: str, label_key: str) -> set[str]:
     """Every value of one label, across the series of `name`."""
     found: set[str] = set()

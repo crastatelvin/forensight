@@ -1063,7 +1063,22 @@ be made deliberately rather than absorbed.
 
 ## Phase 10 — Hardening, observability, ops, Android dev profile
 **Build**
-- [ ] P10.B1 OpenTelemetry traces API->agent->worker; Prometheus+Grafana; Loki; Sentry (Prometheus + Loki config done)
+- [~] P10.B1 Observability — **Prometheus + alerting done; tracing, Loki, Grafana
+      dashboards and Sentry not done.**
+      Prometheus scraping, the metric set, and alert rules are complete (T10.2), and
+      the parts that make them *believable* are tested. Loki and Prometheus config
+      exist but nothing renders a Loki dashboard. **Not built: OpenTelemetry traces
+      across API → agent → worker.** Measured rather than assumed: it needs the OTel
+      SDK and an exporter added to a deliberately slim image, span context propagated
+      across three processes *and* a queue boundary (the job id is the only thing that
+      crosses it today), and T10.1 would need a trace collector in CI to assert
+      parent/child against. That is a real dependency and a real test-infrastructure
+      decision, not a day's work — and half-instrumented spans are worse than none,
+      because a trace that silently stops at a queue boundary looks continuous.
+      Sentry is deliberately absent: it is a third-party SaaS endpoint, which the
+      egress allowlist added in P10.B4 would by default refuse. For an air-gapped
+      deployment it is the wrong tool, and self-hosted error tracking is the honest
+      answer if it is ever wanted.
 - [x] P10.B2 Backups — pg_dump + cryptographic verification + verified restore.
       `scripts/backup.py` with `create` / `verify` / `restore`. What is finished and
       tested: the dump, the manifest, and **cryptographic verification**.
@@ -1165,7 +1180,17 @@ be made deliberately rather than absorbed.
         container-network name, so `"not a url at all"` was permitted as local. Hosts
         are now validated as hostnames *before* classification; otherwise the control's
         classification can be talked past by a typo.
-- [ ] P10.B5 Load tests (Locust); pen-test pass; docs (runbooks, threat model, admin guide)
+- [~] P10.B5 Ops docs + load testing — **runbooks done; load tests, pen-test and two
+      guides not done.** `docs/runbook.md` covers report signing, job statuses,
+      seeding a parked approval and the model store, and is written from things that
+      broke. **Not done: `locustfile.py` and T10.4.** A load test here needs a
+      decision before it needs code: what "sustains throughput" means when the
+      expensive work is an ONNX forward pass on a shared CPU and the queue depth is
+      the only real buffer. Writing a Locust file that asserts a number nobody chose
+      would produce a green check that means nothing — the same failure the backup
+      exit code turned out to be. **Not done: threat model and admin guide.** The
+      security posture is documented where it was built (egress, backups, signing,
+      Tier-C refusals), but those are decisions, not a document an auditor reads.
 - [x] P10.B6 Constrained-host profile (`android-dev`): CPU-only ONNX, capped local
       model, GPU modules degraded cleanly.
       **Found a profile that could not run the platform.** `worker` was in `core`
@@ -1188,7 +1213,10 @@ be made deliberately rather than absorbed.
       prior hand-written capability list advertised three GPU modules no analyzer
       implemented while omitting the five that do.
 **Test cases**
-- [ ] T10.1 Trace spans API->agent->worker with correct parent/child
+- [ ] T10.1 Trace spans API → agent → worker with correct parent/child. **Not
+      written**, because the instrumentation it would test is not there — see P10.B1.
+      Deliberately not stubbed: a span test with no real spans asserts that a mock
+      recorded a call, which is the simulation this project refuses everywhere else.
 - [x] T10.2 Prometheus scrapes this service; alert rules that can actually fire.
       `infra/observability/alerts.yml`, wired into `prometheus.yml` via `rule_files` —
       a rule file nothing loads is a file that does nothing, which is exactly the shape
@@ -1251,7 +1279,9 @@ be made deliberately rather than absorbed.
         the failure a backup tool must never have, and it was in the test.
       Each of the eight negative tests asserts the failure message names the specific
       evidence record — "the backup is incomplete" is not actionable at 3am.
-- [ ] T10.4 Locust: queue sustains throughput; no job loss; latency SLO
+- [ ] T10.4 Queue sustains throughput, no job loss, latency within SLO. **Not
+      written**, because no SLO has been chosen. See P10.B5: a load test against an
+      unstated target is a number that cannot fail.
 - [x] T10.5 Air-gapped: outbound blocked, local model still serves the agent.
       Fourteen tests. The negative ones matter most: an empty allowlist permits
       nothing public; a `.local` name is treated as egress; a scheme-pinned entry does
