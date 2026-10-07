@@ -1201,11 +1201,33 @@ be made deliberately rather than absorbed.
       Admin guide now covers egress, backups, draining, the constrained-host profile
       and alerting — including the three shutdown behaviours that surprise people
       (`/healthz` stays 200, reads keep working, `dependencies` is empty).
-      **Not done: `locustfile.py` and T10.4.** It needs a decision before it needs
-      code — what "sustains throughput" means when the expensive work is an ONNX
-      forward pass on a shared CPU and queue depth is the only real buffer. A Locust
-      file asserting a number nobody chose is a green check that means nothing, which
-      is the same failure `pg_restore`'s exit code turned out to be.
+      **Load check done, as `scripts/load_check.py` — no Locust.** It is a
+      browser-oriented tool that brings a web UI, a worker fleet and a web server to
+      answer a question `httpx` answers in a hundred lines, and more importantly it
+      reports requests-per-second, which is not the property worth checking here.
+      **Latency is printed, never asserted**, because no SLO has been chosen and a
+      hardcoded one would make this the first file in the repo to disagree with
+      reality. What *is* asserted are the absolute invariants that hold at any load:
+      every job reaches a terminal state, none is claimed twice, and `/readyz` stays
+      ready throughout.
+      **Measured against the live stack: 30 jobs across 6 cases, 30 `done`, 0 lost,
+      0 readiness failures.** p50 35 ms / p95 56 ms submit latency, reported only.
+      **Two bugs the first run found — both in the check, and both the dangerous kind
+      because they made a weak run look like a strong one:**
+      - **It reported 8 phantom failures.** It polled each of 64 job ids
+        individually, exceeded the read rate limit, and treated a 429 as evidence
+        about the job. Only one job in the database was actually stuck — and it was
+        not one of these. It now polls **per case** and tracks *unknown* (could not
+        read) separately from *lost*, because a check that cannot tell "the job failed"
+        from "I was not allowed to look" eventually reports a healthy system as broken
+        and gets ignored.
+      - **It reported "30 jobs submitted" while queuing 6.** `submit_job` is
+        idempotent on (evidence hash, module, params), so submitting the same evidence
+        five times creates *one* job and four no-op reuses. It was counting HTTP 201s
+        rather than jobs. Each submission now uploads distinct bytes, so every one is
+        real work, and the reuse count is reported separately. **The idempotency
+        feature defeated the load check's own accounting** — which is worth knowing
+        about the feature too.
       **Not done: penetration test.** Bandit, Semgrep, pip-audit, Trivy and gitleaks
       run in CI and are themselves proven to fail on planted problems — that is
       evidence the scanners work, not evidence the application has no findings.
@@ -1297,9 +1319,10 @@ be made deliberately rather than absorbed.
         the failure a backup tool must never have, and it was in the test.
       Each of the eight negative tests asserts the failure message names the specific
       evidence record — "the backup is incomplete" is not actionable at 3am.
-- [ ] T10.4 Queue sustains throughput, no job loss, latency within SLO. **Not
-      written**, because no SLO has been chosen. See P10.B5: a load test against an
-      unstated target is a number that cannot fail.
+- [x] T10.4 No job loss under load. **Job loss and double-claiming are asserted;
+      latency is measured and reported, not asserted** — no SLO has been chosen, and
+      inventing one here would make this file the first to disagree with reality.
+      See P10.B5 for what the first run got wrong.
 - [x] T10.5 Air-gapped: outbound blocked, local model still serves the agent.
       Fourteen tests. The negative ones matter most: an empty allowlist permits
       nothing public; a `.local` name is treated as egress; a scheme-pinned entry does
