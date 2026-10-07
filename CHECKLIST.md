@@ -1714,6 +1714,3 @@ the continuation after approval is the only part that needs the model, and it co
 stubbed the way `agent_fakes.py` stubs the rest. Left undone deliberately rather than
 patched with a longer timeout, because raising the budget hides the dependency instead
 of removing it.
-- [ ] FI-3 Redaction tool for exports
-- [ ] FI-4 Multi-case entity linking
-- [ ] FI-5 Agent second-opinion reviewer mode
