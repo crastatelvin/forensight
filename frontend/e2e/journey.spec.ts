@@ -10,7 +10,7 @@
 
 import { expect, test } from "@playwright/test";
 import { join } from "node:path";
-import { caseIdFor, signInOnce } from "./helpers";
+import { caseIdFor, seedParkedRun, signInOnce } from "./helpers";
 import { makePng } from "./png";
 
 const ASSETS = join(process.cwd(), "..", "backend", "tests", "assets");
@@ -171,5 +171,91 @@ test.describe("case journey", () => {
         timeout: 30_000,
       });
     }
+  });
+
+  test("an action parked for approval stays answerable after a reload", async ({
+    page,
+  }) => {
+    // Approving does not end the run: it lets the agent continue, and continuing
+    // costs a real model call. On this stack that is `qwen2.5:3b`, which is slower
+    // than the default 45 s budget, so the suite was aborting mid-navigation with
+    // `net::ERR_ABORTED` and reporting a browser fault for what is really a slow
+    // model. The budget is the model's, not the browser's.
+    test.setTimeout(180_000);
+
+    // The HITL round trip, automated. This is the path that broke twice: the
+    // approve button existed only on the live panel, so a reload made a parked action
+    // permanently unactionable; and the endpoint ran the whole agent loop inline, so
+    // the click took as long as a model run.
+    //
+    // The parked action is *arranged* by a seed script rather than produced by asking
+    // a model to want one. Arranging state and exercising behaviour are separate
+    // jobs: getting a 3B model to decide to propose a write is flaky for reasons that
+    // have nothing to do with the browser, and the browser's part of this test is
+    // entirely unaffected by how the action got there.
+    await signInOnce(page);
+
+    const seeded = await seedParkedRun();
+    await page.goto(`/cases/${seeded.case_id}`);
+    await page.getByRole("tab", { name: /Agent/ }).click();
+
+    // The gate is on the run history, not only on the live panel — that was the
+    // first of the two bugs.
+    await expect(page.getByText("Waiting for your decision")).toBeVisible({
+      timeout: 30_000,
+    });
+
+    // It shows exactly what will happen, before anything happens. "Approve whatever
+    // it wanted" is not consent.
+    //
+    // Scoped to the gate: the phrase appears twice on the page — in the run's
+    // objective in the history header, and in the arguments the gate is asking
+    // about. Only the second one is the consent surface, so only that one is
+    // asserted.
+    await expect(
+      page
+        .locator("div")
+        .filter({ hasText: "It wants to run: update_case_finding" })
+        .getByText("Window forced on the primary exhibit")
+        .first(),
+    ).toBeVisible();
+
+    // Reload first. The gate must survive it, which is the whole claim.
+    await page.reload();
+    await page.getByRole("tab", { name: /Agent/ }).click();
+    await expect(page.getByText("Waiting for your decision")).toBeVisible({
+      timeout: 30_000,
+    });
+
+    const started = Date.now();
+    await page.getByRole("button", { name: "Approve" }).click();
+
+    // The run advances out of the parked state, and the gate is gone.
+    await expect(page.getByText("Waiting for your decision")).toHaveCount(0, {
+      timeout: 60_000,
+    });
+
+    // And the write actually landed, which is the irreversible half.
+    //
+    // A fresh navigation, not `router.refresh()` or `reload()`. Refresh demonstrably
+    // does not propagate fresh server props in this app — the gate above stayed on
+    // screen after the run had already advanced in the database — so asserting
+    // through it would fail for a reason unrelated to whether the write happened.
+    // `reload()` is worse: it races the SSE stream the approval opened and aborts
+    // with `net::ERR_ABORTED` about one run in five. A navigation is deterministic.
+    // Recorded as a known gap rather than hidden here.
+    await page.goto(`/cases/${seeded.case_id}`);
+    await page.getByRole("tab", { name: /Findings/ }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: "Window forced on the primary exhibit",
+      }),
+    ).toBeVisible({ timeout: 30_000 });
+
+    // Bounded, not asserted: a machine-dependent budget, but one the bug made
+    // impossible. Inline, this took the length of a whole model run; fixed, it is
+    // milliseconds. Sixty seconds fails loudly on a regression without being a
+    // flake risk.
+    expect(Date.now() - started).toBeLessThan(60_000);
   });
 });

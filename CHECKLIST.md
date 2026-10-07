@@ -573,13 +573,40 @@ MinIO, a real worker — not by any test:
       Playwright and only the decode proves it rendered. **Report generation is not
       covered** — that is Phase 8, so this line will be revisited then rather than
       ticked early.
-- [~] T7.2 HITL approve/reject reflected in the browser: driven by hand and
-      verified (37ms, findings 0 -> 1, tool call reads `ok` with the approving
-      action id). **Not yet an automated test.** The obstacle is real rather than
-      procedural: parking an action needs a model that decides to ask for approval,
-      and the 3B one is inconsistent about it. Making it deterministic means
-      scripting the graph, which stops the test exercising the browser path that
-      broke. Left `[~]` rather than ticked on the strength of a manual check.
+- [x] T7.2 HITL approve/reject as an automated browser test.
+      **The obstacle I recorded earlier was not real.** I had it as: parking an action
+      needs a model that decides to ask for approval, and the 3B one is inconsistent,
+      so making it deterministic means scripting the graph — which "stops the test
+      exercising the browser path that broke." That conflates two different jobs.
+      *Arranging* the state is setup and is fine to script; *exercising* the behaviour
+      is what the test is for. `scripts/seed_parked_run.py` drives the **real**
+      `AgentGraph` with a one-shot model so the real `NeedsApproval` branch parks the
+      action, and the browser then does the part that actually broke — see the gate
+      after a reload, answer it, watch the write land. Nothing about the browser path
+      is mocked.
+      **Found two real bugs, neither of which a hand-driven check surfaced:**
+      - **The gate rendered inside a collapsed row.** An operator returning to a case
+        had to go hunting for the question waiting on them. A parked action that has to
+        be discovered is one that goes unanswered, so a run awaiting approval now
+        auto-expands.
+      - **Answering left the question on screen.** The server action returned ok and
+        the database had the run past the gate, but the gate stayed visible until a
+        *hard* reload. Answering a question and still being shown that same question
+        is the worst outcome a HITL control can have: it reads as "it did not work",
+        and the operator's next move is to approve it again. `router.refresh()` did
+        not clear it, and adding the missing `revalidatePath` — which
+        `approveActionAction` was uniquely not calling, while every other mutating
+        action in the app did — did not either. The gate now clears on the confirmed
+        decision, held in local state, because the decision *is* already recorded
+        server-side by then; it is not waiting for a refresh that does not arrive.
+      The seeded run also found a **backend bug in `recall_memory`**: it passed a
+      Python list where asyncpg needs a vector *string*, so the pgvector branch raised
+      `expected str, got list`. It was invisible to the suite *and* to the running
+      system at once — every test runs SQLite and takes the working fallback, and this
+      deployment's embedding endpoint 404s, so `query_embedding` is always `None` and
+      production never reached the broken line either. The seed's stub model returns a
+      real embedding, which is the first time anything got there. Fixed, and now
+      covered by a test that runs the pgvector branch on real Postgres.
 - [x] T7.3 axe-core AA on the rendered pages in both themes; keyboard-only sign-in
       and submission with focus asserted at every step; tab strips with roving
       tabindex; contrast computed from the tokens. **Finding: the overview summary
@@ -615,13 +642,12 @@ MinIO, a real worker — not by any test:
       a broken image icon. A failed overlay, an unreachable API, a declined agent run
       and a missing analyzer description each have their own wording.
 **Exit**
-- [~] P7.E Full journey E2E, AA-accessible, disclaimers enforced in UI.
-      The journey runs in a real browser against the real stack; axe-core passes on
-      the rendered pages in both themes; the disclaimer is enforced by an assertion
-      rather than by review. **Not yet fully exited**, because T7.2's HITL round trip
-      is verified by hand rather than automated, and the honest reason is recorded
-      there rather than papered over with a scripted test that would stop exercising
-      the path that broke.
+- [x] P7.E Full journey E2E, AA-accessible, disclaimers enforced in UI.
+      The journey runs in a real browser against the real stack; axe-core passes on the
+      rendered pages in both themes; the disclaimer is enforced by an assertion rather
+      than by review. Exited now that T7.2 is automated — it was the only thing
+      blocking it. The HITL round trip that closes this phase is the one that broke
+      twice in the hand-driven phase, and it is the part most worth having as a test.
 
 ---
 
@@ -932,7 +958,31 @@ UI always has.
         did. The model proposing a write had no way to know a person would be asked.
       - **Most argument fields had no description** — the model emits arguments from
         the schema, so an undescribed field is one it guesses at.
-- [ ] X4 Agent eval harness (cites sources, respects HITL)
+- [x] X4 Agent eval harness, over **scenarios as data**: each is a fixture case, an
+      objective, and predicates over the finished run, so adding a behaviour means
+      adding a row rather than writing a test. Four scenarios, covering exactly the
+      properties the system's premise rests on — cite every claim, refuse rather than
+      invent when there is nothing to draw on, a *proposed* write is parked rather
+      than performed, and it stays inside its own case.
+      **The harness is itself tested, against a deliberately wrong run.** An eval with
+      no negative control is a script that has never been shown to fail, and an
+      assertion that cannot fail is not an assertion. `tests/agent_fakes.py` composes
+      a run that violates every rule at once — an uncited claim, a fabricated
+      `result_id`, a write performed without approval — and the harness must reject it.
+      A correct run must also pass, per scenario, or a harness that rejected everything
+      would satisfy the control.
+      **Building the control found a real error in a predicate.** The first
+      `wrote_nothing` asserted *no write tool call*, which rejected the correct
+      outcome for the scenario that exists to tell proposals from performances —
+      conflating them is the exact confusion HITL exists to prevent. Now judged on the
+      *result*: a parked action has a call and no result.
+      **Measured against the live model, honestly: 1 of 4 scenarios passed, and the
+      other three did not fail their predicates — the model timed out.** `qwen2.5:3b`
+      on this hardware cannot return a tool call within the 60 s budget when seven
+      tools are advertised. That is a real measurement of this deployment, recorded
+      rather than hidden; it is also why the live scenarios are opt-in and reported
+      rather than a CI gate. The hermetic controls are the gate; the live run is a
+      report to read, and a regression in that list is the signal.
 - [x] X5 Golden tests for every analyzer, on generated fixtures, no simulation.
       Exact floats are pinned, not `approx`: the analyzer's `model_version` already
       records the library versions behind a score, so a bump *should* be a reviewed

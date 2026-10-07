@@ -63,3 +63,65 @@ export async function caseIdFor(
   await expect(page.getByRole("heading", { name: title })).toBeVisible();
   return page.url().split("/").pop()!;
 }
+
+/**
+ * Park a state-changing agent action, so a browser test has something to answer.
+ *
+ * Run through the API container rather than mocked, because the arrangement has to
+ * go through the same code the system uses: a real case, a real run, and the real
+ * `NeedsApproval` branch. What this does *not* do is decide anything — the browser
+ * test's subject is what happens when a person answers, and that is untouched by how
+ * the action got parked.
+ *
+ * Skipped rather than failed when the API container is not reachable, and says so.
+ * A seed that cannot run is an environment problem, and reporting it as a product
+ * failure sends the reader looking in the wrong place.
+ */
+export async function seedParkedRun(): Promise<{
+  case_id: string;
+  run_id: string;
+  action_id: string;
+  tool: string;
+}> {
+  const { execFileSync } = await import("node:child_process");
+  const { join } = await import("node:path");
+
+  const repoRoot = join(process.cwd(), "..");
+  let out: string;
+  try {
+    out = execFileSync(
+      "docker",
+      [
+        "compose",
+        "-f",
+        join(repoRoot, "docker-compose.yml"),
+        "exec",
+        "-T",
+        "api",
+        "uv",
+        "run",
+        "--no-sync",
+        "python",
+        "-m",
+        "scripts.seed_parked_run",
+        "--email",
+        process.env.FORENSIGHT_EMAIL ?? "smoke@example.com",
+      ],
+      { cwd: repoRoot, encoding: "utf8", timeout: 120_000 },
+    );
+  } catch {
+    throw new Error(
+      "could not seed a parked run. The API container must be running " +
+        "(docker compose up -d), since the seed goes through the real graph.",
+    );
+  }
+
+  const start = out.indexOf("{");
+  if (start === -1) throw new Error(`seed produced no JSON: ${out.slice(0, 300)}`);
+  return JSON.parse(out.slice(start)) as {
+    case_id: string;
+    run_id: string;
+    action_id: string;
+    tool: string;
+  };
+}

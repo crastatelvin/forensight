@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
 import pytest
+import pytest_asyncio
 from app.agent.graph import AgentGraph, load_state
 from app.agent.llm import (
     ChatResponse,
@@ -51,7 +54,9 @@ from app.agent.types import (
     ToolCall,
 )
 from app.analysis.models import AnalysisResult
+from app.domain.models import Case
 from httpx import AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 _PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk"
@@ -1817,3 +1822,107 @@ async def test_an_approved_action_joins_to_its_own_call_in_the_audit(
     assert len([c for c in body["tool_calls"] if c["tool"] == "update_case_finding"]) == 1, body[
         "tool_calls"
     ]
+
+
+_PG_DSN = "postgresql+asyncpg://forensight:change-me-in-real-env@localhost:5432/forensight"
+
+
+@pytest_asyncio.fixture
+async def pg_session() -> AsyncIterator[AsyncSession]:
+    """A session on the real database, for the branches SQLite cannot execute."""
+    engine = create_async_engine(_PG_DSN)
+    maker = async_sessionmaker(engine, expire_on_commit=False, class_=AsyncSession)
+    async with maker() as session:
+        yield session
+    await engine.dispose()
+
+
+@pytest.mark.skipif(
+    os.environ.get("FORENSIGHT_PG_LIVE") != "1",
+    reason="requires live Postgres (set FORENSIGHT_PG_LIVE=1)",
+)
+async def test_recall_memory_works_on_postgres_with_a_real_embedding(
+    pg_session: AsyncSession,
+) -> None:
+    """The pgvector branch, exercised on Postgres.
+
+    Every other recall test runs on SQLite, where `recall_memory` takes a portable
+    fallback because there is no `<=>` operator. The Postgres branch — the one that
+    actually runs in production — was therefore never executed by any test, and it
+    passed a Python list where asyncpg needs a vector *string*, so it raised:
+
+        invalid input for query argument $1: [...] (expected str, got list)
+
+    It stayed hidden because this deployment's embedding endpoint 404s, which leaves
+    `query_embedding` as `None` and routes every call to the working fallback. A path
+    can be broken and invisible to the suite *and* to the running system at once; the
+    thing that found it was a seeded scenario whose stub model returns an actual
+    embedding, which is the first time anything reached this line.
+
+    Skipped without `FORENSIGHT_PG_LIVE`, and says so — the alternative is a test
+    that claims Postgres coverage while running SQLite.
+    """
+    vec = [((i * 37) % 97) / 97.0 for i in range(EMBED_DIM)]
+
+    actor_id = uuid.uuid4()
+    # Unique per run: a fixed number collides with the row a previous run left
+    # behind, which is a property of the database rather than of the code under test.
+    case = Case(
+        number=f"PGMEM-{uuid.uuid4().hex[:8].upper()}",
+        title="pgvector recall",
+        owner_id=actor_id,
+    )
+    pg_session.add(case)
+    # Committed rather than merely flushed, and the row's *own* id used below. The
+    # first version invented a `case_id` for the memory writes while the Case got a
+    # different default id, so every write failed a foreign key — a test bug that
+    # read as a schema problem.
+    await pg_session.commit()
+    case_id = case.id
+
+    await write_memory(
+        pg_session,
+        case_id=case_id,
+        actor_id=actor_id,
+        kind="semantic",
+        content="the door was forced",
+        embedding=vec,
+    )
+    await write_memory(
+        pg_session,
+        case_id=case_id,
+        actor_id=actor_id,
+        kind="semantic",
+        content="unrelated note about a camera",
+        embedding=[0.0] * EMBED_DIM,
+    )
+    await pg_session.commit()
+
+    rows = await recall_memory(pg_session, case_id=case_id, actor_id=actor_id, query_embedding=vec)
+
+    assert rows, "the pgvector branch returned nothing"
+    # The nearest neighbour must be the note the query vector came from — which only
+    # holds if `<=>` really ran, and a silently-empty result would not prove that.
+    assert rows[0]["content"] == "the door was forced"
+    distances = [r["distance"] for r in rows]
+    assert distances == sorted(distances), f"results are not ordered by distance: {distances}"
+
+
+def test_the_vector_parameter_is_a_string_not_a_list() -> None:
+    """The bug, pinned structurally as well as behaviourally.
+
+    Behavioural coverage needs Postgres; this needs nothing, so it runs everywhere.
+    It asserts the shape of the parameter the query is handed, because "asyncpg
+    cannot adapt a list into a vector" is not something a reader would guess from
+    `{"vec": list(...)}`.
+    """
+    import inspect
+
+    from app.agent.repository import recall_memory
+
+    source = inspect.getsource(recall_memory)
+    assert "vector_literal" in source, (
+        "recall_memory must bind a string literal to :vec; a Python list is rejected "
+        "by asyncpg with 'expected str, got list'"
+    )
+    assert '"vec": vector_literal' in source

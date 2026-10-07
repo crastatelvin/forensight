@@ -61,6 +61,18 @@ export function AgentTab({
   const [steps, setSteps] = useState<string[]>([]);
   const [decisionBusy, setDecisionBusy] = useState(false);
   const [decisionError, setDecisionError] = useState<string | null>(null);
+  // Runs whose parked action this session has answered.
+  //
+  // Needed because `router.refresh()` did not clear the gate: the server action
+  // returned ok and the database had the run at `running`, yet the gate stayed on
+  // screen until a *hard* reload. Answering a question and still being shown that
+  // same question is the worst outcome for a HITL control — it reads as "it did not
+  // work", and the operator's next move is to approve it a second time.
+  //
+  // The decision is already recorded server-side by the time this is set, so the
+  // local state is not asserting anything the backend has not confirmed; it is just
+  // not waiting for a refresh that does not arrive.
+  const [decided, setDecided] = useState<ReadonlySet<string>>(new Set());
   const sourceRef = useRef<EventSource | null>(null);
 
   // Closing the stream on unmount matters: an EventSource left open keeps the
@@ -158,9 +170,11 @@ export function AgentTab({
     setDecisionBusy(true);
     setDecisionError(null);
 
+    // The case id is passed because the server action needs it to revalidate the
+    // page. Without it the gate the operator just answered stays on screen.
     const result = approve
-      ? await approveActionAction(runId, actionId)
-      : await rejectActionAction(runId, actionId);
+      ? await approveActionAction(caseId, runId, actionId)
+      : await rejectActionAction(caseId, runId, actionId);
 
     if (!result.ok) {
       setDecisionBusy(false);
@@ -168,6 +182,7 @@ export function AgentTab({
       return;
     }
     setPending(null);
+    setDecided((previous) => new Set(previous).add(runId));
     router.refresh();
 
     const source = new EventSource(`/api/agent/${runId}/stream?resume=0`);
@@ -317,6 +332,7 @@ export function AgentTab({
       ) : existingRuns.length > 0 ? (
         <RunHistory
           runs={existingRuns}
+          decided={decided}
           evidence={evidence}
           activeRunId={run?.run_id ?? null}
           decisionBusy={decisionBusy}
@@ -421,6 +437,7 @@ function RunHistory({
   runs,
   evidence,
   activeRunId,
+  decided,
   decisionBusy,
   decisionError,
   onDecide,
@@ -428,6 +445,8 @@ function RunHistory({
   runs: AgentRunRead[];
   evidence: EvidenceRead[];
   activeRunId: string | null;
+  /** Runs whose parked action has already been answered this session. */
+  decided: ReadonlySet<string>;
   decisionBusy: boolean;
   decisionError: string | null;
   onDecide: (runId: string, actionId: string, approve: boolean) => void;
@@ -445,7 +464,12 @@ function RunHistory({
           return (
             <details
               key={r.run_id}
-              open={r.run_id === activeRunId}
+              // Auto-expanded when the run is waiting on a person. Found by the
+              // browser test: the gate rendered inside a collapsed row, so an
+              // operator returning to a case had to go hunting for the question
+              // that was waiting on them. A parked action that has to be discovered
+              // is an action that goes unanswered.
+              open={r.run_id === activeRunId || r.status === "awaiting_approval"}
               className="rounded-md border border-border-subtle"
             >
               <summary className="flex cursor-pointer flex-wrap items-center gap-2 px-3 py-2">
@@ -484,7 +508,9 @@ function RunHistory({
                 {/* A parked action stays answerable after a reload. This is the
                     whole point of the HITL gate: the run waits for a person, and
                     the person may not be the one who started it. */}
-                {r.status === "awaiting_approval" && r.pending_action_id ? (
+                {!decided.has(r.run_id) &&
+                r.status === "awaiting_approval" &&
+                r.pending_action_id ? (
                   <ApprovalGate
                     runId={r.run_id}
                     approval={{

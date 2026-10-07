@@ -336,6 +336,7 @@ async def run_scenario(
         claims=list(final.claims),
         citations=list(final.citations),
         tool_calls=list(final.tool_calls),
+        tool_results=list(final.tool_results),
         refusal=final.refusal,
         report=final.report,
         referenced_result_ids=_referenced_ids(final),

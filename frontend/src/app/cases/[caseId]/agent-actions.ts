@@ -68,14 +68,29 @@ export async function startRunAction(
   }
 }
 
-/** Approve a parked state-changing action and let the agent continue. */
+/**
+ * Approve a parked state-changing action and let the agent continue.
+ *
+ * `revalidatePath` is not optional here and its absence was a real bug: this was the
+ * only mutating action in the app that did not call it, so approving left the case
+ * page's server render stale. The gate the operator had just answered stayed on
+ * screen — with the run already advanced past it in the database — until a manual
+ * reload. Answering a question and still being shown that same question is the worst
+ * possible outcome for a HITL control: it reads as "it did not work", and the
+ * operator's next move is to approve it again.
+ *
+ * `router.refresh()` on the client was not enough on its own, which is exactly why
+ * every other mutation here pairs it with a revalidation.
+ */
 export async function approveActionAction(
+  caseId: string,
   runId: string,
   actionId: string,
   reason = "",
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await post(`/agent/runs/${runId}/approve`, { action_id: actionId, reason });
+    revalidatePath(`/cases/${caseId}`);
     return { ok: true };
   } catch (error) {
     return {
@@ -86,13 +101,16 @@ export async function approveActionAction(
 }
 
 /** Reject a parked action. The action is discarded, not queued. */
+/** Reject a parked action. Revalidates for the same reason as `approve`. */
 export async function rejectActionAction(
+  caseId: string,
   runId: string,
   actionId: string,
   reason = "",
 ): Promise<{ ok: boolean; error?: string }> {
   try {
     await post(`/agent/runs/${runId}/reject`, { action_id: actionId, reason });
+    revalidatePath(`/cases/${caseId}`);
     return { ok: true };
   } catch (error) {
     return {

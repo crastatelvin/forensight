@@ -453,6 +453,21 @@ async def recall_memory(
     dialect = session.bind.dialect.name if session.bind else ""
     if dialect == "postgresql" and query_embedding:
         # pgvector's `<=>` is cosine *distance* (0 = identical).
+        #
+        # The parameter is a *string*, not a list. asyncpg has no adapter for a
+        # Python list into `vector`, so it rejects one outright:
+        #   invalid input for query argument $1: [...] (expected str, got list)
+        # That made this branch dead code in any deployment whose embeddings work —
+        # memory recall raised on the very first call, and the agent's MEMORY step is
+        # what runs recall. It survived because this deployment's embedding endpoint
+        # 404s, so `query_embedding` is always None and control falls through to the
+        # portable path below, which works. Every test uses SQLite and takes that same
+        # fallback. So a broken Postgres path was invisible to the suite *and* to the
+        # running system at the same time.
+        #
+        # Found by the seeded HITL scenario, whose stub model returns a real
+        # embedding and therefore actually reaches this line.
+        vector_literal = "[" + ",".join(repr(float(v)) for v in query_embedding) + "]"
         rows = await session.execute(
             select(
                 AgentMemory,
@@ -462,7 +477,7 @@ async def recall_memory(
             .where(AgentMemory.embedding.is_not(None))
             .order_by(text("embedding <=> CAST(:vec AS vector)"))
             .limit(limit),
-            {"vec": list(query_embedding)},
+            {"vec": vector_literal},
         )
         return [{**_memory_dict(row[0]), "distance": float(row[1])} for row in rows.all()]
 

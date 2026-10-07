@@ -246,6 +246,27 @@ for integrity purposes — the bytes are still verifiably unaltered — but read
 no longer see it as *trusted* unless they hold the old certificate. Keep the old
 certificate; that is what makes historical reports verifiable.
 
+### Seeding a parked approval
+
+To exercise the HITL gate by hand — or to reproduce what the browser test arranges —
+park a state-changing action on a fresh case:
+
+```bash
+docker compose exec api python -m scripts.seed_parked_run \
+  --email you@example.org --title "Approval check"
+```
+
+It prints the `case_id`, `run_id` and `action_id`. Open the case, go to the Agent
+tab, and the gate is waiting: it shows the exact arguments the agent wants to use
+before anything happens.
+
+**What this script is, and is not.** It drives the *real* `AgentGraph` with a
+one-shot model, so the action is parked by the same `NeedsApproval` branch a real
+model hits. It exists because getting a model to *decide* to propose a write is
+inconsistent on a 3B model, and a check that depends on that is flaky for reasons
+that have nothing to do with what it is checking. It never lives in `app/` — it is a
+fixture generator, not a way to make an agent misbehave in production.
+
 ### Job status
 
 | Status | Meaning |
