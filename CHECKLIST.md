@@ -939,12 +939,49 @@ UI always has.
       **Only the derived score is stored, never the embedding or the audio** —
       speaker embeddings are known to be recoverable from short audio, so this is
       personal data and the payload says so.
-- [ ] P9.B3 Deepfake — Xception/EfficientNet ONNX. Re-researched 2026-10-08 and still
-      blocked: every candidate deepfake *detector* states no licence or is gated, and
-      the fixtures are the harder half — real/fake face pairs are almost always
-      derived from celebrity imagery whose own terms are non-commercial research. Same
-      reasoning as P9.B1: a detector whose discrimination nothing establishes would be a
-      number shaped like a finding.
+- [ ] P9.B3 Deepfake — **measured as unusable on real photographs.** Not blocked on
+      licence, which the earlier note assumed and which is wrong: the model is
+      obtainable.
+      `onnx-community/Deep-Fake-Detector-v2-Model-ONNX` (ViT, `Realism`/`Deepfake`,
+      **Apache-2.0**, ungated, digest
+      `2e0662a81744aca769e240fd1daa3f44225c50d0565fd8fb8f702d1f26609c91`) loads and
+      runs on CPU here, and the vendor reports **92.12% accuracy on 56,001 samples** of
+      its own evaluation set. So the provenance chain that made `face-compare` honest —
+      a vendor operating point inherited with attribution rather than invented — is
+      available, and 2-class argmax is a real boundary rather than a tuned one.
+      **Then it was measured against this repository's own fixtures, and it fails.**
+      Every **genuine** photograph scores as a deepfake:
+      | fixture | P(deepfake) |
+      |---|---|
+      | `bus.jpg` | 0.554 |
+      | `turing_b.jpg` | 0.715 |
+      | `turing_a.jpg` | 0.700 |
+      | `lovelace_a.jpg` | 0.658 |
+      | `trump_1.jpg` | 0.773 |
+      | `obama_2.jpg` | 0.788 |
+      | `franklin_a.jpg` | 0.825 |
+      | `obama_1.jpg` | 0.875 |
+      **8 of 8. Not one real photograph read as real.**
+      That is not a threshold problem and not a preprocessing problem. Retried across
+      five configurations — bilinear / bicubic / lanczos, and centre-crop-then-resize
+      against squash-the-frame — and the result barely moves (0.554–0.875 → 0.572–0.868,
+      flagged 8/8 in every one). The public-domain portraits and historical photographs
+      here sit outside the model's training distribution, and it responds to that by
+      calling them synthetic.
+      **Shipping this would be worse than shipping nothing.** In a forensic tool the
+      failure mode of a deepfake detector that flags everything is false accusations of
+      manipulation against real evidence — the exact harm the rest of this checklist is
+      built to avoid. A 92% vendor number on 56,001 of the vendor's own samples does not
+      survive contact with eight out of eight real photographs from a different source.
+      **The positive direction remains untestable**, and that is the second, independent
+      blocker: DF40, FaceForensics++ and Celeb-DF are all research-only, and synthetic
+      face sets inherit FFHQ's non-commercial terms. So there is no way here to confirm
+      a fix even if one existed.
+      **What this refutes about the plan.** P9.B3 specified "Xception/EfficientNet ONNX".
+      Both are **ImageNet classifiers** — neither is a face-forensics model, so the
+      plan named artefacts that do not implement the technique the item asks for. The
+      model actually evaluated above is a genuine detector and still failed; the
+      planned one would have failed harder.
 - [~] P9.B4 Gunshot audio — YAMNet/PANNs. **The technique is fine; the fixtures are
       not, and the reason is sharper than "no licence".**
       YAMNet **does** have the class — index 421, `Gunshot, gunfire`, of 521, confirmed
@@ -1675,21 +1712,28 @@ that might not work — the same argument as the CI security scanners.
          fail prove the scanners work, not that the application has no findings.
       2. **PITR and MinIO-side replication (P10.B2).** `pg_dump` is a logical backup;
          point-in-time recovery needs WAL archiving.
-      3. **Three Phase 9 items**, and the shape of the blocker is the same in each:
-         the *technique* is available and the *fixtures* are not.
+      3. **Three Phase 9 items**, and this is the third time the *recorded reason* for a
+         blocker was wrong when it was re-checked. **All three now have an accurate
+         reason; none has a licence reason.**
          - **P9.B1/T9.2 (fingerprint).** NBIS is *spoof detection* (PAD), not
-           individualization — a different technique than the one that would answer
-           the question here. The only reachable dataset is CC BY-NC-ND, whose
-           NoDerivatives clause forbids the derived golden set, and NBIS itself is not
-           installable in this environment.
-         - **P9.B3 (deepfake).** Every candidate detector is unstated or gated, and
-           real/fake face pairs are nearly always built from celebrity imagery whose own
-           terms are research-only.
-         - **P9.B4 (gunshot).** YAMNet **has** the class (421 of 521) — the blocker is
-           fixtures, and specifically that a keyword search for gunfire returns mostly
-           things that *mention* it. See the item for the full count.
+           individualization — a different technique from the question asked here. The
+           only reachable dataset is CC BY-NC-ND, whose NoDerivatives clause forbids
+           the derived golden set, and NBIS is not installable in this environment.
+           Still the one item here blocked partly on availability.
+         - **P9.B3 (deepfake).** **Not blocked on licence at all** — the earlier note
+           said every detector was unstated or gated, and that is false: an Apache-2.0,
+           ungated ViT detector with a vendor-reported 92.12% accuracy was downloaded
+           and run here. It flags **8 of 8 genuine photographs as deepfakes**, across
+           five preprocessing configurations. **Measured as unusable**, and the reason
+           is now a result rather than an assumption. The untestable positive direction
+           is a second, independent blocker.
+         - **P9.B4 (gunshot).** YAMNet **has** the class (421 of 521). The blocker is
+           that a keyword search for gunfire returns mostly things that *mention* it —
+           roughly 2 genuine clips from 35 permissively-licensed hits, one of which is a
+           recording of a person dying and is refused on those grounds.
          **B2 (speaker) and B5 (handwriting) both shipped** once the search was widened
-         past the obvious candidates.
+         past the obvious candidates, which is the direct evidence that the remaining
+         blockers were worth re-checking rather than restating.
       **Grafana dashboards are not asserted** against a rendering Prometheus; only
       Prometheus and the rules are.
 
