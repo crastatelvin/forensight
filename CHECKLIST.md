@@ -939,8 +939,34 @@ UI always has.
       **Only the derived score is stored, never the embedding or the audio** —
       speaker embeddings are known to be recoverable from short audio, so this is
       personal data and the payload says so.
-- [ ] P9.B3 Deepfake — Xception/EfficientNet ONNX
-- [ ] P9.B4 Gunshot audio — YAMNet/PANNs
+- [ ] P9.B3 Deepfake — Xception/EfficientNet ONNX. Re-researched 2026-10-08 and still
+      blocked: every candidate deepfake *detector* states no licence or is gated, and
+      the fixtures are the harder half — real/fake face pairs are almost always
+      derived from celebrity imagery whose own terms are non-commercial research. Same
+      reasoning as P9.B1: a detector whose discrimination nothing establishes would be a
+      number shaped like a finding.
+- [~] P9.B4 Gunshot audio — YAMNet/PANNs. **The technique is fine; the fixtures are
+      not, and the reason is sharper than "no licence".**
+      YAMNet **does** have the class — index 421, `Gunshot, gunfire`, of 521, confirmed
+      against TensorFlow's own `yamnet_class_map.csv`, Apache-2.0 — so the earlier note
+      blaming ESC-50 for having no gunshot class was only half the story. The real
+      obstacle is what a media-commons keyword search for gunfire actually returns.
+      Searched Wikimedia Commons across five terms. Of 35 permissively-licensed hits,
+      **roughly two are gunfire.** The rest are things that *mention* it: Sousa's
+      *"The Rifle Regiment"* march, four Reagan speeches, a New York bar admission
+      argument about the **shotgun doctrine**, a Wilhelm scream, and a 911 dispatch
+      call. A second cluster is worse than useless — 14 Wikipedia **pronunciation**
+      files (`LL-Q1860 …-gunshot.wav`), which are a person *saying the word* "gunshot",
+      three of them CC0 and therefore passing the licence gate.
+      **A naive pipeline would have shipped a gunshot classifier trained on a military
+      march and a law lecture**, because both are permissively licensed, both contain
+      the word, and neither contains a gunshot. That is a more dangerous failure than a
+      missing licence, because the gate would have passed it.
+      One further refusal: *"Suicide of Christine Chubbuck (Audio)"* is public domain and
+      genuinely contains gunfire, and it is **not** used here. It is a real recording of
+      a person dying.
+      Two usable clips cannot establish that a classifier works, so this stays unticked
+      rather than built on a fixture set that would flatter it.
 - [x] P9.B5 Handwriting **document** similarity. `handwriting-match`, Tier B, ORB with a
       Lowe-ratio test, **no weights, no new dependency** (OpenCV already shipped for
       `face-compare`).
@@ -1649,12 +1675,21 @@ that might not work — the same argument as the CI security scanners.
          fail prove the scanners work, not that the application has no findings.
       2. **PITR and MinIO-side replication (P10.B2).** `pg_dump` is a logical backup;
          point-in-time recovery needs WAL archiving.
-      3. **Four Phase 9 items.** P9.B1/T9.2 stay blocked: NBIS is *spoof detection*
-         (PAD), not individualization, which is a different task — and no public-domain
-         fingerprint set was found. P9.B3 (deepfake) and P9.B4 (gunshot) remain blocked
-         on fixtures; ESC-50, the one permissively-licensed audio corpus found, has no
-         gunshot class among its 50. **P9.B5 (handwriting) shipped** — its blocker was a
-         wrong search, not a missing permission.
+      3. **Three Phase 9 items**, and the shape of the blocker is the same in each:
+         the *technique* is available and the *fixtures* are not.
+         - **P9.B1/T9.2 (fingerprint).** NBIS is *spoof detection* (PAD), not
+           individualization — a different technique than the one that would answer
+           the question here. The only reachable dataset is CC BY-NC-ND, whose
+           NoDerivatives clause forbids the derived golden set, and NBIS itself is not
+           installable in this environment.
+         - **P9.B3 (deepfake).** Every candidate detector is unstated or gated, and
+           real/fake face pairs are nearly always built from celebrity imagery whose own
+           terms are research-only.
+         - **P9.B4 (gunshot).** YAMNet **has** the class (421 of 521) — the blocker is
+           fixtures, and specifically that a keyword search for gunfire returns mostly
+           things that *mention* it. See the item for the full count.
+         **B2 (speaker) and B5 (handwriting) both shipped** once the search was widened
+         past the obvious candidates.
       **Grafana dashboards are not asserted** against a rendering Prometheus; only
       Prometheus and the rules are.
 
