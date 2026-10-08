@@ -941,7 +941,37 @@ UI always has.
       personal data and the payload says so.
 - [ ] P9.B3 Deepfake — Xception/EfficientNet ONNX
 - [ ] P9.B4 Gunshot audio — YAMNet/PANNs
-- [ ] P9.B5 Handwriting/document similarity
+- [~] P9.B5 Handwriting/document similarity. **The licence blocker is resolved and the
+      material is public domain; what remains is fixture curation, not permission.**
+      This supersedes the earlier note on this item, which recorded no
+      permissively-licensed source — that was true of the *datasets* searched and wrong
+      about what the task needs.
+      **Found: the Center for Digital History's diary collection at UNH, every item
+      CC Public Domain Mark 1.0.** Twelve **Charlotte Baker** diary volumes spanning
+      **1895–1930** are full scans (25–95 MB PDFs, ~288 pages each) — one hand written
+      across 35 years, which is precisely the same-writer/different-year structure the
+      task needs. Other diarists in the collection (Beasley 1889/1899, Knight, Morrill,
+      Poole, Wadleigh, Thurston and others) provide the different-writer class.
+      Verified by download: the scans render as genuine manuscript, and handwriting
+      pages are present (confirmed visually at p.32 of the 1914 volume).
+      **What is not done, precisely.** Three things, all curation rather than access:
+      1. **The diary body is interleaved with printed ephemera.** The 1914 volume's
+         pages are tide tables, principal-cities lists and stock prices with
+         handwriting between them. A cheap ink-density filter does **not** separate
+         them — 17 sampled pages all scored 0.13–0.19 ink — so body pages have to be
+         located by inspection or a stroke-width measure rather than a density
+         threshold. Guessing the page would put printed ephemera in a handwriting
+         fixture set, which measures nothing.
+      2. **A second writer with a comparable full scan is not yet located.** Several
+         other creators' items are single-page scans (maps and documents), not diaries,
+         so the different-writer class is not yet assembled.
+      3. **No module and no measurement.** The technique is not yet chosen or run, so
+         nothing is claimed about whether it separates.
+      **Why this is not faked.** A handwriting module with fixtures I assembled without
+      checking they are handwriting would be the same defect as the six over-confident
+      analyzer payloads avoided elsewhere: a number shaped like a finding, resting on
+      nothing. The honest position is that the material is available and the work left
+      is to identify which pages carry the hand.
 - [x] P9.B6 Text authorship — `text-authorship`, Tier B. **Not DistilBERT, and the
       measurement is the reason.** The plan named a DistilBERT model; tried first as the
       obvious reading and it does not work. Two things were measured before anything
@@ -1221,12 +1251,21 @@ that might not work — the same argument as the CI security scanners.
 - [~] P9.E **Half met, and the half that is not is named.** The catalogue is complete
       for everything this platform scores and **honestly tiered** — Tier B's label
       served from the backend so the interface cannot contradict it, Tier C a refusal
-      with no scoring path, every AI module deterministic and digest-pinned with
-      golden tests against real bytes. **B6 shipped** (`text-authorship`, pure stylometry,
-      no weights) and its threshold is recorded as **not separating** its fixtures
-      rather than tuned until it did. The remaining half is five analyzers (B1–B5) and
-      their two test cases, all blocked on labelled fixtures, recorded with reasons at
-      P9.B1–B5.
+      with no scoring path, every AI module deterministic and digest-pinned with golden
+      tests against real bytes. **Two analyzers shipped** on fixtures found after the
+      original blocker was written: `text-authorship` (pure stylometry, no weights) and
+      `speaker-compare` (ECAPA-TDNN, Apache-2.0). **Both record that their measured
+      ranges overlap** rather than tuning a threshold until they did — T9.1 and T9.3
+      were the checklist items asking for separation, and the honest answers are that
+      it does not hold on this evidence. The remaining items are P9.B1/T9.2 (NBIS is
+      spoof detection, a different task), P9.B3 (deepfake) and P9.B4 (gunshot), plus
+      P9.B5 which is no longer licence-blocked and needs only fixture curation.
+      **The recurring lesson from this phase is recorded rather than buried: a recorded
+      blocker is a claim, and a claim needs the same evidence as anything else here.**
+      Two items were blocked on "no permissively-licensed fixtures" when the real
+      problem was *which fixtures were being searched for* — public-domain audiobook
+      recordings and public-domain diary scans both existed and satisfied the gate
+      from the start.
       **Why five analyzers were not written anyway**, since "blocked on fixtures" invites
       the reading that the code was easy and the data was missing. It was not: without
       fixtures there is no way to know whether any of these techniques *works on the
@@ -1235,7 +1274,7 @@ that might not work — the same argument as the CI security scanners.
       a finding. Five of those is worse than none, because the interface would offer
       them and the disclaimer is not what a tired person at 3am reads. The blocker is
       external data with no permissively-licensed source; the reasoning per technique is
-      at P9.B1–B5.
+      at P9.B1, B3, B4 and B5.
 
 ---
 
@@ -1599,8 +1638,13 @@ that might not work — the same argument as the CI security scanners.
          fail prove the scanners work, not that the application has no findings.
       2. **PITR and MinIO-side replication (P10.B2).** `pg_dump` is a logical backup;
          point-in-time recovery needs WAL archiving.
-      3. **Seven Phase 9 items (B1–B5, T9.2, T9.3)** blocked on labelled fixtures that
-         cannot be manufactured, with the enabler named.
+      3. **Five Phase 9 items.** P9.B1/T9.2 stay blocked: NBIS is *spoof detection*
+         (PAD), not individualization, which is a different task — and no public-domain
+         fingerprint set was found. P9.B3 (deepfake) and P9.B4 (gunshot) remain blocked
+         on fixtures; ESC-50, the one permissively-licensed audio corpus found, has no
+         gunshot class among its 50. **P9.B5 (handwriting) is no longer licence-blocked
+         at all** — see P9.B5, where public-domain diary scans are identified and the
+         remaining work is fixture curation.
       **Grafana dashboards are not asserted** against a rendering Prometheus; only
       Prometheus and the rules are.
 
