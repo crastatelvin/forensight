@@ -77,6 +77,27 @@ fetch "ecapa.onnx" \
   "https://huggingface.co/Wespeaker/wespeaker-voxceleb-ecapa-tdnn512/resolve/main/voxceleb_ECAPA512.onnx" \
   "f901ae3571912bad4e11e157744cb8b7d77a0b46923b83c410bdbb6c77d69736"
 
+# AudioSet classifier, for P9.B4 gunfire triage. **Fetched and digest-pinned, but NOT wired
+# to an analyzer** — the item stays unticked because only one gunfire recording exists under
+# a licence this project accepts, so there is nothing to measure a threshold against. See
+# `tests/probe_audio_fixtures.py` and CHECKLIST.md under P9.B4. Fetched anyway because the
+# digest is the pin, and re-deriving it by hand is how a pin goes stale.
+#
+# MIT, 527 AudioSet classes, `Gunshot, gunfire` at index 427. Input is a (1, 1024, 128)
+# log-mel spectrogram at 16 kHz — and getting that front end wrong does not fail, it returns
+# a confident 527-way distribution that is confidently wrong. The 527 class names are
+# committed at tests/assets/audio/ast_labels.json rather than fetched: 11 KB of metadata is
+# not worth a digest, and committing them lets the probe run with no network at all.
+fetch "ast-audioset.onnx" \
+  "https://huggingface.co/Xenova/ast-finetuned-audioset-10-10-0.4593/resolve/main/onnx/model.onnx" \
+  "6ff353b1e809da25f900b54494fd4ac12a6fc7db1e25195e238f21be125bb4bd"
+
+echo
+echo "NOTE: ast-audioset.onnx has no analyzer. Two of the six clips in"
+echo "tests/assets/audio are not what their filenames claim, and there is one genuine"
+echo "gunfire recording where a measurement needs several. Run the probe with an"
+echo "interpreter that has transformers and onnxruntime:"
+echo "  python tests/probe_audio_fixtures.py"
 echo
 echo "Done. Weights verified by digest."
 echo "To run the model-backed tests:"
