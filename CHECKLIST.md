@@ -941,37 +941,48 @@ UI always has.
       personal data and the payload says so.
 - [ ] P9.B3 Deepfake — Xception/EfficientNet ONNX
 - [ ] P9.B4 Gunshot audio — YAMNet/PANNs
-- [~] P9.B5 Handwriting/document similarity. **The licence blocker is resolved and the
-      material is public domain; what remains is fixture curation, not permission.**
-      This supersedes the earlier note on this item, which recorded no
-      permissively-licensed source — that was true of the *datasets* searched and wrong
-      about what the task needs.
-      **Found: the Center for Digital History's diary collection at UNH, every item
-      CC Public Domain Mark 1.0.** Twelve **Charlotte Baker** diary volumes spanning
-      **1895–1930** are full scans (25–95 MB PDFs, ~288 pages each) — one hand written
-      across 35 years, which is precisely the same-writer/different-year structure the
-      task needs. Other diarists in the collection (Beasley 1889/1899, Knight, Morrill,
-      Poole, Wadleigh, Thurston and others) provide the different-writer class.
-      Verified by download: the scans render as genuine manuscript, and handwriting
-      pages are present (confirmed visually at p.32 of the 1914 volume).
-      **What is not done, precisely.** Three things, all curation rather than access:
-      1. **The diary body is interleaved with printed ephemera.** The 1914 volume's
-         pages are tide tables, principal-cities lists and stock prices with
-         handwriting between them. A cheap ink-density filter does **not** separate
-         them — 17 sampled pages all scored 0.13–0.19 ink — so body pages have to be
-         located by inspection or a stroke-width measure rather than a density
-         threshold. Guessing the page would put printed ephemera in a handwriting
-         fixture set, which measures nothing.
-      2. **A second writer with a comparable full scan is not yet located.** Several
-         other creators' items are single-page scans (maps and documents), not diaries,
-         so the different-writer class is not yet assembled.
-      3. **No module and no measurement.** The technique is not yet chosen or run, so
-         nothing is claimed about whether it separates.
-      **Why this is not faked.** A handwriting module with fixtures I assembled without
-      checking they are handwriting would be the same defect as the six over-confident
-      analyzer payloads avoided elsewhere: a number shaped like a finding, resting on
-      nothing. The honest position is that the material is available and the work left
-      is to identify which pages carry the hand.
+- [x] P9.B5 Handwriting **document** similarity. `handwriting-match`, Tier B, ORB with a
+      Lowe-ratio test, **no weights, no new dependency** (OpenCV already shipped for
+      `face-compare`).
+      **The licence blocker was a wrong search, not a missing permission.** The
+      Center for Digital History's diary collection at UNH is entirely CC Public
+      Domain Mark 1.0, and contains **Charlotte Baker's diary volumes spanning
+      1895-1930** — one hand across 35 years, exactly the structure the task needs.
+      Four verified pages from the 1914 volume are committed.
+      **Locating the handwritten pages took a contact sheet, not a heuristic.** The
+      volume interleaves diary entries with printed ephemera (tide tables, city lists,
+      stock prices). **Ink density does not separate them** — 17 sampled diary-range
+      pages all scored 0.13-0.19 — so a density filter would have put printed tables in
+      a handwriting fixture set. A 288-page contact sheet at 12 dpi showed the
+      structure directly: printed for ~1-64, handwriting ~65-272, printed after.
+      **Measured, and the separation is real.** Same page under a re-capture
+      **0.380-0.749**, different page **0.007-0.013** — a gap of 0.367, roughly
+      thirty-fold. Threshold 0.10, inside the gap.
+      **The first measurement was wrong in a way worth recording.** ORB was created
+      with `nfeatures=3000` while these pages yield **>=12,000** keypoints, so both
+      images were silently truncated to exactly the cap, the denominator was constant,
+      and every same-page pair scored **exactly 1.0000**. The apparent separation — a
+      0.97 gap — was **pure saturation artefact**. It was caught because a metric pinned
+      at its maximum across every case is not a measurement. The cap is now above what
+      the pages produce, and a test asserts it cannot silently become binding again.
+      **This is document matching, not authorship attribution**, and the fixtures are
+      what force that distinction: all four pages are one writer, so the negative class
+      is *same writer, different text*. **That makes the writer-confound untested** —
+      an author keeps one hand, a form-filler imitates one, a forger copies one — and
+      the payload says exactly that rather than implying the module separates writers.
+      **The re-captures are mild** (recompress, small rotation, rescale). Page
+      curvature, perspective, raking light, a different pen and a different scanner are
+      untested and all plausibly defeat it; each is named in the limitations and
+      asserted there so it cannot quietly drop away.
+      **A limitation worth keeping:** matched features can come from *layout* rather
+      than content — a printed form and its photocopy share boxes and rules, and this
+      would call them the same document.
+      23 tests, including a positive control (a re-capture matches itself further than
+      any other page) so the negative results mean something. **One test bug worth
+      recording**: it compared a *string key* against *bytes data* when excluding the
+      page under test, so `other != name` was always true and the assertion degenerated
+      to `own > own`. It failed rather than passing, which is the only reason it was
+      caught.
 - [x] P9.B6 Text authorship — `text-authorship`, Tier B. **Not DistilBERT, and the
       measurement is the reason.** The plan named a DistilBERT model; tried first as the
       obvious reading and it does not work. Two things were measured before anything
@@ -1259,7 +1270,7 @@ that might not work — the same argument as the CI security scanners.
       were the checklist items asking for separation, and the honest answers are that
       it does not hold on this evidence. The remaining items are P9.B1/T9.2 (NBIS is
       spoof detection, a different task), P9.B3 (deepfake) and P9.B4 (gunshot), plus
-      P9.B5 which is no longer licence-blocked and needs only fixture curation.
+      P9.B5 is now built — its blocker was a wrong search, not a missing permission.
       **The recurring lesson from this phase is recorded rather than buried: a recorded
       blocker is a claim, and a claim needs the same evidence as anything else here.**
       Two items were blocked on "no permissively-licensed fixtures" when the real
@@ -1638,13 +1649,12 @@ that might not work — the same argument as the CI security scanners.
          fail prove the scanners work, not that the application has no findings.
       2. **PITR and MinIO-side replication (P10.B2).** `pg_dump` is a logical backup;
          point-in-time recovery needs WAL archiving.
-      3. **Five Phase 9 items.** P9.B1/T9.2 stay blocked: NBIS is *spoof detection*
+      3. **Four Phase 9 items.** P9.B1/T9.2 stay blocked: NBIS is *spoof detection*
          (PAD), not individualization, which is a different task — and no public-domain
          fingerprint set was found. P9.B3 (deepfake) and P9.B4 (gunshot) remain blocked
          on fixtures; ESC-50, the one permissively-licensed audio corpus found, has no
-         gunshot class among its 50. **P9.B5 (handwriting) is no longer licence-blocked
-         at all** — see P9.B5, where public-domain diary scans are identified and the
-         remaining work is fixture curation.
+         gunshot class among its 50. **P9.B5 (handwriting) shipped** — its blocker was a
+         wrong search, not a missing permission.
       **Grafana dashboards are not asserted** against a rendering Prometheus; only
       Prometheus and the rules are.
 

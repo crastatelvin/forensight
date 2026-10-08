@@ -64,6 +64,7 @@ def register_all() -> None:
         entropy,
         face_compare,
         geo_correlate,
+        handwriting,
         image_ela,
         image_exif,
         image_prnu,
@@ -84,7 +85,7 @@ def register_all() -> None:
         text_authorship.module,
         near_duplicate.module,
         speaker_compare.module,
-        speaker_compare.module,
+        handwriting.module,
     ):
         if not is_registered(module.spec.name):
             register(module)

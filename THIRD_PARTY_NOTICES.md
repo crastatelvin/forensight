@@ -96,9 +96,24 @@ pair reaches 0.957. `tests/test_golden_authorship.py` asserts that overlap rathe
 tuning a threshold until it disappears, and `CHECKLIST.md` under P9.B6 records why
 fixing the fixture size at the point where it flatters the technique was rejected.
 
+### Public-domain manuscript (`handwriting-match`)
+
+Four greyscale page images in `backend/tests/assets/handwriting/`, from *Charlotte
+Baker's 1914 diary* (item `csdhi_000081`, archive.org), digitised by the Center for
+Digital History at UNH. Licence: **CC Public Domain Mark 1.0**.
+
+The 1914 volume interleaves diary entries with printed ephemera, and ink density does
+not separate them — a density filter would have put printed tide tables into a
+handwriting fixture set. Pages were located on a 288-page contact sheet and each
+verified at full resolution. Full provenance and regeneration steps are in
+`backend/tests/assets/handwriting/PROVENANCE.md`.
+
+**These support document matching only.** All four pages are one writer, so the writer
+confound is untested.
+
 ### Not pinned
 
-The remaining Phase 9 fixture sets (fingerprint, deepfake, gunshot, handwriting)
+The remaining Phase 9 fixture sets (fingerprint, deepfake, gunshot)
 are not obtainable in a form the allowlist accepts — every ungated
 candidate states no licence, and the ones that do are gated, non-commercial, or No
 Derivatives. `scripts/fetch_fixtures.py` enforces the allowlist and refuses all of

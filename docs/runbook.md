@@ -419,7 +419,7 @@ lever and nothing else should need it.
 
 ### Analyzers
 
-Ten modules ship today. `byte-entropy` is the Phase 4 reference module; the image
+Eleven modules ship today. `byte-entropy` is the Phase 4 reference module; the image
 modules are the real forensic techniques. `/capabilities` is authoritative — it is
 generated from the registry, so it cannot drift from what the build actually ships.
 
@@ -435,9 +435,10 @@ generated from the registry, so it cannot drift from what the build actually shi
 | `text-authorship` | B | cosine similarity between two documents' stylometric profiles | 2 text documents, ≥3000 words each |
 | `near-duplicate` | B | bit distance between two images' 64-bit difference hashes | 2 images from one case |
 | `speaker-compare` | B | cosine similarity between two recordings' ECAPA embeddings | 2 WAV recordings, ≥5 s, 16 kHz mono |
+| `handwriting-match` | B | fraction of a page's ORB features matched to another capture | 2 page images |
 
-`image-prnu`, `face-compare`, `text-authorship`, `near-duplicate` and
-`speaker-compare` compare two
+`image-prnu`, `face-compare`, `text-authorship`, `near-duplicate`,
+`speaker-compare` and `handwriting-match` compare two
 items and take the second as `params.reference_evidence_id` — an evidence id in the same case, resolved
 case-scoped and hash-verified before the comparison runs.
 
@@ -454,6 +455,15 @@ match is a prompt to examine more audio; a non-match is **not** evidence that tw
 recordings are of different people. WAV only, 16 kHz mono, 16-bit, at least 5 s: it
 refuses rather than resampling, because a silent resample would score 44.1 kHz against
 16 kHz and produce a number that looked comparable and was not.
+
+**`handwriting-match` is document matching, not authorship attribution.** It answers
+"are these two images the same page", measured on four public-domain manuscript pages
+of one 1914 diary (same page re-captured 0.380–0.749, different page 0.007–0.013). Two
+pages sharing a hand says nothing about who wrote either — an author keeps one hand, a
+form-filler imitates one, a forger copies one — and because every fixture is one writer,
+that confound is **untested**. A non-match is not proof two documents differ: page
+curvature, perspective, raking light, a different pen and a different scanner all defeat
+this comparison.
 
 **`text-authorship` does not currently separate authors.** On its six public-domain
 fixtures, same-author similarity falls to 0.934 while a different-author pair reaches
