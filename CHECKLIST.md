@@ -886,13 +886,34 @@ UI always has.
 
 ## Phase 9 — Expand analyzers + Tier-B/Tier-C handling
 **Build**
-- [ ] P9.B1 Fingerprint — NIST NBIS. **Dropped deliberately.** Spoof detection (PAD)
-      and individualization are different techniques; the only reachable fingerprint
-      dataset is CC BY-NC-ND-4.0, whose NoDerivatives clause forbids the derived golden
-      set; and NBIS itself is unavailable here (no pip package, no apt package,
-      libfprint's GitHub 404s from this network — it is C). Vendoring libfprint's
-      sources into the image is a real image-size and supply-chain cost nobody has
-      agreed to. Recorded as dropped rather than left quietly open.
+- [ ] P9.B1 Fingerprint — **dropped, and the recorded reason was itself unreliable.**
+      Re-checked 2026-10-08, after the same exercise falsified two other blockers.
+      **Reason #1 as recorded — "NBIS is spoof detection (PAD), not individualization,
+      a different technique" — could not be verified and should never have been stated
+      as fact.** GitHub is unreachable from this network: `api.github.com` returns 404
+      for `usnistgov/nbis`, a repository that certainly exists, exactly as it does for
+      libfprint. So NBIS's component list could not be read, and whether its matching
+      side is individualization rather than PAD is an assumption here, not a finding.
+      (It is probably wrong in substance — NBIS is understood to bundle Bozorth3-based
+      matching — but an unverified belief cannot carry a blocker, so it does not.)
+      **Reason #2 holds, but the emphasis was on the wrong clause.** The reachable
+      dataset is NIST SD-4 at CC BY-NC-**ND**-4.0, and the recorded problem was that
+      NoDerivatives forbids the derived golden set. That is a side issue. **The
+      decisive one is that SD-4 is real people's biometric data** — raw finger impressions
+      of identifiable individuals. Committing those to an open-source repository makes
+      them permanent, publicly cloneable, and impossible to retract, and biometric
+      templates are special-category personal data under GDPR regardless of what any
+      licence permits. Every fixture in this repository is synthetic or already-public
+      for exactly this reason, and fingerprint impressions are the case where that
+      discipline actually costs something. **No licence makes this the right move.**
+      **Reason #3 is verified, and is stronger than recorded.** Not "no apt package" —
+      there is **no `apt` in this environment at all**; `nbis` is absent from PyPI; and
+      the source cannot be fetched or vendored because GitHub is unreachable. Building
+      it from source would additionally need Boost and CMake and a long compile.
+      **So the item is dropped on grounds that stand independently of the matcher**:
+      the fixtures are real biometric data, and this project does not commit those.
+      Recorded as dropped rather than left quietly open, with the *real* reason stated
+      rather than three of which one was a guess and one missed its point.
 - [x] P9.B2 Speaker — `speaker-compare`, Tier B. **ECAPA-TDNN, Apache-2.0
       (`Wespeaker/wespeaker-voxceleb-ecapa-tdnn512`), not SpeechBrain's own release,
       whose weights state no licence and which this project's own fixture gate
@@ -1275,7 +1296,19 @@ that might not work — the same argument as the CI security scanners.
       assumed. And the fixture is checked for length directly, because a shortened
       fixture would make the module refuse while the refusal tests kept passing, so
       every pinned number would be describing a different experiment.
-- [ ] T9.2 NBIS matching high / non-matching low on fixtures — blocked, see P9.B1
+- [ ] T9.2 NBIS matching high / non-matching low on fixtures — not run, and the
+      honest reason is upstream of the matcher. See P9.B1: the fixtures would be real
+      people's biometric data, and this project does not commit those. Two consequences
+      worth stating, because they are the shape of the problem rather than a detail of
+      it. **A golden test for individualization cannot be built from synthetic prints** —
+      a synthetic ridge pattern has no genuine variation, so the min-non-mate similarity
+      it produces is an artefact of the generator, not of fingerprint physiology, and a
+      threshold fitted to it would be a number with nothing under it. **And without
+      mate/non-mate pairs from a real corpus there is no threshold to fit**, so even a
+      working matcher here would ship unvalidated, which is the condition this checklist
+      has rejected for every other analyzer.
+      **This item is dropped with P9.B1 rather than left open**, because the blocker is
+      a decision about what evidence may be committed, not an engineering gap to close.
 - [x] T9.3 Speaker same>threshold / different<threshold. **Measured, and it does not
       hold** — same-reader 0.328–0.911 against different-reader up to 0.841 on eight
       public-domain LibriVox readings. Asserted as a *non-property* in
@@ -1715,11 +1748,12 @@ that might not work — the same argument as the CI security scanners.
       3. **Three Phase 9 items**, and this is the third time the *recorded reason* for a
          blocker was wrong when it was re-checked. **All three now have an accurate
          reason; none has a licence reason.**
-         - **P9.B1/T9.2 (fingerprint).** NBIS is *spoof detection* (PAD), not
-           individualization — a different technique from the question asked here. The
-           only reachable dataset is CC BY-NC-ND, whose NoDerivatives clause forbids
-           the derived golden set, and NBIS is not installable in this environment.
-           Still the one item here blocked partly on availability.
+         - **P9.B1/T9.2 (fingerprint).** **Dropped, not blocked.** The recorded
+           "NBIS is PAD, not individualization" could not be verified — GitHub is
+           unreachable from this network — so it should not have been stated as fact.
+           The reason that survives is that the only reachable corpus is real people's
+           biometric data, which this project does not commit, and that also makes the
+           golden test in T9.2 unbuildable rather than merely unfinished.
          - **P9.B3 (deepfake).** **Not blocked on licence at all** — the earlier note
            said every detector was unstated or gated, and that is false: an Apache-2.0,
            ungated ViT detector with a vendor-reported 92.12% accuracy was downloaded
