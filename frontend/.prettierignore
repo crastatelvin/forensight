@@ -1,0 +1,8 @@
+# Third-party basemap data. Bundled verbatim so its digest is verifiable against the
+# upstream file it came from; reformatting it would both inflate 1.6 MB of JSON and break
+# the digest asserted in tests/geo-map.test.ts.
+public/basemap/
+
+# Generated.
+.next/
+node_modules/

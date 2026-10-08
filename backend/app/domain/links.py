@@ -152,7 +152,6 @@ async def find_links(
 
     keys = {(seed.kind, normalise(seed.value)) for seed in seeds}
     kinds = {kind for kind, _ in keys}
-    normalised_values = {value for _, value in keys}
 
     # **The scope predicate goes on the Case join, not after it.** Filtering linked
     # cases in Python would load them first: an officer would still have caused an

@@ -84,6 +84,7 @@ class OpenAICompatModel:
         api_key: str = "",
         timeout: float = 60.0,
         embed_dim: int = 1024,
+        max_tokens: int = 1024,
     ) -> None:
         self.name = name
         self.base_url = base_url.rstrip("/")
@@ -92,6 +93,7 @@ class OpenAICompatModel:
         self.api_key = api_key
         self.timeout = timeout
         self.embed_dim = embed_dim
+        self.max_tokens = max_tokens
 
     def _client(self) -> Any:
         import httpx
@@ -113,6 +115,11 @@ class OpenAICompatModel:
             "messages": [m.__dict__ for m in messages],
             "temperature": temperature,
             "stream": False,
+            # Bounded, because the alternative is unbounded. On a CPU-only host a 3B
+            # model generates at about 7 tokens/second, so an unbounded step is tens of
+            # seconds of CPU and can outlast the HTTP timeout above. See
+            # `Settings.llm_max_tokens` for the measurement.
+            "max_tokens": self.max_tokens,
         }
         if tools:
             # Normalise to the OpenAI wire format here rather than trusting the
@@ -192,6 +199,7 @@ def resolve_model(settings: Any) -> ChatModel:
     key = getattr(settings, "llm_api_key", "") or ""
     embed_model = getattr(settings, "llm_embed_model", "") or ""
     dim = int(getattr(settings, "embed_dim", EMBED_DIM) or EMBED_DIM)
+    max_tokens = int(getattr(settings, "llm_max_tokens", 1024) or 1024)
 
     if provider == "ollama":
         return OpenAICompatModel(
@@ -201,6 +209,7 @@ def resolve_model(settings: Any) -> ChatModel:
             embed_model=embed_model or "bge-m3",
             api_key=key or "ollama",  # Ollama ignores it but requires the header
             embed_dim=dim,
+            max_tokens=max_tokens,
         )
     if not model:
         raise ModelError("no LLM configured: set LLM_PROVIDER and LLM_MODEL (see .env.example)")
@@ -211,6 +220,7 @@ def resolve_model(settings: Any) -> ChatModel:
         embed_model=embed_model or model,
         api_key=key,
         embed_dim=dim,
+        max_tokens=max_tokens,
     )
 
 

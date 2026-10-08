@@ -111,6 +111,37 @@ verified at full resolution. Full provenance and regeneration steps are in
 **These support document matching only.** All four pages are one writer, so the writer
 confound is untested.
 
+### Bundled basemap (`handwriting`-style, geospatial panel)
+
+`frontend/public/basemap/ne-50m-land.json` — *Natural Earth* `ne_50m_land` (1:50m
+scale), from [`nvkelso/natural-earth-vector`](https://github.com/nvkelso/natural-earth-vector).
+
+**Public domain.** Per <https://www.naturalearthdata.com/about/terms-of-use/>:
+
+> All versions of Natural Earth raster + vector map data found on this website are in the
+> public domain. You may use the maps in any manner, including modifying the content and
+> design, electronic dissemination, and offset printing.
+
+Authors: Tom Patterson, Nathaniel Vaughn Kelso, and contributors. 1.6 MB, digest-pinned
+(`sha256 e874b27a…`), excluded from `prettier` so formatting cannot change it.
+
+**Bundled rather than fetched, deliberately.** A raster tile request carries a viewport,
+and this system's viewport is derived from case evidence — so a tile service would learn
+where the photographs were taken. Serving the geometry from the application's own origin
+means the only request the map makes carries nothing derived from the case. Licence and
+size rationale, and the measured resolution trade-off between 110m/50m/10m, are in
+`frontend/public/basemap/PROVENANCE.md`.
+
+### Declined, on measurement
+
+**`maplibre-gl` 6.13.0 — BSD-3-Clause — not used.** Recorded here because the refusal is
+not a licence one: MapLibre is available, permissively licensed, and *can* render a style
+with no tile source, so the privacy objection alone never disqualified it. At 26.7 MB
+unpacked across 19 dependencies and requiring WebGL, it is the wrong dependency for an
+appliance built to run air-gapped on constrained hosts, in a lab VM without GPU
+acceleration, or in a printed report — where a WebGL canvas is a blank rectangle. The
+projection it would have replaced is hand-written and tested without a DOM.
+
 ### Not pinned
 
 The remaining Phase 9 fixture sets (fingerprint, deepfake, gunshot)

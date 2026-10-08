@@ -491,17 +491,80 @@ MinIO, a real worker — not by any test:
       with the finding on the case (`findings 0 -> 1`).
 - [x] P7.B4 Evidence viewer: image/audio/video/text + metadata + side-by-side + ELA overlay
 - [x] P7.B5 Result overview + geospatial view. **Neither Recharts nor MapLibre GL,
-      and both deviations are deliberate.**
-      - **No MapLibre, and no basemap.** The obvious implementation is MapLibre with
-        raster tiles, and it is wrong for this system: a tile request carries the
-        viewport, and the viewport here is derived from the evidence. Panning far
-        enough would tell a tile CDN where the photographs were taken, before anyone
-        has decided that is acceptable to disclose — and in a restricted deployment it
-        renders a blank canvas. So the coordinates are plotted on an equirectangular
-        graticule with no external service contacted, and the panel says so.
-        *Flip to MapLibre* when a deployment supplies its own tile source (internal
-        server, licensed offline basemap, or explicit opt-in). That is a rendering
-        change only — the coordinates are already in decimal degrees.
+      and both deviations are measured rather than assumed.**
+      - **A real map, drawn locally — the tile service was the objection, not the map.**
+        The earlier note refused MapLibre *and* the basemap together. That conflated two
+        separate things, and only one of them is a problem. The objection to a tile service
+        is real and unchanged: a tile request carries a viewport, the viewport comes from
+        the case's own coordinates, and panning teaches a CDN where the photographs were
+        taken. But **MapLibre can render a style with no tile source at all**, so the
+        privacy argument alone never disqualified it — the tile service and the renderer are
+        independent choices, and only the first was refused. Refusing both left the panel
+        with dots on a blank grid, which is not the same as being careful.
+        **Natural Earth 50m land is now bundled** — public domain, 1.6 MB, served from the
+        application's own origin. Nothing is fetched from any third party, there is no
+        basemap service to configure, and the viewport never leaves the host.
+      - **MapLibre was measured, not dismissed: 6.13.0, BSD-3-Clause, 26.7 MB unpacked
+        across 19 dependencies, and WebGL required.** So it is available and would satisfy
+        the privacy requirement. It is still the wrong choice here, and the reason is the
+        one that matters for this product: it buys pan and zoom — which the panel now has
+        directly — at the price of a WebGL dependency on an appliance built to run air-gapped
+        on constrained hosts, in a lab VM with no GPU acceleration, and in a printed report
+        where a WebGL canvas is a blank rectangle. **The projection is hand-written in
+        `src/lib/geo-map.ts` and tested without a DOM**, which is only possible without a
+        rendering library in the way.
+      - **The basemap resolution was chosen by measurement.** Median vertex spacing is what
+        decides whether a coastline reads as geography, and it was measured per scale:
+        **110m = 62.8 km spacing (135 KB) → 50m = 7.6 km (1.6 MB) → 10m = 1.5 km (9.9 MB)**.
+        110m was tried first and rendered **no coastline at all** below ~20° of span —
+        Britain's 110m outline is 44 points for the whole island, so at regional zoom it is
+        a few enormous straight lines. 10m is 6.5× the payload for spacing that is still not
+        street level. 50m is the smallest scale at which the outline reads as a coastline.
+      - **The zoom floor is derived from the data, not chosen.** At 7.6 km vertex spacing,
+        below ~15 km across the view there is often **no outline in frame at all** —
+        measured: a point 10 km from the sea shows solid land, because no vertex falls inside
+        the frame. Zoom stops there rather than drawing a shape the source does not contain,
+        and the panel's caption says exactly this to the reader. A test re-measures the
+        median spacing from the bundled file and fails if it moves, because that number is
+        what sets the floor.
+      - **The basemap is digest-pinned**, like every other third-party artefact here. A
+        silent upstream revision would change what an examiner is shown without changing a
+        line of code. `frontend/.prettierignore` also excludes it, so reformatting cannot
+        change the digest either.
+      - **Five real bugs were found by looking at the rendering, not by reading the code**,
+        and each is recorded in the module:
+        1. The first model stored degrees of longitude and derived latitude from
+           `cos(latitude)`. That is right locally and **wrong globally**: at the world view
+           it asked for 360° *of latitude*, which does not exist, and drew a graticule
+           through the North Pole. Storing pixels-per-degree instead makes the world view
+           fall out correctly and turns most of the module into a division.
+        2. The zoom limits multiplied by metres-per-degree where degrees were needed, so a
+           60°N view asked for 2,953° of longitude.
+        3. The zoom *ceiling* carried a `cos(latitude)` that cancels, making the floor
+           latitude-dependent — which the panel's own caption then contradicted.
+        4. `zoomAt`'s `factor` multiplied the scale while its docstring and the panel's zoom
+           buttons both treated it as a span multiplier, so the documented behaviour and the
+           implemented behaviour were opposites.
+        5. The graticule accumulated `lat += step` in a loop, and the float drift reached the
+           axis label as `33.2500000000°W`. Now indexed and snapped to the step's precision.
+        **A sixth was a wrong test, not wrong code**, and is the more useful one: the first
+        test asserted that a 0.05° longitude step draws the same number of pixels as a 0.05°
+        latitude step. It must not — at 30°N a degree of longitude is cos(30) = 0.866 as
+        long on the ground, and the projection correctly draws it 0.866 as wide. What has to
+        match is the same *ground* distance drawn east and north. Two other test
+        expectations were wrong for the same reason (0.2° of longitude at the equator is
+        22 km, not a few hundred metres; and 111,320 m per degree belongs to the WGS84
+        equatorial radius, not the IUGG mean radius this module uses).
+      - **The map now shows the finding, not just the points.** Added beyond making the
+        coordinates legible: a **scale bar**, because "3 m apart" and "300 m apart" are the
+        same two dots at different zooms and an unscaled distance is unreadable; the
+        **measured distance between the closest pairs**, which is the thing an examiner is
+        actually looking for and which nothing else on screen made visible; a **labelled
+        graticule**, which is the only thing that stays informative below regional zoom
+        once the coastline has left the frame; and **zoom, pan and fit-to-evidence**.
+        Every distance is derived from the coordinates with the haversine formula and is
+        labelled `not scored` alongside the panel — it is a measurement of the evidence's
+        claim, not a finding about it.
       - **No Recharts.** Each analyzer has its own scale — entropy in bits per byte,
         face similarity a cosine — so a shared axis would be the single most
         misleading thing this screen could do, and the rows are therefore bars
@@ -625,15 +688,28 @@ MinIO, a real worker — not by any test:
       forever, and the page stays interactive throughout. **No toast layer:** progress
       appears inline where the work was started, and a single page already covers
       the case. Worth revisiting if a job ever runs that the operator did not start.
-- [~] T7.6 Dark/light persists across a reload in both directions (asserted).
+- [x] T7.6 Dark/light persists across a reload in both directions (asserted).
       Geospatial view renders real coordinates — 51.50000, -0.11667 with the raw
       51°30'0" 0°7'0" beside it, verified against a generated EXIF fixture. The
       result overview is computed straight from the API payload with no intermediate
-      transform, so it cannot disagree with the data. **"MapLibre renders real
-      coordinates" is not met as written and will not be** — see P7.B5: a tile
-      service would be handed a viewport derived from the evidence. The intent
-      behind the line (real coordinates actually drawn) is met; the named tool is
-      refused, with the reason recorded.
+      transform, so it cannot disagree with the data.
+      **The geospatial view is now a working map on a bundled public-domain coastline**
+      (see P7.B5). The line read "MapLibre renders real coordinates", and the honest
+      account of that is: **MapLibre was measured and declined on size and WebGL
+      dependence, not on capability** — it renders a tile-free style fine — while the
+      thing the refusal was really protecting, the evidence's viewport staying on the
+      host, is now guaranteed by there being no tile service at all.
+      **41 geometry tests, no DOM.** What is asserted, and the five projection bugs the
+      tests caught on the way: projection round-trips at every zoom and latitude; **a pixel
+      is the same distance on the ground in both directions**, which is what makes the
+      scale bar a single number; fit-to-evidence keeps every coordinate inside the padded
+      box; points either side of the antimeridian are 2 km apart rather than world-zoomed;
+      zoom keeps the point under the cursor fixed to 1e-9; pan inverts correctly and stops
+      at the poles; the world view never asks for more than 180° of latitude; the graticule
+      stays within its line budget and its labels are round numbers; the scale bar is the
+      largest round distance that **fits its own budget**; the bundled file is digest-pinned
+      and its measured vertex spacing still matches the floor the module quotes to the
+      reader.
 - [x] T7.7 Every list section distinguishes "could not load" from "loaded and
       empty", and says which. Enforced by the types rather than by discipline: when
       `safe<T>()` returned `null as T` the compiler was silenced and the page crashed
@@ -2144,30 +2220,73 @@ that might not work — the same argument as the CI security scanners.
       the removal of the warning it was written to enforce.
       11 tests.
 
-## Open defect found while verifying FI-1 (not caused by it)
+## Open defect found while verifying FI-1 — **closed, and two more found on the way**
 
-`e2e/journey.spec.ts` → *"an action parked for approval stays answerable after a
-reload"* **times out at its 180 s budget when the full suite runs, and passes in
-isolation in ~15 s.** Recorded rather than left as an unexplained flake.
+### The e2e flake is fixed. 15/15, twice, in ~42 s.
 
-The mechanism is measured, not guessed. The failure is
-`locator.click: Test timeout of 180000ms exceeded` waiting for the Findings tab after
-the approval is answered — and answering it lets the agent continue, which costs a
-real `qwen2.5:3b` call through Ollama. The test's own comment already documents this
-class of problem ("the budget is the model's, not the browser's"); what it has not yet
-done is stop depending on the model's speed.
+`e2e/journey.spec.ts` → *"an action parked for approval stays answerable after a reload"*
+used to time out at its 180 s budget in full-suite runs and pass in isolation. **The
+previously recorded explanation was wrong**, and correcting it is most of the fix.
 
-**Attribution, stated precisely.** Playwright runs files alphabetically with one
-worker, so `a11y`, `journey` and then `timeline` — the three new timeline tests run
-*after* the failing one and cannot cause it. Confirmed by running `journey` + `a11y`
-alone: 12 passed. Restarting the API first (to rule out the in-memory auth rate
-limiter accumulating across runs) did not clear it. The derived timeline endpoint is
-not the cost either: 13 ms against 8 ms for the plain one.
+**What the note said:** answering the approval lets the agent continue, which costs a real
+`qwen2.5:3b` call through Ollama, and the model is slower than the budget.
 
-**What would actually fix it:** the test asserts browser behaviour — that a parked
-action is answerable after a reload, which is the bug it was written for. That needs
-no live model at all. The approval endpoint already parks an action without one, so
-the continuation after approval is the only part that needs the model, and it could be
-stubbed the way `agent_fakes.py` stubs the rest. Left undone deliberately rather than
-patched with a longer timeout, because raising the budget hides the dependency instead
-of removing it.
+**What is actually true, measured on this host:** `qwen2.5:3b` on CPU generates at about
+**7 tokens/second** — a 64-token completion takes **8.6 s**, 256 tokens **37.9 s**, 512
+tokens **71 s**. Approving does not cost *one* call; it lets the graph continue and the
+cost is *several steps × variable length*. Across identical runs the post-approval
+continuation measured **8 s, 38 s and 69 s**, and a 60 s budget failed intermittently —
+passing on one run and failing on the next. So the note's "a real model call" was half
+right: the dependency was real, but the diagnosis (one slow call) and the implied remedy
+(a longer timeout) were both wrong. **No timeout value makes this deterministic**, which
+is the argument for removing the dependency rather than resizing the budget — which is
+what this item had already concluded, and why it was left undone.
+
+**Fixed by replacing the model at the protocol boundary**, as the note said should be done.
+`backend/scripts/llm_stub.py` is a stdlib-only HTTP server speaking the OpenAI
+chat-completions and embeddings shapes, wired in as a compose service and reached over
+`LLM_BASE_URL`. **The application still runs its real `httpx` client, its tool-calling
+normalisation, its tool runner and its persistence** — only the third party on the other
+end is fake. (`llm-stub` is a single-label hostname, so `app.agent.egress` already treats
+it as a container-network name and permits it; no allowlisting was needed.)
+
+**Deliberately not `LLM_PROVIDER=scripted` in `resolve_model`.** A configuration switch
+that swaps the forensic agent's reasoning for a canned reply is exactly the thing that
+gets left enabled in a deployment, where it would produce confident, wrong findings. The
+`ScriptedModel` double in `app.agent.llm` exists for Python tests, which is the right place
+for it; making it reachable from configuration would move it to the wrong one.
+
+**Also fixed: the suite exhausted the rate limiter.** Every request in the run comes from
+one address and the limiter is keyed by IP, so all fifteen tests share one bucket per
+category; the production mutation budget of 60/minute was consumed mid-suite and the
+failure surfaced as a **429 from an upload, at a random point** — the same file failing on
+one run and a different file on the next. `docker-compose.e2e.yml` raises the budgets for
+the suite only. **The defaults in `docker-compose.yml` are untouched**, because those are
+what a deployment runs, and the limiter itself is asserted directly by the backend tests.
+
+The previously recorded `14/15 e2e` is therefore **15/15**, and the note above it is
+replaced rather than left to rot beside a fix.
+
+### Two real defects found while fixing it
+
+**1. Generation was unbounded, and could outlast the client's own timeout.** No
+`max_tokens` was sent, which to the chat-completions API means *no limit at all*. On a 7
+tok/s host one agent step is tens of seconds of CPU, and `OpenAICompatModel` has a 60 s
+HTTP timeout — so a long generation did not merely run slowly, it could be cut off and
+raised as a `ModelError`, failing the run for what was really a slow answer.
+`Settings.llm_max_tokens` (default **1024**) now bounds every step, and a test asserts
+both that the bound reaches the wire and that `LLM_MAX_TOKENS` is honoured by
+`resolve_model`. A bound is not a target: the agent emits short structured output, so a
+truncated reply shows up as an unusable tool call rather than as a quiet shortening.
+
+**2. A dev database drifted, and it fails silently enough to waste an hour.** The shared
+development database had `trace_spans` present while `alembic_version` still read
+`0007_reports`, so the container's `alembic upgrade head` aborted with
+`DuplicateTable: relation "trace_spans" already exists` — and the api then sat
+**unhealthy with no obvious cause**, because a container that cannot migrate looks like
+an application that cannot start. The table matched migration `0008_traces` exactly, so
+the migration had been applied without the version being stamped (a test that builds
+tables directly will do that). Fixed by `alembic stamp 0008_traces`. **Nothing is wrong
+with the migration** — on a fresh database it applies cleanly — but the failure mode is
+worth remembering: *the version table and the schema can disagree, and only one of them is
+consulted at boot.*

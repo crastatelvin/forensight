@@ -298,12 +298,18 @@ class _FakeResp:
 
 
 def _stub_model(client: _FakeHttp) -> OpenAICompatModel:
-    model = OpenAICompatModel.__new__(OpenAICompatModel)
-    model.base_url = "http://x/v1"
-    model.model = "m"
-    model.api_key = None
-    model.timeout = 5
-    model.embed_model = "e"
+    # Built through the real constructor rather than `__new__` plus hand-assigned
+    # attributes. The previous version listed the attributes it happened to need, so
+    # adding one to `OpenAICompatModel` left this stub missing it and two tool-shape
+    # tests failed with an AttributeError from `complete` — a hand-written duplicate of a
+    # constructor, drifting from the one it copies. Only the HTTP client is replaced.
+    model = OpenAICompatModel(
+        name="stub",
+        base_url="http://x/v1",
+        model="m",
+        embed_model="e",
+        timeout=5,
+    )
     model._client = client  # type: ignore[method-assign]
     return model
 
@@ -593,3 +599,34 @@ async def test_record_tool_call_computes_a_missing_hash(sessionmaker_fixture) ->
         )
     assert row.result_hash, "a tool call was recorded with no result hash"
     assert row.args_hash, "a tool call was recorded with no argument hash"
+
+
+def test_a_generation_is_bounded() -> None:
+    """No `max_tokens` in the payload means an unbounded generation.
+
+    Measured on the constrained-host profile: `qwen2.5:3b` on CPU generates at about
+    7 tokens/second, so an unbounded agent step is tens of seconds of CPU and can outlast
+    the client's own 60 second timeout — which turns a slow answer into a `ModelError`
+    and a failed run. The bound is a constructor concern, so it is asserted here rather
+    than in the module docstring alone.
+    """
+    http = _FakeHttp()
+    _stub_model(http).complete([ChatMessage(role="user", content="hi")])
+    assert http.sent["max_tokens"] == 1024
+
+
+def test_the_bound_comes_from_configuration() -> None:
+    """`LLM_MAX_TOKENS` is the deployment's knob, and `resolve_model` threads it."""
+    from app.agent.llm import resolve_model
+
+    class _Settings:
+        llm_provider = "ollama"
+        llm_model = "qwen2.5"
+        llm_base_url = ""
+        llm_api_key = ""
+        llm_embed_model = ""
+        embed_dim = 1024
+        llm_max_tokens = 256
+        egress_allowed_hosts = ""
+
+    assert resolve_model(_Settings()).max_tokens == 256  # type: ignore[attr-defined]

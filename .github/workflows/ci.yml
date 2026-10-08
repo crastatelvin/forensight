@@ -94,7 +94,13 @@ jobs:
       # A real Postgres and MinIO. The suite creates cases and uploads evidence, so
       # this cannot run against SQLite.
       - name: Start the stack
-        run: docker compose --profile core up -d --wait postgres redis minio api worker
+        # The e2e override raises the rate-limit budgets: every request in the suite comes
+        # from one address and the limiter is keyed by IP, so the whole run shares a single
+        # bucket per category and the production mutation budget of 60/minute is exhausted
+        # mid-suite. This suite is not testing the limiter; the backend unit tests are.
+        run: >
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml
+          --profile core up -d --wait postgres redis minio api worker
 
       # The browser signs in through the API, so an admin has to exist. No default
       # credentials: they are supplied here, as a CI-only secret.
@@ -120,7 +126,9 @@ jobs:
 
       # Restarted so the api picks up the passphrase it was started without.
       - name: Restart the api with the signing passphrase
-        run: docker compose up -d api
+        run: >
+          docker compose -f docker-compose.yml -f docker-compose.e2e.yml
+          up -d api
         env:
           REPORT_SIGNING_PASSPHRASE: ci-only-passphrase-not-a-secret
 

@@ -38,7 +38,7 @@ a handwritten page differs far more than a JPEG recompression does.
 from __future__ import annotations
 
 import io
-from typing import Any
+from typing import Any, cast
 
 import cv2
 import numpy as np
@@ -127,13 +127,13 @@ def _detector() -> Any:
     """
     import cv2
 
-    # `getattr` rather than `cv2.ORB_create` because the type stub omits it
-    # entirely, so a direct attribute access is an attr-defined error under mypy
-    # strict. `ORB_create` has been in OpenCV since 2.4 and this code has been run —
-    # an AttributeError here would be caught by the first test, not discovered in
-    # production.
-    create = getattr(cv2, "ORB_create")
-    return create(nfeatures=MAX_FEATURES, fastThreshold=8)
+    # `cast` rather than a direct attribute because cv2's type stubs omit
+    # `ORB_create` entirely, so `cv2.ORB_create` is an attr-defined error under mypy
+    # strict. A constant `getattr` would satisfy mypy and trip ruff's B009, which is
+    # right: it is no safer than attribute access. `ORB_create` has been in OpenCV since
+    # 2.4 and this code has been run, so an AttributeError here would be caught by the
+    # first test rather than discovered in production.
+    return cast("Any", cv2).ORB_create(nfeatures=MAX_FEATURES, fastThreshold=8)
 
 
 def _matcher() -> Any:

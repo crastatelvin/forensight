@@ -15,6 +15,80 @@ The API container runs `alembic upgrade head` before serving, so the schema is
 always current. Never skip it: an API against an empty schema fails every DB
 route with a 500 that looks like an application bug.
 
+### End-to-end tests
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.e2e.yml --profile core up -d --wait
+cd frontend && npm run build          # the config's server timeout is too short for
+                                      # `npm run build && npm run start` combined
+npx next start &                      # or: npm run start
+PLAYWRIGHT_WEB_PORT=3000 npx playwright test
+```
+
+**The second compose file is required**, and running the suite without it is a
+trap rather than merely slower. It makes three changes, each for a reason that
+will not be obvious from the symptom:
+
+- **A stub model** (`llm-stub`). The agent-journey test asserts that a parked
+  action stays answerable after a reload and that approving it performs the
+  write; neither depends on what the agent decides next. Approving does let the
+  agent continue, and on this CPU-only host `qwen2.5:3b` generates at about
+  **7 tokens/second** — 256 tokens is 38 s — so the continuation varied between
+  8 s and 69 s and the suite failed intermittently. The stub answers with an
+  immediate empty completion; the application still exercises its real HTTP
+  client, tool-calling normalisation, tool runner and persistence.
+  **Not** a `LLM_PROVIDER` switch in the product: a setting that swaps the
+  agent's reasoning for a canned reply is what gets left enabled in production.
+- **Higher rate-limit budgets.** The limiter is keyed by IP, so every request in
+  the suite shares one bucket per category. At the production mutation budget of
+  60/minute the suite ran out mid-run and failed on a **429 from an upload, at a
+  random point**. The defaults in `docker-compose.yml` are unchanged — those are
+  what a deployment runs, and the limiter is asserted directly by the backend
+  tests.
+Nothing in that file changes application behaviour. The journey spec's own
+`test.setTimeout(180_000)` lives in `frontend/e2e/journey.spec.ts`, where it
+belongs: the run it guards is the test's, not the stack's.
+
+### The container is unhealthy after a schema change
+
+`alembic upgrade head` aborts if a table already exists, and then the API is
+unhealthy with nothing in the health output pointing at migrations — it looks
+like an application that cannot start. Check the logs for `DuplicateTable`, then
+compare the schema against the version table:
+
+```bash
+docker compose logs api | grep -i duplicate
+docker compose exec -T postgres psql -U forensight -d forensight \
+  -c 'select version_num from alembic_version;'
+```
+
+If the table is already correct, stamp rather than re-run:
+
+```bash
+docker compose run --rm --no-deps -T --entrypoint sh api \
+  -c 'uv run --no-sync alembic stamp 0008_traces'
+```
+
+**Check the shape before stamping.** `alembic stamp` only moves the version
+pointer; it creates nothing. A table that exists with the *wrong* columns will
+then pass the boot check and fail at query time, which is a worse failure than
+the one you are fixing.
+
+### `ELA cannot be applied: the evidence did not decode`
+
+Correct behaviour, not a fault. The ELA endpoint needs real image bytes, and it refuses
+with a reason rather than rendering something meaningless.
+
+**If the row is named `seed.jpg` and is one byte**, it came from
+`backend/scripts/seed_parked_run.py`, which deliberately inserts a placeholder so the
+agent-approval journey has a case with evidence in it. Nothing verifies that file's
+bytes. Use a real upload to exercise ELA:
+
+```bash
+curl -X POST -H 'Content-Type: image/jpeg' --data-binary @real.jpg \
+  'http://localhost:8000/api/cases/<case-id>/evidence'
+```
+
 ## First admin
 
 There are no default credentials. Create the first one explicitly:

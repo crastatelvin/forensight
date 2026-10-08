@@ -146,22 +146,20 @@ async def test_a_required_write_does_raise() -> None:
         async def flush(self) -> None:  # pragma: no cover - never reached
             raise AssertionError("should not get here")
 
-    with tracing.span("api.case") as span:
-        with pytest.raises(tracing.TracingUnavailable):
-            await tracing.record(
-                span.to_row(ended_ns=1, status="ok", attributes={}),
-                _BrokenSession(),
-                required=True,
-            )
+    with tracing.span("api.case") as span, pytest.raises(tracing.TracingUnavailable):
+        await tracing.record(
+            span.to_row(ended_ns=1, status="ok", attributes={}),
+            _BrokenSession(),
+            required=True,
+        )
 
 
 # --- the row shape ---------------------------------------------------------
 
 
 def test_a_span_row_carries_the_parent_as_a_uuid() -> None:
-    with tracing.span("parent") as outer:
-        with tracing.span("child") as inner:
-            row = inner.to_row(ended_ns=time.time_ns(), status="ok", attributes={"k": "v"})
+    with tracing.span("parent") as outer, tracing.span("child") as inner:
+        row = inner.to_row(ended_ns=time.time_ns(), status="ok", attributes={"k": "v"})
     # Round-tripped through the helpers, not through a raw `UUID(hex=...)`: a W3C span
     # id is 16 hex chars and a UUID is 32, so the conversion has to be defined
     # somewhere rather than spelled differently at each call site.

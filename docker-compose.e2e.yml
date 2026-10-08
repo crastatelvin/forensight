@@ -1,0 +1,63 @@
+# Rate-limit budgets for the end-to-end suite.
+#
+# **The e2e run is a single client, and the limiter is keyed by IP**, so every request in
+# the suite shares one bucket per category. Fifteen tests that each create a case, upload
+# evidence, transition it and queue analyses exceed the production mutation budget of
+# 60/minute well inside one run, and the suite then fails at a *random* point on a 429 from
+# an upload — which is how it presented: the same file failed on one run and a different
+# file failed on the next.
+#
+# That is a property of the suite's shape, not a bug in the limiter. This suite is not
+# testing the rate limiter; the backend unit tests assert it directly (T1.4, and
+# `tests/test_auth.py`), including that a burst past the budget is refused. Raising the
+# budgets here so the suite tests what it means to test.
+#
+# **The defaults in `docker-compose.yml` are deliberately unchanged** — those are what a
+# deployment runs. The auth budget is raised too: the browser signs in once per spec file,
+# but the seeding and setup requests come from the same address.
+#
+# A stub model, so the suite does not depend on how much a 3B model decides to write.
+#
+# `scripts/llm_stub.py` speaks the OpenAI chat-completions and embeddings shape, so the
+# application exercises its real HTTP client, its tool-calling normalisation, its tool
+# runner and its persistence. Only the third party on the other end is fake.
+#
+# **Why not `LLM_PROVIDER=scripted` in `resolve_model`:** a configuration switch that
+# swaps the forensic agent's reasoning for a canned reply is exactly the kind of thing that
+# gets left enabled in a deployment, where it would produce confident, wrong findings. The
+# `ScriptedModel` double in `app.agent.llm` is for Python tests, which is the right place
+# for it; making it reachable from configuration would move it to the wrong one.
+#
+# `llm-stub` is a single-label hostname, so `app.agent.egress` treats it as a
+# container-network name and permits it without allowlisting.
+#
+# The image is reused rather than built, and the entrypoint is overridden so this service
+# does not run migrations on startup.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.e2e.yml --profile core up -d --wait
+services:
+  llm-stub:
+    image: forensight-api
+    entrypoint: ["python", "scripts/llm_stub.py", "--host", "0.0.0.0", "--port", "8080"]
+    profiles: ["core", "e2e"]
+    restart: unless-stopped
+
+  api:
+    depends_on:
+      llm-stub:
+        condition: service_started
+    environment:
+      # Points the agent at the stub. `llm_model` is still set, because the stub echoes it
+      # back in its responses and an unset model is rejected before anything is called.
+      LLM_BASE_URL: http://llm-stub:8080/v1
+      RATE_LIMIT_AUTH_MAX: "200"
+      RATE_LIMIT_READ_MAX: "20000"
+      RATE_LIMIT_MUTATION_MAX: "20000"
+      # Generation bound for the suite. The default (1024) is right for a deployment —
+      # it caps a runaway step — but on this CPU-only host `qwen2.5:3b` generates at
+      # about 7 tokens/second, so 1024 tokens is up to 146 seconds, and the agent-journey
+      # test asserts the whole approve-and-continue round trip completes inside 60. This
+      # is roughly one agent step's worth of output for this agent's short structured
+      # replies, which is what makes the budget meaningful rather than generous.
+      LLM_MAX_TOKENS: "160"

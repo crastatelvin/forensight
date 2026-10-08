@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import hashlib
 import io
-import subprocess
+import shutil
 import wave
 from typing import Any
 
@@ -396,12 +396,12 @@ def ffmpeg_available() -> bool:
     Used only to build the test fixtures, never at analysis time: this module decodes
     WAV in-process and does not shell out. Reported so a missing `ffmpeg` is an
     explicit skip rather than a confusing failure inside a fixture test.
+
+    `shutil.which` rather than running `ffmpeg -version`: the question here is only
+    whether the binary is on `PATH`, and `which` answers that without starting a process,
+    so there is no argv to construct, no timeout to set, and no subprocess to audit.
     """
-    try:
-        subprocess.run(["ffmpeg", "-version"], capture_output=True, check=True, timeout=20)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return True
+    return shutil.which("ffmpeg") is not None
 
 
 def register() -> None:

@@ -80,7 +80,7 @@ def test_the_fixtures_are_six_distinct_passages(corpus: dict) -> None:
     checked, not assumed.
     """
     assert len(corpus) == 6
-    assert len({text for text in corpus.values()}) == 6, "two fixtures hold the same text"
+    assert len(set(corpus.values())) == 6, "two fixtures hold the same text"
     assert {_author(p) for p in FIXTURES} == {"austen", "melville", "shelley"}
     assert all(_author(p) for p in FIXTURES)
 

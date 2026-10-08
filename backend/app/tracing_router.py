@@ -13,6 +13,7 @@ trace that could fail a case submission would be worse than no trace.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from typing import Annotated, Any
 
@@ -24,6 +25,8 @@ from app import tracing
 from app.auth.rbac import CurrentUser, get_current_user
 from app.db import get_session
 from app.domain.access import scoped_case
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["tracing"])
 
@@ -78,7 +81,10 @@ def install(app: Any) -> None:
                     http_status=response.status_code,
                 )
         except Exception:  # noqa: BLE001 - tracing must never break a response
-            pass
+            # Logged rather than swallowed silently: a span that never lands is a gap in
+            # the record, and an operator seeing a trace that stops mid-request has no
+            # way to tell a bug from a missing row unless something says so.
+            logger.warning("could not finish trace span", exc_info=True)
         return response
 
 

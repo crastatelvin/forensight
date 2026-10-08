@@ -228,7 +228,9 @@ test("evidence bytes and the ELA overlay are served through the proxy", async (t
   assert.ok(jpegs.length > 0, "no JPEG evidence in any visible case");
 
   let served = 0;
+  let rendered = 0;
   let sawGone = false;
+  let sawUndecodable = false;
 
   for (const item of jpegs) {
     const inline = await call(`/api/evidence/${item.id}/download?disposition=inline`);
@@ -256,6 +258,28 @@ test("evidence bytes and the ELA overlay are served through the proxy", async (t
     // magic bytes and the assertion fails on a working route. That is a bug in the
     // test that looks exactly like a bug in the code.
     const overlay = await callBinary(`/api/evidence/${item.id}/ela`);
+    // **Two correct outcomes, not one.** Either the bytes decode and the overlay
+    // renders, or they do not and the endpoint refuses with a readable reason.
+    //
+    // The earlier version asserted 200 unconditionally and failed as soon as
+    // `seed_parked_run.py` had been used: that helper deliberately inserts a
+    // one-byte placeholder `seed.jpg` ("nothing verifies this file's bytes; it exists
+    // so the case has something to analyse"), so walking *every* visible case's JPEGs
+    // reaches rows that cannot be decoded. The failure was real — 422 — and the
+    // endpoint was right to give it: refusing with a reason is the behaviour this
+    // project wants everywhere else. What must never happen is a 5xx or storage
+    // internals leaking to the client, so that is what is actually asserted.
+    if (overlay.status === 422) {
+      sawUndecodable = true;
+      assert.match(
+        overlay.body,
+        /did not decode|cannot be applied/i,
+        `ELA refusal for ${item.id} does not say why: ${overlay.body.slice(0, 200)}`,
+      );
+      assert.doesNotMatch(overlay.body, /Traceback|S3Error|minio/);
+      continue;
+    }
+
     assert.equal(
       overlay.status,
       200,
@@ -267,10 +291,21 @@ test("evidence bytes and the ELA overlay are served through the proxy", async (t
       [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a],
       "ELA overlay is not a PNG",
     );
+    rendered += 1;
     break;
   }
 
   assert.ok(served > 0, `no JPEG served bytes; ${jpegs.length} tried`);
+  assert.ok(
+    rendered > 0,
+    `no JPEG rendered an overlay; ${jpegs.length} tried and all refused`,
+  );
+
+  if (sawUndecodable) {
+    console.log(
+      "  (some evidence records hold undecodable bytes; 422 handled cleanly)",
+    );
+  }
 
   // Whether a dangling record exists is a property of *this* database, not of the
   // code, so it is reported rather than asserted. An earlier version demanded one

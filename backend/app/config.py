@@ -109,6 +109,20 @@ class Settings(BaseSettings):
     #: reports or stalls every rolling deploy. Set it deliberately.
     shutdown_grace_seconds: float = Field(default=0.0, ge=0.0, le=300.0)
     llm_api_key: str = Field(default="")
+    #: Hard ceiling on tokens generated per agent step.
+    #:
+    #: **Measured, not guessed.** On the constrained-host profile this project targets,
+    #: `qwen2.5:3b` generates at roughly **7 tokens/second** on CPU: a 64-token
+    #: completion takes 8.6 s, 256 tokens takes 37.9 s, and 512 tokens takes 71 s. Left
+    #: unbounded — which is what an absent `max_tokens` means to the OpenAI chat
+    #: completions API — a single agent step costs tens of seconds of CPU and can exceed
+    #: the 60 s HTTP timeout in `OpenAICompatModel`, turning a slow answer into a
+    #: `ModelError` and a failed run.
+    #:
+    #: 1024 comfortably fits a tool call plus prose while capping the worst case. It is a
+    #: bound, not a target: the agent emits short structured output, so a truncated
+    #: response would show up as an unusable tool call rather than as a quiet shortening.
+    llm_max_tokens: int = Field(default=1024, ge=64, le=32768)
     llm_embed_model: str = Field(default="")
     #: Must match the pgvector column width in migration 0006, and the width the
     #: embedding model actually returns. A mismatch is rejected on write rather

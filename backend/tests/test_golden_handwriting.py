@@ -112,7 +112,7 @@ def test_different_pages_are_far_below_the_bar() -> None:
 def test_the_measured_ranges_are_pinned() -> None:
     """Exact values, so a drift in OpenCV, Pillow or the resolution shows up."""
     same, different = [], []
-    for name, data in PAGES.items():
+    for data in PAGES.values():
         for kind in VARIANTS:
             same.append(round(ratio(recapture(data, kind), data), 4))
     for a, b in itertools.combinations(sorted(PAGES), 2):

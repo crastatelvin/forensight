@@ -176,11 +176,20 @@ test.describe("case journey", () => {
   test("an action parked for approval stays answerable after a reload", async ({
     page,
   }) => {
-    // Approving does not end the run: it lets the agent continue, and continuing
-    // costs a real model call. On this stack that is `qwen2.5:3b`, which is slower
-    // than the default 45 s budget, so the suite was aborting mid-navigation with
-    // `net::ERR_ABORTED` and reporting a browser fault for what is really a slow
-    // model. The budget is the model's, not the browser's.
+    // Approving does not end the run: it lets the agent continue, and continuing costs
+    // model calls. This test is about the *gate* surviving a reload and the write landing
+    // — not about how long a 3B model takes to decide what to do next. So the e2e stack
+    // points the agent at a stub model (`backend/scripts/llm_stub.py`, wired up in
+    // `docker-compose.e2e.yml`) that answers with an immediate empty completion.
+    //
+    // What it replaced, because the previous explanation was wrong: this test used to be
+    // blamed on "a slow qwen2.5:3b call". Measured on this CPU-only host, that model
+    // generates at about **7 tokens/second** — 64 tokens takes 8.6 s, 256 takes 37.9 s,
+    // 512 takes 71 s — so the post-approval continuation cost between 8 s and 69 s across
+    // identical runs, and a 60 s budget failed intermittently. The variability was the
+    // model's, not the browser's, and no timeout value makes it deterministic. The
+    // application still runs its real HTTP client, tool-calling normalisation, tool
+    // runner and persistence; only the model on the other end is fake.
     test.setTimeout(180_000);
 
     // The HITL round trip, automated. This is the path that broke twice: the
@@ -252,10 +261,11 @@ test.describe("case journey", () => {
       }),
     ).toBeVisible({ timeout: 30_000 });
 
-    // Bounded, not asserted: a machine-dependent budget, but one the bug made
-    // impossible. Inline, this took the length of a whole model run; fixed, it is
-    // milliseconds. Sixty seconds fails loudly on a regression without being a
-    // flake risk.
+    // Bounded, not asserted. The guard is against the original bug: the approve endpoint
+    // used to run the whole agent loop inline, so the click blocked for the length of a
+    // full run. With the tool applied server-side and the continuation stubbed, this is
+    // milliseconds — so sixty seconds fails loudly on a regression without being a flake
+    // risk, and it is not a machine-dependent budget any more.
     expect(Date.now() - started).toBeLessThan(60_000);
   });
 });
