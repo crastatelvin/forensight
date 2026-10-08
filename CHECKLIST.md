@@ -1045,34 +1045,77 @@ UI always has.
 
 ## Phase 9 — Expand analyzers + Tier-B/Tier-C handling
 **Build**
-- [ ] P9.B1 Fingerprint — **dropped, and the recorded reason was itself unreliable.**
-      Re-checked 2026-10-08, after the same exercise falsified two other blockers.
-      **Reason #1 as recorded — "NBIS is spoof detection (PAD), not individualization,
-      a different technique" — could not be verified and should never have been stated
-      as fact.** GitHub is unreachable from this network: `api.github.com` returns 404
-      for `usnistgov/nbis`, a repository that certainly exists, exactly as it does for
-      libfprint. So NBIS's component list could not be read, and whether its matching
-      side is individualization rather than PAD is an assumption here, not a finding.
-      (It is probably wrong in substance — NBIS is understood to bundle Bozorth3-based
-      matching — but an unverified belief cannot carry a blocker, so it does not.)
-      **Reason #2 holds, but the emphasis was on the wrong clause.** The reachable
-      dataset is NIST SD-4 at CC BY-NC-**ND**-4.0, and the recorded problem was that
-      NoDerivatives forbids the derived golden set. That is a side issue. **The
-      decisive one is that SD-4 is real people's biometric data** — raw finger impressions
-      of identifiable individuals. Committing those to an open-source repository makes
-      them permanent, publicly cloneable, and impossible to retract, and biometric
-      templates are special-category personal data under GDPR regardless of what any
-      licence permits. Every fixture in this repository is synthetic or already-public
-      for exactly this reason, and fingerprint impressions are the case where that
-      discipline actually costs something. **No licence makes this the right move.**
-      **Reason #3 is verified, and is stronger than recorded.** Not "no apt package" —
-      there is **no `apt` in this environment at all**; `nbis` is absent from PyPI; and
-      the source cannot be fetched or vendored because GitHub is unreachable. Building
-      it from source would additionally need Boost and CMake and a long compile.
-      **So the item is dropped on grounds that stand independently of the matcher**:
-      the fixtures are real biometric data, and this project does not commit those.
-      Recorded as dropped rather than left quietly open, with the *real* reason stated
-      rather than three of which one was a guess and one missed its point.
+- [ ] P9.B1 Fingerprint — **the blocker was tested, and it holds. Synthetic prints
+      cannot carry the measurement, and that is now a number rather than an argument.**
+      Re-checked 2026-10-08, after the same exercise falsified three other blockers.
+      **The recorded reasons were unreliable and have been removed.** "NBIS is spoof
+      detection (PAD), not individualization" could not be verified — `api.github.com`
+      404s for `usnistgov/nbis`, a repository that certainly exists — so it was a
+      guess, and a guess cannot carry a blocker. It is also probably wrong in substance,
+      since NBIS is understood to bundle Bozorth3-based matching. The emphasis on
+      NoDerivatives was likewise misplaced: that is a side issue.
+      **What stands, and is the decisive reason: SD-4 is real people's biometric data.**
+      Raw impressions of identifiable individuals, committed to an open-source
+      repository, become permanent, publicly cloneable and impossible to retract.
+      Biometric templates are special-category personal data under GDPR whatever any
+      licence permits. **No licence makes this the right move**, and every other fixture
+      here is synthetic or already-public for exactly this reason.
+
+      **So the obvious workaround was tried: generate the prints instead.** FingerFlow
+      (MIT, extractor + matcher) is the only reachable library and it requires
+      TensorFlow, absent here, with no weights on PyPI — a 600 MB framework for one
+      function is the wrong trade. So the matcher is classical: Zhang-Suen thinning,
+      crossing-number minutiae, seed-pair transform voting. **Seven attempts, and each
+      failed for a different measured reason.** The failures moved from *code wrong* to
+      *fixture wrong* to *fixture structurally incapable of supporting the claim*:
+
+      - **The thinning code was wrong on arrival.** The neighbour list was indexed
+        against the wrong ordering, so the Zhang-Suen conditions never fired and the
+        skeleton came back unthinned: **798 minutiae where the original gave 61.** Caught
+        only because minutiae count is checkable against the known 30-60 range. This is
+        the **third stale hand-written duplicate of a helper this phase** — the same
+        class of bug as `_stub_model` re-implementing `OpenAICompatModel.__init__`.
+      - **A smooth per-finger warp cannot work, and provably.** Identity lived entirely
+        in a low-frequency deformation of one analytic phase field — exactly the
+        relation a rigid matcher is *invariant* to. Different fingers of one pattern
+        class scored **0.500** against a genuine **0.306**: anti-correlated with truth.
+      - **Per-finger phase steps produce 780-800 minutiae**, because a +-pi/2 step
+        across a Gaussian spans ~1.2 ridge periods and scrambles several ridges instead
+        of ending one. **A ridge ending is a deleted arc, not a shifted phase.**
+      - **Ridge density had to be fixed first.** At 0.16 the synthetic ridges were ~4x
+        too fine and yielded 166 minutiae with a 6.4 px median nearest-neighbour
+        distance, so every minutiae was within tolerance of every other and the metric
+        **saturated** — impostors scored higher than genuine. The same failure the
+        `handwriting` module documents for ORB, where a `nfeatures` cap pinned every
+        ratio at exactly 1.0000. **A metric pinned near a constant is not a measurement.**
+      - **A "known-good" control scored 0.049.** A point set compared to itself must be
+        1.000, and it was 0.049 — which proved the *control* was malformed before the
+        matcher could be blamed. Support never exceeded 4 votes anywhere.
+
+      **The final measurement, with rendered breaks and realistic density**
+      (`tests/probe_fingerprint_fixtures.py`, reproducible, numpy-only, exit 0):
+
+      | | measured | |
+      |---|---|---|
+      | minutiae per print | 58-78 | realistic, which is what makes this easy to miss |
+      | planted breaks detected | **5/16 (31%)** | the rest never surface as minutiae |
+      | incidental minutiae | **116 of 121** | carry **no per-finger identity** |
+      | genuine-pair overlap | 0.035-0.526 | |
+      | impostor-pair overlap | **0.404-0.544** | **higher than genuine** |
+
+      **So the synthetic route is closed, and not for want of trying.** A smooth ridge
+      field produces minutiae only *incidentally*, wherever the analytic pattern happens
+      to cross, and two different synthetic fingers produce the same incidental minutiae.
+      Only 31% of deliberately planted structure survives extraction, so **the signal is
+      swamped and no threshold fixes a swamped signal.** A matcher cannot score above the
+      structure its fixture contains. The probe asserts the finding, including a
+      `impostor_exceeds_genuine` condition that flips loudly if a future generator ever
+      becomes capable of supporting a measurement.
+      **What would unblock it:** real impressions under a licence that also survives
+      being special-category personal data — which is to say, a private evaluation set
+      held outside any repository, and a deployment that runs matching against customer-
+      supplied prints rather than against committed fixtures. **That is a deployment
+      decision, not an engineering one**, and it is the honest form of this item.
 - [x] P9.B2 Speaker — `speaker-compare`, Tier B. **ECAPA-TDNN, Apache-2.0
       (`Wespeaker/wespeaker-voxceleb-ecapa-tdnn512`), not SpeechBrain's own release,
       whose weights state no licence and which this project's own fixture gate
@@ -1505,19 +1548,23 @@ that might not work — the same argument as the CI security scanners.
       assumed. And the fixture is checked for length directly, because a shortened
       fixture would make the module refuse while the refusal tests kept passing, so
       every pinned number would be describing a different experiment.
-- [ ] T9.2 NBIS matching high / non-matching low on fixtures — not run, and the
-      honest reason is upstream of the matcher. See P9.B1: the fixtures would be real
-      people's biometric data, and this project does not commit those. Two consequences
-      worth stating, because they are the shape of the problem rather than a detail of
-      it. **A golden test for individualization cannot be built from synthetic prints** —
-      a synthetic ridge pattern has no genuine variation, so the min-non-mate similarity
-      it produces is an artefact of the generator, not of fingerprint physiology, and a
-      threshold fitted to it would be a number with nothing under it. **And without
-      mate/non-mate pairs from a real corpus there is no threshold to fit**, so even a
-      working matcher here would ship unvalidated, which is the condition this checklist
-      has rejected for every other analyzer.
-      **This item is dropped with P9.B1 rather than left open**, because the blocker is
-      a decision about what evidence may be committed, not an engineering gap to close.
+- [ ] T9.2 NBIS matching high / non-matching low on fixtures — **not run, and now
+      because it is measurably impossible rather than merely unfinished.**
+      The blocker is upstream of the matcher and is tested in
+      `tests/probe_fingerprint_fixtures.py` (reproducible, numpy-only, exit 0).
+      **A golden test for individualization cannot be built from synthetic prints**, and
+      the measurement is why: only **31% of deliberately planted per-finger ridge breaks
+      survive extraction** (5 of 16), while **116 of 121 extracted minutiae are
+      incidental** and carry no identity at all. The consequence is a measured
+      **impostor-pair overlap (0.404-0.544) that exceeds the genuine-pair overlap
+      (0.035-0.526)** — the min-non-mate similarity is an artefact of the generator, not
+      of fingerprint physiology, and no threshold fits a swamped signal.
+      Real impressions are the alternative and they are special-category personal data,
+      which this project does not commit.
+      **Dropped with P9.B1 rather than left open**: the blocker is a decision about what
+      evidence may be committed, not an engineering gap. A deployment that matches
+      customer-supplied prints against a private corpus outside this repository is the
+      honest form of both items.
 - [x] T9.3 Speaker same>threshold / different<threshold. **Measured, and it does not
       hold** — same-reader 0.328–0.911 against different-reader up to 0.841 on eight
       public-domain LibriVox readings. Asserted as a *non-property* in
@@ -1957,12 +2004,19 @@ that might not work — the same argument as the CI security scanners.
       3. **Three Phase 9 items**, and this is the third time the *recorded reason* for a
          blocker was wrong when it was re-checked. **All three now have an accurate
          reason; none has a licence reason.**
-         - **P9.B1/T9.2 (fingerprint).** **Dropped, not blocked.** The recorded
-           "NBIS is PAD, not individualization" could not be verified — GitHub is
-           unreachable from this network — so it should not have been stated as fact.
-           The reason that survives is that the only reachable corpus is real people's
-           biometric data, which this project does not commit, and that also makes the
-           golden test in T9.2 unbuildable rather than merely unfinished.
+         - **P9.B1/T9.2 (fingerprint).** **Dropped, not blocked — and the synthetic
+           workaround was tested rather than assumed.** The recorded "NBIS is PAD, not
+           individualization" could not be verified — GitHub is unreachable from this
+           network — so it should not have been stated as fact; that claim has been
+           removed. The reason that survives is that the only reachable corpus is real
+           people's biometric data, which this project does not commit.
+           **Generating the prints instead was then tried in full** — seven attempts at
+           a classical matcher — and fails measurably: only 31% of planted per-finger
+           ridge breaks survive extraction, 116 of 121 minutiae are incidental and carry
+           no identity, and the resulting impostor-pair overlap (0.404-0.544) *exceeds*
+           the genuine-pair overlap (0.035-0.526). **A synthetic ridge field produces
+           minutiae incidentally rather than structurally**, so no matcher can be
+           evaluated on it. Reproducible in `tests/probe_fingerprint_fixtures.py`.
          - **P9.B3 (deepfake).** **Not blocked on licence at all** — the earlier note
            said every detector was unstated or gated, and that is false: an Apache-2.0,
            ungated ViT detector with a vendor-reported 92.12% accuracy was downloaded
