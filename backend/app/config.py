@@ -60,6 +60,52 @@ class Settings(BaseSettings):
     # Create one with scripts/provision_signer.py.
     report_signing_p12: str = Field(default="")
     report_signing_passphrase: str = Field(default="")
+
+    # --- Long-term signature validation (PAdES-LT) ---
+    #
+    #: An RFC 3161 timestamp authority. Empty means PAdES baseline-B, which proves the
+    #: bytes are unchanged but not *when* they were signed — so it stops establishing
+    #: anything once the signing certificate expires.
+    #:
+    #: Setting this raises the signature to baseline-LT: a document timestamp plus the
+    #: signing chain and any revocation data travel with the PDF, so a verifier can still
+    #: validate it after expiry.
+    #:
+    #: **A TSA is only as trustworthy as its certificate.** One this deployment hosts
+    #: itself (see `scripts/rfc3161_tsa.py`) proves the time against the lab's own key,
+    #: which is the right answer air-gapped and the wrong answer if the verifier trusts
+    #: nobody's key. The report states which authority was used and the verifier reports
+    #: the timestamp separately from the signature, so the distinction is never lost.
+    report_timestamp_url: str = Field(default="")
+
+    #: Seconds to wait for the TSA. pyHanko's own default is 5, which is short for an
+    #: authority that has to load a key and a serial file on first request.
+    report_timestamp_timeout: float = Field(default=20.0, ge=1.0, le=300.0)
+
+    #: Revocation material to embed, as comma-separated paths to DER or PEM CRLs.
+    #:
+    #: Optional, and the absence is not a failure: a private lab CA commonly publishes
+    #: no CRL, and pyHanko soft-fails revocation by default. What it embeds without one
+    #: is the signing chain, which is still the part a verifier needs most. A CRL here
+    #: upgrades the document from "the chain travels with it" to "the chain was not
+    #: revoked at the time", which is the substance of long-term validation.
+    report_revocation_files: str = Field(default="")
+
+    #: The timestamp authority's certificate, as a path to PEM or DER.
+    #:
+    #: **Required when `report_timestamp_url` is set**, and not merely helpful. Signing
+    #: validates the countersignature's chain in order to embed it, so an authority whose
+    #: certificate cannot be validated makes every signature fail — and a self-signed
+    #: authority, which is the normal air-gapped case, cannot validate without being named
+    #: as its own anchor here. Discovered by running it rather than by reading it.
+    report_timestamp_ca: str = Field(default="")
+
+    #: Extra trust anchors, as a path to a PEM or DER bundle, used when *collecting*
+    #: validation material at signing time. Verification takes its roots from the
+    #: caller — a report must be checkable by someone who has never heard of this
+    #: deployment — so this affects signing only.
+    report_signing_trust_roots: str = Field(default="")
+
     cookie_domain: str = Field(default="")
     cookie_samesite: Literal["lax", "strict", "none"] = Field(default="lax")
 

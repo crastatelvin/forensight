@@ -274,6 +274,55 @@ services:
         condition: service_started
     restart: unless-stopped
 
+  # A self-hosted RFC 3161 timestamp authority, for long-term signature validation.
+  #
+  # Opt-in via `--profile tsa`, because a deployment that already has a reachable
+  # authority should point REPORT_TIMESTAMP_URL at that instead of running a second one.
+  #
+  # **A separate service rather than a process inside the api**, because an authority
+  # started with `exec -d` does not survive the api container being recreated — and
+  # REPORT_TIMESTAMP_URL then points at a socket that is not there, which fails every
+  # report signature rather than degrading to baseline-B. That failure is deliberate: a
+  # report that quietly lost its timestamp is worse than one that was never asked for.
+  #
+  # The cryptography is OpenSSL's; this only forwards DER to `openssl ts -reply`. The key
+  # lives in the same named volume as the report-signing key, never in an image layer.
+  # Provision it once with:
+  #   docker compose exec api uv run --no-sync python scripts/provision_tsa.py \
+  #     --out-dir /var/lib/forensight/signing/tsa
+  tsa:
+    build:
+      context: ./backend
+    image: forensight-api
+    profiles: ["tsa"]
+    entrypoint: ["uv", "run", "--no-sync", "python", "scripts/rfc3161_tsa.py"]
+    command:
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "8080"
+      - "--config"
+      - "/var/lib/forensight/signing/tsa/openssl-tsa.cnf"
+    user: appuser
+    volumes:
+      - signingkeys:/var/lib/forensight/signing
+    restart: unless-stopped
+    healthcheck:
+      # `http.client` rather than `urllib.request`: the latter *raises* on a non-2xx
+      # status, and a GET answers 405 by design because pyHanko only POSTs. The first
+      # version of this healthcheck reported the authority unhealthy while it was
+      # serving timestamps perfectly well.
+      test:
+        - CMD
+        - python
+        - -c
+        - "import http.client as h,sys; c=h.HTTPConnection('127.0.0.1',8080,timeout=3); c.request('GET','/timestamp'); sys.exit(0 if c.getresponse().status in (200,405) else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+
 volumes:
   # Report-signing keys, kept out of the image. See the api service above.
   signingkeys:

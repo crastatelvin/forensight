@@ -891,7 +891,7 @@ UI always has.
       conclusion is not this system's finding, and listing it among them would
       transfer authorship. A structural test asserts no analyzer claims Tier C, since
       the plan cuts those domains as AI analyzers.
-- [~] P8.B4 `GET /reports/cases/{id}.pdf` and `POST /reports/verify`. Authz reuses
+- [x] P8.B4 `GET /reports/cases/{id}.pdf` and `POST /reports/verify`. Authz reuses
       the **one** `scoped_case` helper: it existed as three private copies across the
       domain, agent and analysis routers, and a fourth was about to be written. Three
       copies of an authorisation rule is three places for one of them to be edited and
@@ -903,6 +903,10 @@ UI always has.
       generating a report is a *read*, and a custody entry would claim the evidence
       moved. Reports are generated, never stored — the verify endpoint takes the PDF
       back from the reader, which is what an examiner actually has.
+      The audit record also carries the **measured** `signature_level`, `timestamp_time`
+      and `tsa_subject`, read back from the signed bytes rather than copied from
+      configuration — the record is what someone reads years later to find out what a
+      report actually carried, so it must not record what the deployment intended.
 **Test cases**
 - [x] T8.1 Measured, not asserted. **82 single-byte flips swept across both signed
       ranges: all 82 detected.** A sample of three offsets passed while a flip
@@ -944,19 +948,98 @@ UI always has.
       and is not. A result belonging to another case is rejected too — the only thing
       stopping a finding on one case citing provenance that exists solely on another.
 - [x] T8.4 Tier disclaimers present; Tier-C only as attached lab results
-- [~] T8.5 Recorded in the audit chain with the manifest digest, signer subject,
-      certificate fingerprint and the signed PDF's SHA-256. **Not** a chain-of-custody
-      entry, and that is a decision rather than an omission: a report is a read of the
-      case, so a custody entry would assert the evidence moved when it did not. See
-      P8.B4.
+- [x] T8.5 Recorded in the audit chain with the manifest digest, signer subject,
+      certificate fingerprint, the signed PDF's SHA-256, and the measured signature level
+      with the timestamp authority and asserted time. **Not** a chain-of-custody entry,
+      and that is a decision rather than an omission: a report is a read of the case, so a
+      custody entry would assert the evidence moved when it did not. See P8.B4.
+      **The report's own face prints the level it reached**, and for a long-term report a
+      separate paragraph states what it still does not establish — that a TSA is only
+      evidence for as long as *its* certificate can be trusted. The three levels get three
+      different paragraphs: printing the baseline-B wording under a baseline-LT signature
+      would be wrong in the reader's favour, and the baseline-LT wording under baseline-B
+      would be wrong against this project's own interest.
 **Exit**
-- [~] P8.E Tamper-evidence is measured (T8.1) and sourcing is enforced (T8.3), but
-      one thing is genuinely absent: **long-term validation (PAdES-LT)**. A baseline-B
-      signature proves the bytes are unchanged; it does not survive the signing
-      certificate's expiry, and a report produced by a lab whose certificate later
-      lapses has no archival-timestamp chain to fall back on. That needs a
-      document-timestamp authority or an archival timestamp, which is a deployment
-      decision rather than a code one — hence partial rather than ticked.
+- [x] P8.E Tamper-evidence is measured (T8.1), sourcing is enforced (T8.3), and
+      **long-term validation (PAdES-LT) is built.**
+      The recorded gap was real: a baseline-B signature proves the bytes are unchanged,
+      says nothing about *when* signing happened, and **stops validating altogether once
+      the signing certificate expires**. A report from a lab whose certificate later lapses
+      had no fallback.
+      **The refusal was to the timestamp *authority*, not to long-term validation.**
+      Rebuilding it as a configuration choice rather than a missing feature:
+      - `REPORT_TIMESTAMP_URL` — any RFC 3161 authority. Empty means baseline-B, and the
+        report says so on its face.
+      - `REPORT_TIMESTAMP_CA` — **required** when the URL is set, not optional. Signing
+        validates the countersignature's chain in order to embed it, and a self-signed
+        authority has no path to anything else. Discovered by running it: without it every
+        signature dies with `The X.509 certificate provided is self-signed`.
+      - `REPORT_REVOCATION_FILES`, `REPORT_SIGNING_TRUST_ROOTS`, `REPORT_TIMESTAMP_TIMEOUT`.
+      **Both halves of LT are set from configuration together and `use_pades_lta` is only
+      claimed when both are present.** pyHanko will cheerfully sign a signature labelled LT
+      that is missing either its timestamp or its validation material.
+      **A self-hosted RFC 3161 authority ships**, because an air-gapped lab cannot reach a
+      public one and that is the constraint that caused the original refusal. The
+      cryptography is **OpenSSL's**, not ours: `scripts/rfc3161_tsa.py` forwards DER to
+      `openssl ts -reply` over HTTP, and `scripts/provision_tsa.py` creates the
+      `timeStamping` certificate, serial file and config — and **self-tests by asking the
+      new authority for a timestamp and checking it says Granted**, because an OpenSSL `ts`
+      config that looks right and answers every request with an error is the common
+      outcome. Nothing in either file parses ASN.1 or touches a signing key: the part of a
+      TSA that is easy to get subtly wrong is exactly the part a lab should not
+      reimplement to save a dependency.
+      **Deliberately not an `LLM_PROVIDER`-style switch in the product.** Making a
+      deployment option swap the report's real signature for something fake is the same
+      reasoning as the model stub, one layer up.
+      **A TSA is only worth its certificate**, so `timestamped` and `trusted` are reported
+      separately: a self-hosted authority proves the time against the lab's own key and
+      nothing to anyone else. The report prints the level it reached; `POST /reports/verify`
+      reports the asserted time, the authority's identity, and whether that authority is
+      one the caller trusts — three answers, not one.
+      **`level` is measured from the bytes**, never copied from configuration: a report
+      signed before a TSA was configured, or produced by another tool, is described by what
+      it carries.
+      **15 tests against a real authority** — no mocks. A timestamp authority either works
+      or produces a plausible-looking signature establishing nothing, and a mocked TSA
+      cannot tell the difference. These provision one, sign real PDFs through it and verify
+      the bytes.
+      **Two limits, recorded rather than buried:**
+      1. **Appending bytes to a baseline-LT report is not detected.** Measured:
+         `total_revisions` is *unchanged* by an appended PDF comment (2 → 2), and those
+         bytes sit outside every signed `ByteRange` exactly as the Document Security Store
+         does — so the append is indistinguishable from the archive update that
+         legitimately follows. **Integrity of what was signed is unaffected**, and every
+         change that alters a page (content, form field, annotation) is refused. What is
+         missed is the *fact* of the append; an appended comment renders nothing.
+         `ENTIRE_REVISION` coverage on an LT report is therefore *expected*, and treating
+         `ENTIRE_FILE` as the only acceptable value — which is what this code did — reports
+         every long-term-validated report as incomplete.
+      2. **`_measured_level` is structural, not a PAdES conformance check.** It reports
+         `BASELINE-LT` when a Document Security Store is present, not because every
+         requirement of ETSI EN 319 142-1 has been verified. Overclaiming a level on a
+         document someone may rely on is worse than reporting the lower one.
+      **Three defects found on the way, each recorded at its cause:**
+      - **The report-signing certificate was not valid for signing.** `provision_signer.py`
+        issued `ExtendedKeyUsage = emailProtection`. A PDF signature is a non-repudiation
+        key usage, and RFC 5280 path validation refuses a certificate that may only protect
+        email as a document signer. **This went unnoticed because baseline-B signing never
+        validated the chain** — a certificate that could not lawfully sign the document it
+        was issued for produced perfectly good reports for as long as nobody asked who had
+        signed them. Long-term validation asks, which is how it surfaced. Fixed to
+        id-kp-nonRepudiation (1.3.6.1.5.5.7.3.2), written out because `cryptography` has
+        no constant for it.
+      - **A PDF document timestamp is a second signature field, not an attribute.** With
+        `use_pades_lta`, pyHanko writes `/Type /DocTimeStamp` with `/SubFilter
+        /ETSI.RFC3161` as its own field. The first implementation looked for a
+        `timestamp` attribute that does not exist and reported every timestamped report as
+        untimestamped. Now read from the PDF dictionary, which also means a PAdES-LT
+        document from **any** producer is recognised, not only ones using our field name.
+      - **A temporary-directory scope error rejected every successful timestamp.**
+        `return response.read_bytes()` sat outside the `TemporaryDirectory` block, so the
+        file was gone before it was checked — and OpenSSL's `openssl ts -reply` prints
+        "Response has been generated." while exiting 0, so the failure surfaced as that
+        sentence used as a refusal reason. The same class as `pg_restore`'s untrustworthy
+        exit code: **check for the artefact, not the exit status.**
 
 ---
 

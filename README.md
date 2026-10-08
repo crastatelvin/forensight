@@ -206,7 +206,7 @@ All run on CPU; no GPU module has been written, so nothing depends on one.
 
 ```bash
 backend/scripts/fetch_models.sh                    # pinned weights, digest-verified (~300 MB, not committed)
-docker compose exec api python scripts/provision_signer.py   # PAdES signing key, into a named volume
+docker compose exec api uv run --no-sync python scripts/provision_signer.py   # PAdES signing key, into a named volume
 docker compose exec api python -m scripts.seed_parked_run --email you@example.org   # park a HITL action by hand
 cd backend && python scripts/provision_models.py .models   # upload them to the MinIO `models` bucket
 ```

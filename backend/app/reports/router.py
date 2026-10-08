@@ -33,9 +33,13 @@ from app.reports.repository import as_audit_payload, gather
 from app.reports.signing import (
     SigningUnavailable,
     certificate_fingerprint,
+    configured_level,
+    document_timestamp,
     load_signer,
     sign_pdf,
     signer_subject,
+    signing_validation_context,
+    timestamper_for,
     verify_pdf,
 )
 
@@ -54,7 +58,19 @@ def _require_signer(settings: Settings) -> Any:
     person hitting it is an operator, not a developer.
     """
     try:
-        return load_signer(settings.report_signing_p12, settings.report_signing_passphrase)
+        # The two halves of long-term validation are built together and only together:
+        # a timestamp with nothing to validate against, or validation material with
+        # nothing to date it, would both be a signature labelled LT that is not.
+        stamps = timestamper_for(settings)
+        bare = load_signer(settings.report_signing_p12, settings.report_signing_passphrase)
+        if stamps is None:
+            return bare
+        return load_signer(
+            settings.report_signing_p12,
+            settings.report_signing_passphrase,
+            timestamper=stamps,
+            validation_context=signing_validation_context(settings, bare),
+        )
     except SigningUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)
@@ -82,13 +98,26 @@ async def generate_report(
     signer = _require_signer(settings)
 
     data = await gather(session, case)
-    info = SignerInfo(subject=signer_subject(signer), fingerprint=certificate_fingerprint(signer))
+    info = SignerInfo(
+        subject=signer_subject(signer),
+        fingerprint=certificate_fingerprint(signer),
+        level=configured_level(settings),
+    )
 
     # ReportLab is synchronous CPU work and this document runs to dozens of pages.
     # On the event loop it would stall every other request for the length of a
     # render, so it goes to a worker thread.
+    #
+    # The level printed on the face is the *configured* one, and that is not a guess:
+    # `use_pades_lta` makes pyHanko obtain the countersignature while signing, so an
+    # unreachable TSA raises and no document is produced at all. Any report that exists
+    # carries what it claims. The values that cannot be known until after signing — the
+    # asserted time and the authority's identity — are read back from the signed bytes
+    # for the audit record, because they belong in the case record rather than on a page
+    # that was rendered before they existed.
     pdf = await anyio.to_thread.run_sync(lambda: build_pdf(data, info))
     signed = await sign_pdf(pdf, signer)
+    stamped_time, stamped_tsa = document_timestamp(signed)
 
     subject = info.subject
     fingerprint = info.fingerprint
@@ -101,6 +130,12 @@ async def generate_report(
             **as_audit_payload(data, signed=True),
             "signature_subject": subject,
             "signature_fingerprint": fingerprint,
+            "signature_level": info.level,
+            # Measured from the signed bytes, not copied from the configuration. The audit
+            # record is what someone reads years later to find out what a report actually
+            # carried, so it must not record what the deployment intended.
+            "timestamp_time": stamped_time,
+            "tsa_subject": stamped_tsa,
             "pdf_sha256": pdf_sha256,
             "pdf_bytes": len(signed),
         },

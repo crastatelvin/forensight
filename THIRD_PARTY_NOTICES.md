@@ -42,6 +42,23 @@ system.
 ForenSight ships no weights, datasets or third-party binaries in the repository.
 Everything is fetched at provisioning time and digest-verified.
 
+### Cryptography libraries (not redistributed, no weights)
+
+Two libraries do the cryptographic work and both are pulled in by the dependency
+lock, not committed:
+
+- **pyHanko** (MIT) — PAdES signing, verification and the incremental-difference
+  analysis that decides whether a signature still covers the document. Also the source
+  of the RFC 3161 client used for long-term validation. No licence issue; recorded here
+  because it is the component every integrity claim in a report rests on.
+- **OpenSSL** (Apache-2.0) — used at *provisioning and run time* for the
+  self-hosted RFC 3161 timestamp authority (`scripts/rfc3161_tsa.py` forwards DER to
+  `openssl ts -reply`). **Not a Python dependency and not in the image**: it must be on
+  `PATH` on the host or inside the container for the TSA to run, and the TSA refuses
+  with a plain statement if it is not. The cryptography is OpenSSL's rather than a
+  reimplementation here, because ASN.1 timestamp responses are exactly the thing not to
+  hand-roll.
+
 ## Fixtures
 
 Six excerpts in `backend/tests/assets/authorship/`, cut deterministically from three

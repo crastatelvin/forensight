@@ -119,7 +119,7 @@ jobs:
       # never exists outside the run.
       - name: Provision a report signer
         run: |
-          docker compose exec -T api python scripts/provision_signer.py \
+          docker compose exec -T api uv run --no-sync python scripts/provision_signer.py \
             --passphrase ci-only-passphrase-not-a-secret
         env:
           REPORT_SIGNING_PASSPHRASE: ci-only-passphrase-not-a-secret

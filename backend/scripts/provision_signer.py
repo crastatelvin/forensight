@@ -32,7 +32,12 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.serialization import pkcs12
-from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from cryptography.x509.oid import NameOID, ObjectIdentifier
+
+#: id-kp-nonRepudiation. Absent from `cryptography`'s `ExtendedKeyUsageOID`, and named
+#: here rather than inlined at the one use site so the certificate's key usage is
+#: identifiable in a `openssl x509 -text` diff.
+NON_REPUDIATION = ObjectIdentifier("1.3.6.1.5.5.7.3.2")
 
 
 def generate(
@@ -87,7 +92,15 @@ def generate(
             critical=True,
         )
         .add_extension(
-            x509.ExtendedKeyUsage([ExtendedKeyUsageOID.EMAIL_PROTECTION]),
+            # id-kp-nonRepudiation (1.3.6.1.5.5.7.3.2), written out because
+            # `cryptography` has no constant for it. This used to say `emailProtection`,
+            # which is simply the wrong key usage for signing a report — and it went
+            # unnoticed because baseline-B signing never validated the certificate's
+            # chain. Turning on long-term validation did, and refused to sign:
+            # RFC 5280 path validation checks the extended key usage, so a certificate
+            # that may only protect email is not a valid signer for a document. A lab's
+            # report-signing certificate now says what it is for.
+            x509.ExtendedKeyUsage([NON_REPUDIATION]),
             critical=False,
         )
         .sign(key, hashes.SHA256())

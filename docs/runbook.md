@@ -313,7 +313,12 @@ difference.
 ```bash
 # Runs inside the container so the key is written straight into the volume and
 # never lands on a host filesystem or in an image layer.
-docker compose exec api python scripts/provision_signer.py
+#
+# `uv run --no-sync python`, **not** `python`: dependencies live in /app/.venv and are
+# not on PATH, so the bare `python` is the system interpreter and dies with
+# `ModuleNotFoundError: No module named 'cryptography'`. This was the documented command
+# in this runbook, in the README and in CI, and it had never worked.
+docker compose exec api uv run --no-sync python scripts/provision_signer.py
 ```
 
 It prompts for a passphrase and writes a PKCS#12 at mode 0600 into the
@@ -346,6 +351,86 @@ A signing key that is replaced does not invalidate reports signed with the old o
 for integrity purposes — the bytes are still verifiably unaltered — but readers will
 no longer see it as *trusted* unless they hold the old certificate. Keep the old
 certificate; that is what makes historical reports verifiable.
+
+### Long-term signature validation (PAdES baseline-LT)
+
+**What it buys, and why it is not optional in the long run.** A baseline-B signature
+proves the bytes have not changed and nothing about *when* they were signed — the
+signing time is the machine's own claim. Worse, **it stops working when the signing
+certificate expires.** A report produced by a lab whose certificate later lapses
+has no fallback.
+
+Baseline-LT fixes both: a document timestamp counter-signs the signature, and the
+signing chain plus any revocation material travel inside the PDF, so verification
+still works years later.
+
+**A timestamp authority, hosted.** Any RFC 3161 authority works. For an air-gapped
+lab, this project ships one — the cryptography is OpenSSL's, not ours:
+
+```bash
+# One-time, into the signing volume so it survives a container recreate.
+docker compose exec -u root api sh -c \
+  'mkdir -p /var/lib/forensight/signing/tsa && chown appuser:appuser /var/lib/forensight/signing/tsa'
+docker compose exec api uv run --no-sync python scripts/provision_tsa.py \
+  --out-dir /var/lib/forensight/signing/tsa
+# self-test passes only when the authority issues a timestamp for its own request
+
+# Then run it as a service. **Not** `exec -d`: a process started that way does not
+# survive the api container being recreated, and REPORT_TIMESTAMP_URL then points at a
+# socket that is not there — which fails every report signature rather than degrading to
+# baseline-B.
+docker compose --profile tsa up -d --wait tsa
+```
+
+Then in `.env`:
+
+```
+REPORT_TIMESTAMP_URL=http://<host>:8080/timestamp
+REPORT_TIMESTAMP_CA=/var/lib/forensight/tsa/tsa.crt
+```
+
+**`REPORT_TIMESTAMP_CA` is required, not optional.** Signing validates the
+countersignature's chain in order to embed it, and a self-signed authority has no
+path to anything else unless it is named as its own anchor. Without it every
+signature fails with `The X.509 certificate provided is self-signed`.
+
+**A TSA is only worth its certificate.** One this lab hosts proves the time against
+the lab's own key — the right answer air-gapped, and the wrong answer if the verifier
+trusts nobody's key. Which is why verification reports `timestamped` and `trusted`
+separately:
+
+| Result | Means |
+|---|---|
+| `timestamped: true`, `trusted: false` | A countersignature is present and the document is intact. Its authority is **not one you trust**, so it establishes nothing to you. |
+| `timestamped: true`, `trusted: true` | A countersignature from an authority you trust. The signing time is established. |
+| `timestamped: false` | No timestamp. `level` is `BASELINE-B` and the signature will stop validating when the certificate expires. |
+
+`level` is **measured from the bytes**, never copied from configuration: a report
+signed before a TSA was configured, or produced by another tool, is described by
+what it carries.
+
+**Reading the level.** `BASELINE-B` is a signature alone. `BASELINE-T` adds a
+countersignature. `BASELINE-LT` adds validation material — recognised structurally
+by the Document Security Store, which is a weaker check than a full PAdES
+conformance check and is reported as such.
+
+**Two limits worth stating to anyone relying on it.**
+
+1. **Appending bytes to a baseline-LT report is not detected.** Measured:
+   `total_revisions` is unchanged by an appended PDF comment, and those bytes sit
+   outside every signed `ByteRange` exactly as the Document Security Store does, so
+   the append is indistinguishable from the archive update that legitimately
+   follows. **The integrity of what was signed is unaffected** and every change that
+   alters a page — content, a form field, an annotation — is refused. What is missed
+   is the *fact* of the append. An appended comment renders nothing.
+2. **`_measured_level` is structural, not a conformance check.** It reports
+   `BASELINE-LT` when a Document Security Store is present, not because every
+   requirement of ETSI EN 319 142-1 has been verified.
+
+**Fetching revocation data is off.** Signing sets `allow_fetching=False`, so it
+cannot reach an OCSP responder or a CRL distribution point at report time — that
+would stall a request on a case and send a case identifier to a third party. Supply
+CRLs on disk with `REPORT_REVOCATION_FILES` if your CA publishes any.
 
 ### Redacted exports
 

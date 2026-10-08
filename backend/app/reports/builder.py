@@ -80,6 +80,16 @@ class SignerInfo:
 
     subject: str
     fingerprint: str
+    #: The PAdES level actually reached. Not the level the deployment was configured
+    #: for: the report states what this document carries, because that is what a reader
+    #: holding the file can check.
+    level: str = "BASELINE-B"
+    #: The timestamp authority's asserted time, when the signature reached at least
+    #: baseline-T. `None` under baseline-B, and the report says what that means.
+    timestamp_time: str | None = None
+    #: The authority that asserted it. A timestamp with no named authority establishes
+    #: nothing, so the report prints "no authority" rather than the time alone.
+    tsa_subject: str | None = None
 
 
 def _styles() -> dict[str, ParagraphStyle]:
@@ -403,12 +413,15 @@ def _signature_block(
             ),
         ]
 
+    timestamped = signer.level != "BASELINE-B"
+
     out: list[Any] = [
         Paragraph("Integrity", s["h2"]),
         Paragraph(
-            "This document carries a PAdES baseline-B signature over the whole file. "
-            "Any change to any byte after signing will be detected by verification: "
-            "the signature covers the entire document, not a page or a section of it.",
+            "This document carries a PAdES "
+            f"<b>{_esc(signer.level)}</b> signature over the whole file. Any change to "
+            "any byte after signing will be detected by verification: the signature "
+            "covers the entire document, not a page or a section of it.",
             s["body"],
         ),
         Table(
@@ -417,6 +430,25 @@ def _signature_block(
                     Paragraph("Signed by", s["cell_head"]),
                     Paragraph(_esc(signer.subject), s["cell"]),
                 ],
+                [
+                    Paragraph("Signature level", s["cell_head"]),
+                    Paragraph(_esc(signer.level), s["cell"]),
+                ],
+                *(
+                    [
+                        [
+                            Paragraph("Counter-signed", s["cell_head"]),
+                            Paragraph(
+                                "by a timestamp authority; the asserted time and the "
+                                "authority's identity are inside the signature — read "
+                                "them with POST /reports/verify",
+                                s["cell"],
+                            ),
+                        ],
+                    ]
+                    if timestamped
+                    else []
+                ),
                 [
                     Paragraph("Certificate SHA-256", s["cell_head"]),
                     Paragraph(_wrap_hash(signer.fingerprint), s["cell"]),
@@ -439,21 +471,60 @@ def _signature_block(
         ),
         Spacer(1, 6),
         Paragraph("What the signature does not establish", s["h2"]),
-        Paragraph(
-            "It does not independently establish <b>when</b> the document was "
-            "signed. The signature carries a signing time, but that is the signing "
-            "machine's own statement of its own clock: no timestamp authority "
-            "counter-signed it, so it is what the signer says rather than proof. A "
-            "machine whose clock was wrong would report a wrong time and this "
-            "signature would still verify. It does not establish <b>who</b> signed it "
-            "to anyone who has not been given this certificate as a trust root — "
-            "self-signed is the normal deployment here, so until you trust the "
-            "certificate above you know the bytes are unchanged but not who vouched "
-            "for them. Compare the certificate SHA-256 with the one your lab holds.",
-            s["small"],
-        ),
+        Paragraph(_what_it_does_not_establish(signer, timestamped=timestamped), s["small"]),
     ]
     return out
+
+
+def _what_it_does_not_establish(signer: SignerInfo, *, timestamped: bool) -> str:
+    """The honest limits of *this* signature, as distinct per level.
+
+    Kept as a function of the level rather than one fixed paragraph, because the central
+    fact differs: an untimestamped signature cannot say <i>when</i>, and a timestamped one
+    can say when but still cannot say <i>who</i> to anyone without the certificates.
+    Printing the baseline-B wording under a baseline-LT signature would be wrong in the
+    reader's favour, and printing the baseline-LT wording under baseline-B would be
+    wrong against this project's own interest.
+    """
+    trust = (
+        "It does not establish <b>who</b> signed it to anyone who has not been given "
+        "the certificate above as a trust root — self-signed is the normal deployment "
+        "here, so until you trust it you know the bytes are unchanged but not who "
+        "vouched for them. Compare the certificate SHA-256 with the one your lab holds."
+    )
+
+    if not timestamped:
+        return (
+            "It does not independently establish <b>when</b> the document was signed. "
+            "The signature carries a signing time, but that is the signing machine's own "
+            "statement of its own clock: no timestamp authority counter-signed it, so it "
+            "is what the signer says rather than proof. A machine whose clock was wrong "
+            "would report a wrong time and this signature would still verify. "
+            "<b>It also has an expiry:</b> once the signing certificate lapses, this "
+            "signature can no longer be validated at all, however carefully the bytes "
+            "are preserved. " + trust
+        )
+
+    if signer.level == "BASELINE-LT":
+        return (
+            "A timestamp authority counter-signed this signature, so <b>when</b> is "
+            "established by that authority rather than asserted by the signing machine, "
+            "and the signing certificate's chain and revocation material travel inside "
+            "this file. Verification therefore still works after the signing certificate "
+            "expires — which is the point of long-term validation. Two limits remain. "
+            + trust
+            + " And a timestamp authority is only evidence for as long as <i>its</i> "
+            "certificate can be trusted: the authority named above has to remain one you "
+            "accept."
+        )
+
+    return (
+        "A timestamp authority counter-signed this signature, so <b>when</b> is "
+        "established by that authority rather than asserted by the signing machine. But "
+        "no validation material travels inside this file, so verification still depends "
+        "on the verifier holding the same certificates: this does not yet survive the "
+        "signing certificate's expiry. " + trust
+    )
 
 
 # --- findings -------------------------------------------------------------
