@@ -11,7 +11,7 @@ memory).
 > approval before changing state. A live model (`qwen2.5:3b`) drives the tool loop
 > end to end and produces a sourced report — see `CHECKLIST.md` T5.10.
 >
-> **Nine analyzers ship.** `byte-entropy` is a deterministic
+> **Ten analyzers ship.** `byte-entropy` is a deterministic
 > reference module. The
 > image modules are real forensic techniques — `image-ela` scores compression
 > anomalies against the image's own error baseline, `image-exif` scores
@@ -25,7 +25,11 @@ memory).
 > **does not separate the six public-domain fixtures it was measured on**, which
 > `CHECKLIST.md` records rather than tunes away. `near-duplicate` compares two images
 > by difference hash; it separates clean (0–14 bits against 25–38 for unrelated
-> images) but tolerates only about a 5% crop, which its payload states. **Three capabilities are honestly
+> images) but tolerates only about a 5% crop, which its payload states.
+> `speaker-compare` runs ECAPA-TDNN over two recordings — verification, never
+> identification — and on eight public-domain LibriVox readings **its ranges overlap**
+> (same reader 0.33–0.91, different reader up to 0.84), so it ships with no calibrated
+> operating point and says so. **Three capabilities are honestly
 > missing**: the object
 > detector cannot find weapons (COCO has no firearm class, so its watchlist is
 > `knife`/`scissors` and a nil result says nothing about guns), and the face
@@ -81,7 +85,7 @@ memory).
 |---|---|
 | `backend/` | FastAPI API gateway (auth, REST, WebSocket, OpenAPI) |
 | `backend/app/agent/` | Autonomous agent: graph, tools, provenance guard, memory, HITL |
-| `backend/workers/` | Analysis workers (Dramatiq; nine analyzers registered, see `docs/runbook.md`) |
+| `backend/workers/` | Analysis workers (Dramatiq; ten analyzers registered, see `docs/runbook.md`) |
 | `frontend/` | Next.js (App Router, TypeScript, Tailwind v4); case workspace, agent console, evidence viewer, report download and signature check |
 | `backend/app/reports/` | Signed report generation (PAdES), the evidence manifest, and the provenance appendix |
 | `infra/` | Docker Compose, deployment, observability configs |
@@ -190,8 +194,9 @@ Two independent layers, both required:
 | `face-compare` | B | cosine similarity between two faces' embeddings |
 | `text-authorship` | B | cosine similarity between two documents' stylometric profiles |
 | `near-duplicate` | B | bit distance between two images' 64-bit difference hashes |
+| `speaker-compare` | B | cosine similarity between two recordings' ECAPA speaker embeddings |
 
-Four of these load pinned weights; the other five are pure algorithms and run
+Five of these load pinned weights; the other five are pure algorithms and run
 unchanged on the constrained-host profile.
 
 All run on CPU; no GPU module has been written, so nothing depends on one.

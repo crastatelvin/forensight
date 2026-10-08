@@ -64,8 +64,22 @@ fetch "sface.onnx" \
   "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx" \
   "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
 
+# Speaker comparison (P9.B2): ECAPA-TDNN, Apache-2.0 from the Wespeaker project,
+# trained on VoxCeleb2. Apache-2.0 rather than SpeechBrain's own release, whose
+# weights carry no stated licence — and this project's fixture gate refuses
+# unstated terms.
+#
+# NOTE: the model takes 80-bin log-mel features, not raw audio, so the front-end in
+# `app/analysis/modules/speaker_compare.py` has to match the model's own config
+# (25 ms frames, 10 ms hop, 80 mel bins). A wrong front-end does not fail — it returns
+# embeddings from a pipeline the model was never trained on.
+fetch "ecapa.onnx" \
+  "https://huggingface.co/Wespeaker/wespeaker-voxceleb-ecapa-tdnn512/resolve/main/voxceleb_ECAPA512.onnx" \
+  "f901ae3571912bad4e11e157744cb8b7d77a0b46923b83c410bdbb6c77d69736"
+
 echo
 echo "Done. Weights verified by digest."
 echo "To run the model-backed tests:"
 echo "  FORENSIGHT_YOLO_WEIGHTS=$DEST/yolov4.onnx pytest tests/test_object_detect.py"
 echo "  pytest tests/test_face_compare.py"
+echo "  pytest tests/test_golden_speaker.py"

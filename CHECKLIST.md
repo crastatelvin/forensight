@@ -893,7 +893,52 @@ UI always has.
       libfprint's GitHub 404s from this network — it is C). Vendoring libfprint's
       sources into the image is a real image-size and supply-chain cost nobody has
       agreed to. Recorded as dropped rather than left quietly open.
-- [ ] P9.B2 Speaker — SpeechBrain ECAPA-TDNN
+- [x] P9.B2 Speaker — `speaker-compare`, Tier B. **ECAPA-TDNN, Apache-2.0
+      (`Wespeaker/wespeaker-voxceleb-ecapa-tdnn512`), not SpeechBrain's own release,
+      whose weights state no licence and which this project's own fixture gate
+      refuses.** Digest-pinned like every other weight.
+      **The fixtures were the unblocked part, and it took looking rather than
+      assuming.** The blocker recorded for Phase 9 was "labelled fixtures, no
+      permissively-licensed source" — true for VoxCeleb, and irrelevant to what was
+      actually needed. Speaker verification needs *one person recorded twice*, and
+      **LibriVox is public domain by volunteer dedication**: readers record many books
+      each, so the same narrator across different books and different years is
+      exactly a verification pair. Eight 8-second 16 kHz mono WAV excerpts, three
+      readers, provenance and regeneration steps in `tests/assets/speaker/`.
+      **Measured, and it does not separate.** Same-reader cosine **0.328–0.911**,
+      different-reader up to **0.841** — the ranges overlap and no threshold separates
+      them. **T9.3 asked for same>threshold/different<threshold; the honest answer is
+      that this does not hold on this evidence**, and it is asserted as a non-property
+      rather than engineered into one.
+      **The cause is the fixtures, and naming it is the useful part.** LibriVox
+      readings are *dramatic readings* — one narrator performing several characters.
+      `kara_b` (*The Secret Garden*) is read in character voices, so it sits further
+      from its own narrator (0.328–0.607) than from a different reader (0.809–0.841),
+      and no speaker embedding should match it. **Excluding it narrows the overlap but
+      leaves the ranges touching by 0.0004** — a coin flip, not a threshold. The
+      fixture is **retained and asserted as a failure**: dropping it after seeing the
+      result would leave a green test resting on a selection made to produce one.
+      **A positive control proves the pipeline works**, because "the ranges overlap"
+      is equally consistent with a broken one: `lyons_a` sits >0.2 closer to the other
+      Lyons readings than to anything else, which is only possible if the embeddings
+      mean something. That matters because the front-end is hand-written to match the
+      model's `config.yaml` (25 ms frames, 10 ms hop, 80 mel bins, SpeechBrain's
+      `1.1921e-07` log offset) — **a wrong front-end does not fail, it returns
+      embeddings from a pipeline the model was never trained on.**
+      **The front-end does not use SpeechBrain.** `speechbrain` pulls torch, and the
+      filterbank it needs is ~20 lines of numpy against values read out of the model's
+      own config rather than guessed.
+      Refuses rather than scores: missing or wrong-digest weights, a missing reference,
+      non-WAV input, non-mono, wrong sample rate (**not silently resampled** — a
+      resampling front-end would score 44.1 kHz against 16 kHz and produce a number
+      that looked comparable and was not), non-16-bit, and audio under 5 s.
+      **The threshold is placed above the worst different-reader pair observed**, not
+      inside the overlap — a bar chosen to look decisive would be a number with nothing
+      behind it. **Verification (1:1), never identification (1:N)**, and the "no match"
+      branch reads *not shown to match*, never *shown not to match*.
+      **Only the derived score is stored, never the embedding or the audio** —
+      speaker embeddings are known to be recoverable from short audio, so this is
+      personal data and the payload says so.
 - [ ] P9.B3 Deepfake — Xception/EfficientNet ONNX
 - [ ] P9.B4 Gunshot audio — YAMNet/PANNs
 - [ ] P9.B5 Handwriting/document similarity
@@ -1127,7 +1172,17 @@ that might not work — the same argument as the CI security scanners.
       fixture would make the module refuse while the refusal tests kept passing, so
       every pinned number would be describing a different experiment.
 - [ ] T9.2 NBIS matching high / non-matching low on fixtures — blocked, see P9.B1
-- [ ] T9.3 Speaker same>threshold / different<threshold — blocked, see P9.B2
+- [x] T9.3 Speaker same>threshold / different<threshold. **Measured, and it does not
+      hold** — same-reader 0.328–0.911 against different-reader up to 0.841 on eight
+      public-domain LibriVox readings. Asserted as a *non-property* in
+      `test_the_measured_ranges_do_not_separate`, so a future change that does separate
+      has to update the module's calibration block deliberately rather than the
+      separation appearing quietly in a golden file. The exact ranges are pinned to
+      four decimals with their pair counts, and `kara_b` — the multi-character
+      dramatic reading that fails against its own narrator — is **kept and asserted**
+      rather than dropped. See P9.B2 for why the fixtures, not the technique, are the
+      likely cause, and why removing it would leave a green test resting on a selection
+      made after seeing the result. — blocked, see P9.B2
 - [x] T9.4 Tier-B always labeled "not an identity match", in the disclaimer, the
       tier vocabulary, the capabilities list and the report. Nine tests, and the
       part worth having is the **reverse** checks: Tier A must *not* claim to refuse

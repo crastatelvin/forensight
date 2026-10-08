@@ -419,7 +419,7 @@ lever and nothing else should need it.
 
 ### Analyzers
 
-Nine modules ship today. `byte-entropy` is the Phase 4 reference module; the image
+Ten modules ship today. `byte-entropy` is the Phase 4 reference module; the image
 modules are the real forensic techniques. `/capabilities` is authoritative — it is
 generated from the registry, so it cannot drift from what the build actually ships.
 
@@ -434,8 +434,10 @@ generated from the registry, so it cannot drift from what the build actually shi
 | `face-compare` | B | cosine similarity between two faces' embeddings | pinned weights + 2 images |
 | `text-authorship` | B | cosine similarity between two documents' stylometric profiles | 2 text documents, ≥3000 words each |
 | `near-duplicate` | B | bit distance between two images' 64-bit difference hashes | 2 images from one case |
+| `speaker-compare` | B | cosine similarity between two recordings' ECAPA embeddings | 2 WAV recordings, ≥5 s, 16 kHz mono |
 
-`image-prnu`, `face-compare`, `text-authorship` and `near-duplicate` compare two
+`image-prnu`, `face-compare`, `text-authorship`, `near-duplicate` and
+`speaker-compare` compare two
 items and take the second as `params.reference_evidence_id` — an evidence id in the same case, resolved
 case-scoped and hash-verified before the comparison runs.
 
@@ -444,6 +446,14 @@ curl -X POST localhost:8000/cases/$CASE/analyses \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
   -d '{"module":"image-ela","evidence_id":"'$EVID'"}'
 ```
+
+**`speaker-compare` has no calibrated operating point here.** Over the eight
+public-domain LibriVox readings in `tests/assets/speaker/`, same-reader similarity runs
+0.328–0.911 while different-reader similarity reaches 0.841 — the ranges overlap. A
+match is a prompt to examine more audio; a non-match is **not** evidence that two
+recordings are of different people. WAV only, 16 kHz mono, 16-bit, at least 5 s: it
+refuses rather than resampling, because a silent resample would score 44.1 kHz against
+16 kHz and produce a number that looked comparable and was not.
 
 **`text-authorship` does not currently separate authors.** On its six public-domain
 fixtures, same-author similarity falls to 0.934 while a different-author pair reaches
