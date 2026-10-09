@@ -15,6 +15,59 @@ Nothing here is bundled in the repository. Every artifact is fetched by
 what makes the table below checkable rather than aspirational: the digest in the
 script is the digest of the file you get.
 
+## Runtime services (containers, not redistributed)
+
+Distinct from the weights and fixtures above: these are **container images pulled at deploy
+time**, not artefacts this repository fetches, digest-pins and can therefore vouch for by
+hash. They carry their own obligations, and one of them is not permissive.
+
+| Service | Image | Licence | Status |
+|---|---|---|---|
+| Postgres 16 + PostGIS + pgvector | `pgvector/pgvector:pg16` + `postgresql-16-postgis-3` | PostgreSQL / PostGIS (OSI) | maintained |
+| Redis | as pinned in `docker-compose.yml` | see upstream | maintained |
+| **MinIO** | **`cgr.dev/chainguard/minio:latest`** | **AGPL-3.0** | **archived upstream** |
+
+### MinIO: AGPL-3.0, and archived
+
+**This is the one dependency in the stack with a copyleft licence and no upstream
+maintenance, and neither fact is recorded anywhere else in this repository.** Measured
+2026-10-09 against the running container:
+
+```
+$ docker exec forensight-minio-1 minio --version
+License: GNU AGPLv3 - https://www.gnu.org/licenses/agpl-3.0.html
+$ docker inspect forensight-minio-1 --format '{{.Config.Image}}'
+cgr.dev/chainguard/minio:latest
+```
+
+The running release identifies itself as `RELEASE.2026-09-22T19-25-18Z`, and MinIO's own
+distribution now answers **HTTP 410 Gone** for every artefact, with this body:
+
+> The open-source MinIO Server, MinIO Client (mc) and MinIO KES projects are archived and
+> no longer maintained. MinIO does not provide product support, security updates, or
+> security advisories for them, and does not accept or process vulnerability reports
+> concerning them.
+
+**Why the AGPL matters here, stated plainly.** AGPL-3.0 is a network-copyleft licence:
+section 13 extends copyleft to users interacting with a modified version over a network.
+ForenSight does not modify MinIO — it runs the image unmodified and speaks S3 to it — so
+the obligation that bites in practice is **section 6, conveying**: distributing a
+container that runs AGPL MinIO conveys the licence, and a recipient must be told and given
+the corresponding source. A deployment that ships this image as part of a product bundle is
+distributing it. **A deployment that wants to avoid that obligation cannot**, short of
+replacing the object store, because it is the image, not how ForenSight uses it.
+
+**Why "archived" matters more than the licence for a forensic tool.** Evidence in this
+system is COMPLIANCE-locked and content-addressed, so its durability and its retention
+guarantees are load-bearing claims. An object store that ships no security advisories cannot
+be told to an examiner as "receives security updates". That is a statement about the
+evidence store's assurance, and it belongs in the threat model rather than only here.
+
+**This is a known, recorded gap, not a discovered surprise** — but it was recorded
+nowhere, which is the problem this entry fixes. See CHECKLIST.md under P10.B2 for the
+replication consequence, which is the same root cause: **the tooling needed to configure
+MinIO replication is no longer distributed at all.**
+
 ## Pinned model weights
 
 | Module | Artifact | Upstream | Digest (SHA-256, truncated) | Terms |

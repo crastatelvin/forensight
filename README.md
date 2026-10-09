@@ -250,6 +250,16 @@ The **model weights are not covered by it.** They are fetched at provisioning ti
 digest-verified, and each keeps its own upstream terms; see
 `THIRD_PARTY_NOTICES.md`. Nothing third-party is committed to this repository.
 
+**The MinIO container is AGPL-3.0, and MinIO is archived upstream.** This is the one
+component whose terms a deployment cannot design around: ForenSight runs the image
+unmodified and speaks S3 to it, so AGPL §13's network copyleft does not attach to
+ForenSight's own code — but AGPL §6 means *distributing* that image conveys the licence and
+the corresponding source. There is no configuration that avoids this; the only way out is a
+different object store. MinIO also now ships **no security updates or advisories**, which
+matters for a forensic tool because evidence durability is a load-bearing claim. See
+`THIRD_PARTY_NOTICES.md` for the full statement and `docs/threat-model.md` for the
+consequence.
+
 If you are considering a commercial deployment, read that file: the weights' terms
-are a separate question from the code's, and training-data terms are a further
-question again from the weights' own licence.
+are a separate question from the code's, the object store's licence is a further question
+again, and training-data terms are a further question again from the weights' own licence.

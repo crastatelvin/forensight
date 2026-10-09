@@ -1832,6 +1832,50 @@ that might not work — the same argument as the CI security scanners.
 
       **Still to do: MinIO-side replication**, and **off-host replication of the WAL
       archive** — it is a separate volume from `pgdata`, but a single host's loss takes both.
+
+      **MinIO-side replication was attempted and is blocked on tooling, on a root cause worth
+      recording.** The live bucket was checked first: **versioning is `Enabled`** (object
+      lock requires it, so this is not the gap), object lock is present, and
+      `get_bucket_replication` returns **`None`** — genuinely unconfigured.
+
+      MinIO bucket replication requires a *remote target*, which is declared and applied with
+      **`mc`**, the MinIO client. It is not obtainable here, and the reason is not a pull
+      quirk:
+
+      - `minio/mc:latest` → `pull access denied ... repository does not exist`
+      - `cgr.dev/chainguard/mc:latest` → `Forbidden`
+      - `https://dl.min.io/client/mc/release/linux-amd64/mc` → **HTTP 410 Gone**
+
+      And the 410 is not transient. Its body:
+
+      > The open-source MinIO Server, MinIO Client (mc) and MinIO KES projects are archived
+      > and no longer maintained. MinIO does not provide product support, security updates,
+      > or security advisories for them, and does not accept or process vulnerability
+      > reports concerning them.
+
+      **So the object store this project's evidence lives in is AGPL-3.0, archived upstream,
+      and ships no security advisories** — the only AGPL and only unmaintained component in
+      the stack. Both facts were recorded nowhere, which is the actual defect this found, and
+      are now in `THIRD_PARTY_NOTICES.md` and `docs/threat-model.md` with the licence
+      obligations stated rather than summarised.
+
+      **Why the licence is a real constraint here and not a formality:** AGPL-3.0 §6 means
+      distributing a container that runs AGPL MinIO *conveys* the licence and requires the
+      corresponding source. ForenSight does not modify MinIO, so §13's network copyleft does
+      not attach to ForenSight's own code — but a deployment bundling this image is
+      distributing MinIO either way, and **cannot avoid that short of replacing the object
+      store**, because it is the image rather than the usage. For a forensic tool the
+      "no security advisories" half is the more serious one: evidence durability is a
+      load-bearing claim, and an unmaintained object store cannot be presented to an examiner
+      as receiving security updates.
+
+      **What would unblock replication:** an `mc` binary from any maintained distribution, or
+      an operator with MinIO administrator access on the deployment's own network. The
+      procedure is standard (`mc admin config set` for the remote target, then
+      `mc replicate add --replicate lock` so the **object lock travels with the copy** — a
+      COMPLIANCE-locked object replicated to a target that does not enforce the lock is
+      deletable at the target, which would be a false durability claim). **The `--replicate
+      lock` part is not optional and is stated here so it is not forgotten.**
 - [x] P10.B3 Graceful shutdown + readiness/liveness. `app/drain.py`, SIGTERM handler,
       `SHUTDOWN_GRACE_SECONDS`.
       **The order is the feature.** Readiness drops *first*, because `/readyz` is the
