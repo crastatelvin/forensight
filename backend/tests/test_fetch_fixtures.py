@@ -106,10 +106,30 @@ def test_a_gated_dataset_is_refused() -> None:
 
 
 def test_an_unlisted_licence_is_refused_even_though_it_is_not_nd_or_sa() -> None:
-    """The allowlist is closed, so `other` and `unknown` do not slip through."""
-    for licence in ("other", "unknown", "apache-2.0", "mit", "by-nc-sa-4.0"):
+    """The allowlist is closed, so `other` and `unknown` do not slip through.
+
+    `apache-2.0` was listed here until 2026-10-09 and has been **permitted** since, because
+    the P9.B3 deepfake fixtures are outputs of Apache-2.0 generators (FLUX-schnell,
+    kandinsky_2_2) and the licence grants redistribution with attribution and no
+    ShareAlike obligation. The point of this test is that the allowlist is a closed list,
+    not that these particular licences are forbidden -- `mit` is still refused below, and
+    would need its own justification to be added.
+    """
+    for licence in ("other", "unknown", "mit", "by-nc-sa-4.0", "bsd-3-clause", "gpl-3.0"):
         with pytest.raises(ff.FixtureRefused, match="not on the permitted list"):
             ff.Fixture(url="u", sha256="a" * 64, licence=licence, role="f/p").check_licence()
+
+
+def test_apache_2_0_is_permitted_and_says_why() -> None:
+    """The licences that got in should say what bought them, not just be listed.
+
+    Otherwise the next person to widen the allowlist cannot tell which additions were
+    reasoned and which were slips — and this list has been widened exactly once.
+    """
+    ff.Fixture(url="u", sha256="a" * 64, licence="apache-2.0", role="f/p").check_licence()
+    source = pathlib.Path(ff.__file__).read_text()
+    assert "apache-2.0" in source
+    assert "GENERATOR's" in source, "the per-generator licence reasoning must stay recorded"
 
 
 def test_the_refusal_explains_what_is_permitted() -> None:

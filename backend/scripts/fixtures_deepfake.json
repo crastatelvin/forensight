@@ -1,0 +1,170 @@
+[
+  {
+    "url": "deepfake:gen_FLUX-schnell_00.jpg",
+    "sha256": "51e9f945bd8b8e7a8f56586f7941c917a098df7d935f58d8057324a0eba31eb0",
+    "licence": "apache-2.0",
+    "role": "deepfake/generated",
+    "note": "generated image from OwensLab/CommunityForensics PublicEval; generator=FLUX-schnell (Apache 2.0); real_source=LAION"
+  },
+  {
+    "url": "deepfake:gen_FLUX-schnell_01.jpg",
+    "sha256": "9bea657455ec058add0a1268ec1282a85c8d3cb421939bc6aab2d1aaa0230e52",
+    "licence": "apache-2.0",
+    "role": "deepfake/generated",
+    "note": "generated image from OwensLab/CommunityForensics PublicEval; generator=FLUX-schnell (Apache 2.0); real_source=LAION"
+  },
+  {
+    "url": "deepfake:gen_FLUX-schnell_02.jpg",
+    "sha256": "32cf7431abc5d3409b6d9ab995ca17e0a574e1f1711bf7a7b98078f97c9f64b7",
+    "licence": "apache-2.0",
+    "role": "deepfake/generated",
+    "note": "generated image from OwensLab/CommunityForensics PublicEval; generator=FLUX-schnell (Apache 2.0); real_source=LAION"
+  },
+  {
+    "url": "deepfake:gen_FLUX-schnell_03.jpg",
+    "sha256": "72ec8c8d8ca6e9b250fa4d50d3fd6812a2d8eea8b321b17ca1bfa98e6d335a61",
+    "licence": "apache-2.0",
+    "role": "deepfake/generated",
+    "note": "generated image from OwensLab/CommunityForensics PublicEval; generator=FLUX-schnell (Apache 2.0); real_source=LAION"
+  },
+  {
+    "url": "deepfake:gen_FLUX-schnell_04.jpg",
+    "sha256": "b3b7736809521cc0d3c98251d658d70362e9a8e3c2ea916da3b47ebc49c3b96e",
+    "licence": "apache-2.0",
+    "role": "deepfake/generated",
+    "note": "generated image from OwensLab/CommunityForensics PublicEval; generator=FLUX-schnell (Apache 2.0); real_source=LAION"
+  },
+  {
+    "url": "deepfake:gen_FLUX-schnell_05.jpg",
+    "sha256": "b81fe8d1e609e732ca9a42926e1def347d942d98f17db38c0fb0237258c4d649",
+    "licence": "apache-2.0",
+    "role": "deepfake/generated",
+    "note": "generated image from OwensLab/CommunityForensics PublicEval; generator=FLUX-schnell (Apache 2.0); real_source=LAION"
+  },
+  {
+    "url": "deepfake:gen_FLUX-schnell_06.jpg",
+    "sha256": "34175e58efe4438c646270cf1d74464589092f3adc500dae687eb5182bef2f25",
+    "licence": "apache-2.0",
+    "role": "deepfake/generated",
+    "note": "generated image from OwensLab/CommunityForensics PublicEval; generator=FLUX-schnell (Apache 2.0); real_source=LAION"
+  },
+  {
+    "url": "deepfake:gen_FLUX-schnell_07.jpg",
+    "sha256": "945965a38eff42b9c31c7114e392560cabaa84c529fb888185ffa127d7308129",
+    "licence": "apache-2.0",
+    "role": "deepfake/generated",
+    "note": "generated image from OwensLab/CommunityForensics PublicEval; generator=FLUX-schnell (Apache 2.0); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_00.jpg",
+    "sha256": "9b06b3d7ba38e629c033a40d29d87b6449d2a31ffa7fe2372b848fd714c5a41b",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_01.jpg",
+    "sha256": "ed76ee89a3ebf8fe58104dad9ac21ed6016d0056dd7bdd979f79f5a8c9de2af2",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_02.jpg",
+    "sha256": "0b0da06d9f7ab9d44c776dba3250b5223433d0a8ad9fb5c92489ece8e5d2a682",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_03.jpg",
+    "sha256": "da8ddb83371f636c5c89dc723fa59d89c310411f12380ba69ebcb1a3039cf9f6",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_04.jpg",
+    "sha256": "23248c471f77381ccad678e7cafbf87d9d328005459e8cc20f923df9bc86bc4b",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_05.jpg",
+    "sha256": "44396ee21bed2453f77adbb17930f56af148e8d797ed7a91b36d546fad0c6454",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_06.jpg",
+    "sha256": "29e5f5149d9dc897104ba717d1bedbf4f943b94851a4f71c6569017bbaea18e2",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_07.jpg",
+    "sha256": "9ad252d63b1761b95a74b0ec3d086e58aaecbc36f6d6b19537a16021cbbda36b",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_08.jpg",
+    "sha256": "ce48c6df8ca7791cd0aaf7eedea767fcb63db48c71186027bc7dbe7608796ea0",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_09.jpg",
+    "sha256": "61a7b4d8a5e4d1f32c4ccaad1918a28028fbacc0531e9f01ed2080a7f648d16e",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_10.jpg",
+    "sha256": "81c465f23dc6b03d155f87f479da72424461e3d437693f97f7ff7b2dbf055989",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_11.jpg",
+    "sha256": "873841db9765e852625f0a36033427e840d0977e41117dad70d98b9f0f9ed7e1",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_12.jpg",
+    "sha256": "4ef9af09d6a141ef9bc59a8718d76e5e3585d09b894ab1e071d80f095f9843eb",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_13.jpg",
+    "sha256": "08d16d319326ea632c18af9d75bf34251531c95d7b2db541f119367e0d815cea",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_14.jpg",
+    "sha256": "180812c119eb3f4a79743025bc211e8fd32c5629e94f6344a6a4d8190338668c",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  },
+  {
+    "url": "deepfake:real_15.jpg",
+    "sha256": "a855eeba360c559add5c0236edf0ef37f890a676e4e18b375afb7ff8864cfb10",
+    "licence": "apache-2.0",
+    "role": "deepfake/real",
+    "note": "real image from OwensLab/CommunityForensics PublicEval; generator=n/a (real photograph); real_source=LAION"
+  }
+]

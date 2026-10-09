@@ -73,6 +73,17 @@ PERMITTED_LICENCES = frozenset(
         "publicdomain",
         "public-domain",
         "pd",
+        # Added 2026-10-09 for the P9.B3 deepfake fixtures, which are outputs of
+        # Apache-2.0 generators (FLUX-schnell, kandinsky_2_2). Apache-2.0 grants
+        # redistribution with attribution and no ShareAlike obligation, so it sits on the
+        # same side of this gate as CC BY does -- and this project already ships
+        # Apache-2.0 *software* (the ECAPA-TDNN weights), so permitting it for data is
+        # consistency rather than a loosening. The qualification that made this careful is
+        # that the licence governing a generated image is the GENERATOR's, not the
+        # dataset's: the source dataset is CC BY 4.0 qualified "for research purposes
+        # only", and relying on that would have been relying on the wrong clause. The
+        # per-generator licence is recorded per fixture in tests/assets/deepfake/.
+        "apache-2.0",
     }
 )
 
