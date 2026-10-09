@@ -92,12 +92,38 @@ fetch "ast-audioset.onnx" \
   "https://huggingface.co/Xenova/ast-finetuned-audioset-10-10-0.4593/resolve/main/onnx/model.onnx" \
   "6ff353b1e809da25f900b54494fd4ac12a6fc7db1e25195e238f21be125bb4bd"
 
+# Deepfake detector for P9.B3. **Fetched and digest-pinned, but NOT wired to an analyzer** --
+# see CHECKLIST.md under P9.B3 for why. Fetched anyway: the model is chosen and verified,
+# the front end is written, and only permissively-licensed fixtures are missing.
+#
+# `buildborderless/CommunityForensics-DeepfakeDet-ViT`, MIT, ViT-Small/384, trained on 2.7M
+# samples across 4,803 generators (Community Forensics, CVPR 2025). It is the model that
+# WORKS here: 29/30 generated flagged against 0/13 genuine, where the previously-evaluated
+# detector managed 8/8 and 3/3.
+#
+# Three things about it are easy to get wrong and are recorded so the next reader does not:
+#   - `num_labels: 1`, so the output is a SIGMOID, not a softmax over two classes. Treating
+#     the logit as a probability is wrong by construction.
+#   - Its preprocessor is CLIP normalisation (mean 0.48145466/0.4578275/0.40821073), resize
+#     shortest_edge 440, centre-crop 384. That is a THIRD set of constants in this script:
+#     the deepfake-v2 model wants 0.5/0.5 and ordinary CNNs want ImageNet.
+#   - The card explicitly forbids squashing to 384x384 -- it distorts facial geometry and
+#     destroys accuracy.
+# It loads on this project's onnxruntime 1.20.1 despite the card recommending >= 1.27.
+fetch "communityforensics-vit.onnx" \
+  "https://huggingface.co/buildborderless/CommunityForensics-DeepfakeDet-ViT/resolve/main/onnx/model.onnx" \
+  "a42c7d740fbb345ba9a26d469b22f301d73089ce3c6da993877ed2b6965a8ba1"
+
 echo
 echo "NOTE: ast-audioset.onnx has no analyzer. Two of the six clips in"
 echo "tests/assets/audio are not what their filenames claim, and there is one genuine"
 echo "gunfire recording where a measurement needs several. Run the probe with an"
-echo "interpreter that has transformers and onnxruntime:"
+echo "interpreter that has transformers, torch and onnxruntime:"
 echo "  python tests/probe_audio_fixtures.py"
+echo
+echo "NOTE: communityforensics-vit.onnx has no analyzer either, for a narrower reason:"
+echo "it measures well but its honest fixture set would have to be real generated images,"
+echo "and every reachable set is CC BY-NC-SA-4.0, which the fixture gate refuses."
 echo
 echo "Done. Weights verified by digest."
 echo "To run the model-backed tests:"

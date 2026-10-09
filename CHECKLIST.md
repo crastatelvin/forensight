@@ -1237,10 +1237,75 @@ UI always has.
       harm the rest of this checklist exists to prevent.
       `tests/probe_deepfake_detector.py` reproduces all of it from committed fixtures
       alone — no downloads, no committed derivatives — and exits 0.
-      **What would unblock it:** a detector whose discrimination holds on a population it
-      was not tuned for. That is an empirical property to be established on evidence, not
-      a licence or a configuration, so it cannot be sourced the way the other three items
-      were.
+      **And one was then found, by searching instead of guessing — which is the thing
+      that was blocked before.** `api.github.com` 404s per-model here, which had been
+      recorded as "GitHub is unreachable" and inferred as "no other detector can be
+      found". But **`/api/models?search=` works**: only the per-model endpoint is
+      authenticated, not the search endpoint. Every earlier phase of this work guessed
+      repository names and concluded the thing did not exist; it was a wrong URL.
+
+      - **`buildborderless/CommunityForensics-DeepfakeDet-ViT` — MIT**, ViT-Small/384,
+        trained on **2.7M samples across 4,803 generators** (Community Forensics, CVPR
+        2025), 34k downloads. `onnx/model.onnx`, 87,442,080 B, digest
+        `a42c7d740fbb345ba9a26d469b22f301d73089ce3c6da993877ed2b6965a8ba1`, loads on this
+        project's `onnxruntime` 1.20.1 despite the card recommending >= 1.27.
+      - **`OwensLab/CommunityForensics` — CC BY 4.0**, the authors' own dataset.
+        **`OwensLab/CommunityForensics-Eval` — CC BY-NC-SA-4.0**, sharded into 413 files
+        of ~14 MB, each carrying `label`, `model_name` and `architecture`.
+      - Three alternative detectors (`dima806`, two `KoreaPeter` EfficientNet-GCViT)
+        have **no ONNX export** and are unusable here without PyTorch.
+
+      **Measured, and it is a different model from the one that failed.** Note
+      `num_labels: 1`: the output is a **sigmoid, not a softmax over two classes**, so
+      reading the logit as a probability would be wrong by construction. Its own
+      `preprocessor_config.json` is a *third* set of constants — CLIP normalisation,
+      `shortest_edge` 440, centre-crop 384 — where the previous model wanted 0.5/0.5 and
+      the third wanted ImageNet. It also carries an explicit instruction **not to squash**,
+      because that distorts facial geometry and destroys accuracy.
+
+      | Population | P(generated) | flagged |
+      |---|---|---|
+      | **genuine** (same shards, real faces) | 0.0000–0.0388 | **0/13** |
+      | **generated**, DFGAN | 0.9574–1.0000 | **18/18** |
+      | **generated**, kvikontent Midjourney v6 | 0.9987–1.0000 | **6/6** |
+      | **generated**, FLUX-schnell | 0.0166–1.0000 | **5/6** |
+
+      **29 of 30 generated flagged, 0 of 13 genuine flagged — against 8/8 and 3/3 for the
+      model it replaces, on the same positives.** Where the previous detector put the two
+      populations on top of each other (0.638–0.861 genuine against 0.647–0.866
+      manipulated), this one puts genuine at 0.000–0.039 and generated at 0.73–1.00.
+
+      **The single miss was diagnosed rather than dropped, and it is not a threshold
+      problem.** One FLUX-schnell output scores **0.0166**, inside the genuine range, and
+      it stays there under both a face crop and a whole-frame crop — so it is a real miss
+      on that image, not a pipeline artefact. **Excluding it would leave a clean gap and
+      make this item look solved; it is left in**, because dropping one sample after seeing
+      its score is the exact selection error this checklist has rejected four times
+      already. For the same reason **the weakness is stated on the face of the result**
+      rather than averaged away:
+
+      | | observed | 95% CI (Wilson) |
+      |---|---|---|
+      | recall on generated | 29/30 | **[0.833, 0.994]** |
+      | false positives on genuine | 0/13 | **[0.000, 0.228]** |
+
+      **n=13 genuine cannot show a 0.5 threshold is safe, only that it was safe on 13
+      images**, and three generators out of 4,803 is not the breadth the paper claims.
+      **Where P9.B3 now stands.** A genuinely usable detector **has been found and
+      measured** — 29/30 generated against 0/13 genuine, where the previously-evaluated
+      model managed 8/8 and 3/3. **The item remains unticked**, and the reason is now
+      specific and narrow rather than general: the honest fixture for it needs **real
+      generated images**, and every such set reachable here is either
+      **CC BY-NC-SA-4.0**, which this project's gate refuses on principle, or requires a
+      multi-GB download for a handful of samples. `OwensLab/CommunityForensics` (CC BY
+      4.0) was usable as a *read-only reference* and is where the numbers above come from,
+      but nothing from it is committed, because shipping it means committing generated
+      faces.
+      **What would unblock it, precisely:** a small set of generated images under a
+      licence that permits redistribution — which is a **sourcing** task, like P9.B4's, and
+      not a modelling one. The model is chosen and pinned; the front end is written; the
+      threshold is the vendor's own 0.5 argmax rather than a tuned one. What is missing is
+      fixtures, and only fixtures.
 - [ ] P9.B4 Gunshot audio — **the technique was built and measured; the evidence does not
       exist.** Re-researched 2026-10-08, fourth attempt, and this time the blocker was
       measured rather than argued.
