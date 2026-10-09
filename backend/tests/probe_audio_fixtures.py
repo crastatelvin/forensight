@@ -35,12 +35,15 @@ both call the machine-gun file music — but differs numerically (mean absolute 
 numbers quoted here are the reference's, and no conclusion here rests on the hand-built
 front end.**
 
-The reference was run in a throwaway virtualenv holding `transformers` and
-`onnxruntime`, **neither of which this project depends on**. Reproducing it adds no
-project dependency:
+The reference was run in a throwaway virtualenv holding `transformers`, `torch` and
+`onnxruntime`, **none of which this project depends on**. (`torch` is not optional there:
+`transformers`' AST feature extractor imports it, and without it the probe dies with a bare
+`NameError: name 'torch' is not defined` — which is exactly what happened the first time
+this recipe was written down.) Reproducing it adds no project dependency:
 
 ```bash
-python -m venv /tmp/oracle && /tmp/oracle/bin/pip install transformers onnxruntime
+python -m venv /tmp/oracle
+/tmp/oracle/bin/pip install transformers onnxruntime torch
 /tmp/oracle/bin/python backend/tests/probe_audio_fixtures.py
 ```
 
