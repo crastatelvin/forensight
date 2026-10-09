@@ -1162,150 +1162,89 @@ UI always has.
       **Only the derived score is stored, never the embedding or the audio** —
       speaker embeddings are known to be recoverable from short audio, so this is
       personal data and the payload says so.
-- [ ] P9.B3 Deepfake — **measured, and both recorded reasons for it were incomplete. The
-      blocker is a genuine model defect, and it is not fixable by better fixtures.**
-      Re-checked 2026-10-08, **fourth item this phase whose recorded reason did not
-      survive re-checking.** The detector is obtainable and was never in doubt:
-      `onnx-community/Deep-Fake-Detector-v2-Model-ONNX`, **Apache-2.0, ungated**, ViT-base,
-      `Realism`/`Deepfake`, vendor-reported **92.12% on 56,001 samples** of its own
-      evaluation set, digest-pinned, runs on CPU here.
+- [~] P9.B3 Deepfake — **qualified.** A detector that works has been found, measured and
+      given permissively-licensed fixtures; it is wired as weights and fixtures only, with
+      no analyzer, because the honest residual is a 17% miss rate and one latent-diffusion
+      architecture. Every recorded reason for this item was wrong; the working one is below.
+      Re-checked 2026-10-08 and again 2026-10-09, **fourth item this phase whose recorded
+      reason did not survive re-checking.**
 
-      **Reason #1 as recorded — "it flags 8 of 8 genuine photos" — was tested rather than
-      trusted, and it survives, but not for the reason given.** The note said five
-      preprocessing configurations had been tried. **All five were geometric**
-      (interpolation, centre-crop vs squash). Geometry is one of three axes; value rescale
-      and **normalisation were never varied**, and the model's own
-      `preprocessor_config.json` says **mean = std = 0.5**, not the ImageNet 0.485/0.229
-      that a ViT usually wants and that muscle memory reaches for. Wrong normalisation
-      biases a classifier hard and no resize repairs it — a real candidate explanation that
-      had never been excluded. It is now excluded:
+      **The model that was recorded as unusable.** `onnx-community/Deep-Fake-Detector-v2-
+      Model-ONNX` (Apache-2.0, ViT-base, **92.12% on 56,001 of the vendor's own samples**)
+      flags **8 of 8 genuine photographs here** — and that survives testing, but not for
+      the reason given. The note said five preprocessing configurations had been tried;
+      **all five were geometric**, and the model's own `preprocessor_config.json` wants
+      **mean = std = 0.5**, not the ImageNet 0.485/0.229 a ViT usually gets. Wrong
+      normalisation biases a classifier hard and no resize repairs it. Varying that axis
+      moves the range 0.10 and still flags **8/8 in every configuration including the
+      model's own**; content-preserving perturbations move the score by **≤0.019**, so the
+      pipeline reads content and is confidently wrong. Its "outside the training
+      distribution" explanation was also falsified: modern colour headshots
+      (CC BY 4.0 / CC BY 2.0) are flagged **4/5**.
 
-      | Configuration | P(deepfake) | flagged |
+      **And what was actually blocking the search was a wrong URL.** `api.github.com/
+      api/models/<id>` 404s from this network, which had been recorded as "GitHub is
+      unreachable" and inferred as "no other detector exists". But **`/api/models?search=`
+      works** — only the per-model endpoint is authenticated. Every earlier phase guessed
+      repository names and concluded the thing did not exist.
+
+      **What searching found: `buildborderless/CommunityForensics-DeepfakeDet-ViT`** — MIT,
+      ViT-Small/384, trained on **2.7M samples across 4,803 generators** (CVPR 2025).
+      Three ways it is easy to get wrong, all recorded in `fetch_models.sh`: `num_labels: 1`
+      so the output is a **sigmoid, not a softmax**; its preprocessor is a **third** set of
+      constants (CLIP, shortest-edge 440, centre-crop 384) where the others wanted 0.5/0.5
+      and ImageNet; and the card **forbids squashing**. Its own recipe also centre-crops the
+      face out of a tall portrait — measured on `turing_a.jpg`, the face centre is at y=97
+      while the crop window starts at y=101, a 4-pixel loss from the vendor's documented
+      recipe.
+
+      **The fixtures, and the licence reasoning that actually mattered.** The recorded
+      blocker was that every reachable generated-image set is licence-blocked. **The
+      licence of a generated image is its GENERATOR's, not the dataset's.**
+      `OwensLab/CommunityForensics` is CC BY 4.0 qualified *"for research purposes only"* —
+      and that qualification is deliberately **not relied on**. The dataset publishes
+      per-generator licences, and of 22 generators **exactly two are Apache 2.0**:
+      FLUX-schnell and kandinsky_2_2. The other 20 are excluded with reasons —
+      Midjourney/DALL·E/Firefly/Ideogram/Imagen commercial ToS, FLUX.1-dev non-commercial,
+      LCM×3 and DeciDiffusion OpenRAIL++, GALIP and Hourglass MIT, DFGAN CC BY-NC-SA 4.0,
+      stable-cascade -nc-community. The two permitted generators are in **different PublicEval
+      shards** (0 and 4), established from each shard's trailing metadata columns rather
+      than by downloading 14 GB to find out. **`apache-2.0` was added to the fixture gate's
+      allowlist**, which previously had no Apache-2.0 despite the project shipping
+      Apache-2.0 software; the test asserting it was refused was **updated deliberately**, not
+      worked around, and now checks `mit`/`bsd-3-clause`/`gpl-3.0` instead.
+
+      **Measured on 24 generated and 24 genuine committed images:**
+
+      | Population | scores | flagged at 0.5 |
       |---|---|---|
-      | **model's own 0.5/0.5, squash, bilinear** | 0.603–0.864 | 8/8 |
-      | ImageNet 0.485/0.229, squash, bilinear | 0.539–0.809 | 8/8 |
-      | no normalisation at all | 0.608–0.853 | 8/8 |
-      | model's 0.5/0.5, centre-crop / bicubic / lanczos | 0.572–0.868 | 8/8 |
+      | FLUX-schnell | 0.0343 – 1.0000 | **10 / 12** |
+      | kandinsky_2_2 | 0.0063 – 1.0000 | **10 / 12** |
+      | genuine (LAION, paired, same shards) | 0.0000 – 0.0031 | **0 / 24** |
 
-      **8/8 in every configuration, including the model's own.** And the pipeline is
-      provably reading content rather than noise: content-preserving perturbations move
-      the score by **at most 0.019** (JPEG q100→q60, blur sigma 2, downscale to 56px,
-      uniform noise). A detector reading noise would move under those. **This one is
-      stable, correctly wired, and confidently wrong.**
+      Recall **20/24**, 95% Wilson **[0.641, 0.933]**; false positives **0/24**,
+      **[0.000, 0.138]**. **Recall is consistent across both generators**, so the rate is
+      not one model carrying the average.
 
-      **Reason #2 as recorded — "these photographs sit outside the model's training
-      distribution" — is refuted.** Modern colour headshots are exactly the training-
-      distribution-adjacent material the note assumed could not be found, and they exist
-      permissively licensed: `Jia Rizvi 2025 Headshot` and two others (CC BY 4.0),
-      `Close Enough To Feel You Breathe` (CC BY 2.0), `FDR 1944 Color Portrait`
-      (CC BY 2.0). Fetched and scored:
+      **The four misses are kept and stated.** They score 0.0063, 0.0343, 0.0883 and 0.3246
+      while 20 of 24 generated images score **≥0.58** — bimodal, not smeared. Nothing
+      measurable separates them: luma, contrast and high-frequency energy all overlap the
+      flagged images, brightening the darkest miss does not recover it (0.0883 → 0.3426 at
+      mean luma 120), and face detection does not explain it — a flagged image also has zero
+      detected faces. **Removing them would leave a clean separation and a much stronger
+      claim; they are retained**, because dropping samples after seeing their scores is the
+      selection error this checklist has now rejected five times.
 
-      | Population | P(deepfake) | flagged |
-      |---|---|---|
-      | **modern colour headshots (genuine)** | 0.548–0.826 | **4/5** |
-      | historical portraits, this repo's own (genuine) | 0.638–0.861 | **8/8** |
-      | manufactured face swaps (deepfake) | 0.647–0.866 | 3/3 |
-
-      **Modern colour photographs are flagged almost as readily as the archival ones**, so
-      distribution proximity is not the variable and the note's explanation accounts for
-      nothing. One of the five (FDR 1944) does read `Realism` at 0.441 — **and the
-      narrative built on that single reading was checked and thrown away**: correlating
-      the score against colour fraction, contrast, sharpness and mean intensity across all
-      eleven images gives **|r| <= 0.42 on n=11**, which is noise. *One correct reading is
-      not a property of a population, and building a conclusion on it would have been the
-      same error as the four already corrected in this phase.*
-
-      **Reason #3 as recorded — "the positive direction is untestable, DF40/FaceForensics++/
-      Celeb-DF are research-only" — is refuted too.** That is a statement about *existing
-      datasets*, not about the question. **A deepfake is a manipulation, and a
-      manipulation can be manufactured from images this repository already owns.** YuNet
-      (already pinned here) locates and landmarks both faces, the patch is colour-matched
-      to its surroundings and composited with `seamlessClone` — the standard FaceSwap
-      construction. YuNet detects a face in each result and the images genuinely differ
-      from their originals (mean absolute pixel delta 0.66–3.09), so these are **verified**
-      deepfakes whose provenance is entirely this project's, with no licence question at
-      all. **The detector scores them 0.647–0.866 against 0.638–0.861 for genuine
-      photographs. The ranges overlap completely and no threshold exists.**
-
-      **What is left is the finding, and it is worth more than the module would have
-      been.** A 92.12%-accurate detector, on 56,001 of the vendor's own samples, cannot
-      tell this repository's genuine photographs from face swaps this repository
-      manufactured. `bus.jpg` — **a photograph containing no face at all** — scores **0.638**,
-      inside both ranges, so whatever the model responds to here it is not face
-      manipulation. In a forensic tool the failure mode of a detector that flags everything
-      is **false accusations of manipulation against real evidence**, which is the precise
-      harm the rest of this checklist exists to prevent.
-      `tests/probe_deepfake_detector.py` reproduces all of it from committed fixtures
-      alone — no downloads, no committed derivatives — and exits 0.
-      **And one was then found, by searching instead of guessing — which is the thing
-      that was blocked before.** `api.github.com` 404s per-model here, which had been
-      recorded as "GitHub is unreachable" and inferred as "no other detector can be
-      found". But **`/api/models?search=` works**: only the per-model endpoint is
-      authenticated, not the search endpoint. Every earlier phase of this work guessed
-      repository names and concluded the thing did not exist; it was a wrong URL.
-
-      - **`buildborderless/CommunityForensics-DeepfakeDet-ViT` — MIT**, ViT-Small/384,
-        trained on **2.7M samples across 4,803 generators** (Community Forensics, CVPR
-        2025), 34k downloads. `onnx/model.onnx`, 87,442,080 B, digest
-        `a42c7d740fbb345ba9a26d469b22f301d73089ce3c6da993877ed2b6965a8ba1`, loads on this
-        project's `onnxruntime` 1.20.1 despite the card recommending >= 1.27.
-      - **`OwensLab/CommunityForensics` — CC BY 4.0**, the authors' own dataset.
-        **`OwensLab/CommunityForensics-Eval` — CC BY-NC-SA-4.0**, sharded into 413 files
-        of ~14 MB, each carrying `label`, `model_name` and `architecture`.
-      - Three alternative detectors (`dima806`, two `KoreaPeter` EfficientNet-GCViT)
-        have **no ONNX export** and are unusable here without PyTorch.
-
-      **Measured, and it is a different model from the one that failed.** Note
-      `num_labels: 1`: the output is a **sigmoid, not a softmax over two classes**, so
-      reading the logit as a probability would be wrong by construction. Its own
-      `preprocessor_config.json` is a *third* set of constants — CLIP normalisation,
-      `shortest_edge` 440, centre-crop 384 — where the previous model wanted 0.5/0.5 and
-      the third wanted ImageNet. It also carries an explicit instruction **not to squash**,
-      because that distorts facial geometry and destroys accuracy.
-
-      | Population | P(generated) | flagged |
-      |---|---|---|
-      | **genuine** (same shards, real faces) | 0.0000–0.0388 | **0/13** |
-      | **generated**, DFGAN | 0.9574–1.0000 | **18/18** |
-      | **generated**, kvikontent Midjourney v6 | 0.9987–1.0000 | **6/6** |
-      | **generated**, FLUX-schnell | 0.0166–1.0000 | **5/6** |
-
-      **29 of 30 generated flagged, 0 of 13 genuine flagged — against 8/8 and 3/3 for the
-      model it replaces, on the same positives.** Where the previous detector put the two
-      populations on top of each other (0.638–0.861 genuine against 0.647–0.866
-      manipulated), this one puts genuine at 0.000–0.039 and generated at 0.73–1.00.
-
-      **The single miss was diagnosed rather than dropped, and it is not a threshold
-      problem.** One FLUX-schnell output scores **0.0166**, inside the genuine range, and
-      it stays there under both a face crop and a whole-frame crop — so it is a real miss
-      on that image, not a pipeline artefact. **Excluding it would leave a clean gap and
-      make this item look solved; it is left in**, because dropping one sample after seeing
-      its score is the exact selection error this checklist has rejected four times
-      already. For the same reason **the weakness is stated on the face of the result**
-      rather than averaged away:
-
-      | | observed | 95% CI (Wilson) |
-      |---|---|---|
-      | recall on generated | 29/30 | **[0.833, 0.994]** |
-      | false positives on genuine | 0/13 | **[0.000, 0.228]** |
-
-      **n=13 genuine cannot show a 0.5 threshold is safe, only that it was safe on 13
-      images**, and three generators out of 4,803 is not the breadth the paper claims.
-      **Where P9.B3 now stands.** A genuinely usable detector **has been found and
-      measured** — 29/30 generated against 0/13 genuine, where the previously-evaluated
-      model managed 8/8 and 3/3. **The item remains unticked**, and the reason is now
-      specific and narrow rather than general: the honest fixture for it needs **real
-      generated images**, and every such set reachable here is either
-      **CC BY-NC-SA-4.0**, which this project's gate refuses on principle, or requires a
-      multi-GB download for a handful of samples. `OwensLab/CommunityForensics` (CC BY
-      4.0) was usable as a *read-only reference* and is where the numbers above come from,
-      but nothing from it is committed, because shipping it means committing generated
-      faces.
-      **What would unblock it, precisely:** a small set of generated images under a
-      licence that permits redistribution — which is a **sourcing** task, like P9.B4's, and
-      not a modelling one. The model is chosen and pinned; the front end is written; the
-      threshold is the vendor's own 0.5 argmax rather than a tuned one. What is missing is
-      fixtures, and only fixtures.
+      **Qualified rather than ticked, for the honest residual:** a **17% miss rate** is not
+      a detector a forensic report should rest on, and **both permitted generators are
+      latent-diffusion models**, so **GANs and pixel-diffusion models are untested** — the
+      only ones available are CC BY-NC-SA and MIT, both excluded. The unrestricted read-only
+      sweep spanning DFGAN, FLUX-schnell and Midjourney measured **29/30**, and that breadth
+      is exactly what the licence constraint costs. **A front end is still a prerequisite**:
+      the vendor's own recipe loses the face off a tall portrait, so a portrait-aware crop
+      must land before this is an analyzer. **What would finish it:** either a permissive
+      licence on a GAN or pixel-diffusion generator, or a portrait-aware front end plus
+      fixtures from a third architecture.
 - [ ] P9.B4 Gunshot audio — **the technique was built and measured; the evidence does not
       exist.** Re-researched 2026-10-08, fourth attempt, and this time the blocker was
       measured rather than argued.
@@ -1721,9 +1660,12 @@ that might not work — the same argument as the CI security scanners.
       `speaker-compare` (ECAPA-TDNN, Apache-2.0). **Both record that their measured
       ranges overlap** rather than tuning a threshold until they did — T9.1 and T9.3
       were the checklist items asking for separation, and the honest answers are that
-      it does not hold on this evidence. The remaining items are P9.B1/T9.2 (NBIS is
-      P9.B3 (deepfake) and P9.B4 (gunshot), plus
-      P9.B5 is now built — its blocker was a wrong search, not a missing permission.
+      it does not hold on this evidence. **P9.B3 is now qualified** — a working detector
+      (CommunityForensics ViT, 20/24 generated flagged against 0/24 genuine) with
+      permissively-licensed fixtures, held back from a full tick only by a 17% miss rate
+      and single-architecture coverage. The remaining unticked items are P9.B1/T9.2 and
+      P9.B4 (gunshot), plus P9.B5 built — its blocker was a wrong search, not a missing
+      permission.
       **The recurring lesson from this phase is recorded rather than buried: a recorded
       blocker is a claim, and a claim needs the same evidence as anything else here.**
       Two items were blocked on "no permissively-licensed fixtures" when the real
@@ -2118,20 +2060,20 @@ that might not work — the same argument as the CI security scanners.
            the genuine-pair overlap (0.035-0.526). **A synthetic ridge field produces
            minutiae incidentally rather than structurally**, so no matcher can be
            evaluated on it. Reproducible in `tests/probe_fingerprint_fixtures.py`.
-         - **P9.B3 (deepfake).** **Not blocked on licence at all** — the earlier note
-           said every detector was unstated or gated, and that is false: an Apache-2.0,
-           ungated ViT detector with a vendor-reported 92.12% accuracy was downloaded
-           and run here. It flags **8 of 8 genuine photographs as deepfakes**, and that
-           survives re-testing — including across the **normalisation axis, which the
-           earlier five configurations never varied** (they were all geometric, and the
-           model wants 0.5/0.5 rather than ImageNet). **Measured as unusable.**
-           Both of the note's *other* explanations were then falsified: modern
-           permissively-licensed colour photographs are flagged **4/5**, so training-
-           distribution proximity is not the variable; and a **verified** deepfake can be
-           manufactured from images this repository already owns (YuNet landmarks +
-           `seamlessClone`, pixel delta 0.66–3.09), so the "untestable positive
-           direction" is a sourcing inconvenience, not a wall. Genuine 0.638–0.861
-           against manipulated 0.647–0.866: **the ranges overlap completely.**
+         - **P9.B3 (deepfake) — now qualified, and this one needed three corrections.**
+           (a) The licence claim was false: an Apache-2.0, ungated ViT detector was
+           downloadable and run here. (b) Its 8/8-genuine-photos result survives — but
+           **not for the recorded reason**: the five configurations tried were all
+           *geometric*, and the untried axis was **normalisation** (the model wants
+           0.5/0.5, not ImageNet). Still 8/8 across every axis. (c) **The item was then
+           solved, because the blocker was a wrong URL**: `/api/models/<id>` 404s here but
+           **`/api/models?search=` works**, so "GitHub is unreachable" never justified
+           "no other detector exists". The model that searching found measures
+           **20/24 generated against 0/24 genuine**. Its licence problem was then solved
+           the same way — **a generated image's licence is its generator's**, and exactly
+           two of the 22 generators in the eval set are Apache 2.0.
+           **Two "no permissively-licensed X" blockers in this phase were both a wrong
+           search rather than a missing permission.**
          - **P9.B4 (gunshot).** YAMNet **has** the class (421 of 521). The blocker is
            that a keyword search for gunfire returns mostly things that *mention* it —
            roughly 2 genuine clips from 35 permissively-licensed hits, one of which is a

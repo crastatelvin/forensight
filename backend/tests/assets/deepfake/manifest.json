@@ -2,12 +2,16 @@
   "dataset": "OwensLab/CommunityForensics",
   "dataset_licence": "cc-by-4.0",
   "dataset_licence_note": "Dataset is CC BY 4.0 qualified 'for research purposes only'. That qualification is NOT relied upon: each committed image is selected on the per-generator licence recorded in the dataset's data/metadata/eval_set_metadata.csv, and only Apache-2.0 generators are used.",
-  "shard": "pe0.parquet",
+  "shards": [
+    "pe0.parquet",
+    "pe4.parquet"
+  ],
   "count": {
-    "generated": 8,
-    "real": 16,
+    "generated": 24,
+    "real": 24,
     "by_generator": {
-      "FLUX-schnell": 8
+      "FLUX-schnell": 12,
+      "kandinsky_2_2": 12
     }
   },
   "fixtures": [
@@ -21,6 +25,7 @@
         512,
         512
       ],
+      "shard": "pe0.parquet",
       "sha256": "51e9f945bd8b8e7a8f56586f7941c917a098df7d935f58d8057324a0eba31eb0",
       "bytes": 111527
     },
@@ -34,6 +39,7 @@
         512,
         512
       ],
+      "shard": "pe0.parquet",
       "sha256": "9bea657455ec058add0a1268ec1282a85c8d3cb421939bc6aab2d1aaa0230e52",
       "bytes": 89370
     },
@@ -47,6 +53,7 @@
         512,
         512
       ],
+      "shard": "pe0.parquet",
       "sha256": "32cf7431abc5d3409b6d9ab995ca17e0a574e1f1711bf7a7b98078f97c9f64b7",
       "bytes": 89804
     },
@@ -60,6 +67,7 @@
         512,
         512
       ],
+      "shard": "pe0.parquet",
       "sha256": "72ec8c8d8ca6e9b250fa4d50d3fd6812a2d8eea8b321b17ca1bfa98e6d335a61",
       "bytes": 53237
     },
@@ -73,6 +81,7 @@
         512,
         512
       ],
+      "shard": "pe0.parquet",
       "sha256": "b3b7736809521cc0d3c98251d658d70362e9a8e3c2ea916da3b47ebc49c3b96e",
       "bytes": 87454
     },
@@ -86,6 +95,7 @@
         512,
         512
       ],
+      "shard": "pe0.parquet",
       "sha256": "b81fe8d1e609e732ca9a42926e1def347d942d98f17db38c0fb0237258c4d649",
       "bytes": 99395
     },
@@ -99,6 +109,7 @@
         512,
         512
       ],
+      "shard": "pe0.parquet",
       "sha256": "34175e58efe4438c646270cf1d74464589092f3adc500dae687eb5182bef2f25",
       "bytes": 111604
     },
@@ -112,8 +123,65 @@
         512,
         512
       ],
+      "shard": "pe0.parquet",
       "sha256": "945965a38eff42b9c31c7114e392560cabaa84c529fb888185ffa127d7308129",
       "bytes": 74457
+    },
+    {
+      "file": "gen_FLUX-schnell_08.jpg",
+      "label": "generated",
+      "generator": "FLUX-schnell",
+      "generator_licence": "Apache 2.0",
+      "real_source": "LAION",
+      "resolution": [
+        512,
+        512
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "3cf53e275caedeb9ac7d901f8840ff5561f58d98ad64aa3e72417b21084b69d7",
+      "bytes": 70969
+    },
+    {
+      "file": "gen_FLUX-schnell_09.jpg",
+      "label": "generated",
+      "generator": "FLUX-schnell",
+      "generator_licence": "Apache 2.0",
+      "real_source": "LAION",
+      "resolution": [
+        512,
+        512
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "05812d6f72b5d0aadb4722c78547b32e7d67f517ab72361b9099fe03e290f759",
+      "bytes": 105831
+    },
+    {
+      "file": "gen_FLUX-schnell_10.jpg",
+      "label": "generated",
+      "generator": "FLUX-schnell",
+      "generator_licence": "Apache 2.0",
+      "real_source": "LAION",
+      "resolution": [
+        512,
+        512
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "8a27cab849c0ee337dc5ba258247bdf31172830ee3adc6d4f9a620f14fecc8f5",
+      "bytes": 93416
+    },
+    {
+      "file": "gen_FLUX-schnell_11.jpg",
+      "label": "generated",
+      "generator": "FLUX-schnell",
+      "generator_licence": "Apache 2.0",
+      "real_source": "LAION",
+      "resolution": [
+        512,
+        512
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "34b141827ef78ed60e9c06515f32a49d3f09c4bb629aaba11d4b6e2a8efef8c7",
+      "bytes": 81852
     },
     {
       "file": "real_00.jpg",
@@ -125,6 +193,7 @@
         640,
         480
       ],
+      "shard": "pe0.parquet",
       "sha256": "9b06b3d7ba38e629c033a40d29d87b6449d2a31ffa7fe2372b848fd714c5a41b",
       "bytes": 51378
     },
@@ -138,6 +207,7 @@
         480,
         640
       ],
+      "shard": "pe0.parquet",
       "sha256": "ed76ee89a3ebf8fe58104dad9ac21ed6016d0056dd7bdd979f79f5a8c9de2af2",
       "bytes": 97925
     },
@@ -151,6 +221,7 @@
         640,
         427
       ],
+      "shard": "pe0.parquet",
       "sha256": "0b0da06d9f7ab9d44c776dba3250b5223433d0a8ad9fb5c92489ece8e5d2a682",
       "bytes": 101096
     },
@@ -164,6 +235,7 @@
         640,
         496
       ],
+      "shard": "pe0.parquet",
       "sha256": "da8ddb83371f636c5c89dc723fa59d89c310411f12380ba69ebcb1a3039cf9f6",
       "bytes": 130177
     },
@@ -177,6 +249,7 @@
         426,
         640
       ],
+      "shard": "pe0.parquet",
       "sha256": "23248c471f77381ccad678e7cafbf87d9d328005459e8cc20f923df9bc86bc4b",
       "bytes": 142953
     },
@@ -190,6 +263,7 @@
         500,
         500
       ],
+      "shard": "pe0.parquet",
       "sha256": "44396ee21bed2453f77adbb17930f56af148e8d797ed7a91b36d546fad0c6454",
       "bytes": 79670
     },
@@ -203,6 +277,7 @@
         640,
         360
       ],
+      "shard": "pe0.parquet",
       "sha256": "29e5f5149d9dc897104ba717d1bedbf4f943b94851a4f71c6569017bbaea18e2",
       "bytes": 79731
     },
@@ -216,6 +291,7 @@
         640,
         427
       ],
+      "shard": "pe0.parquet",
       "sha256": "9ad252d63b1761b95a74b0ec3d086e58aaecbc36f6d6b19537a16021cbbda36b",
       "bytes": 98176
     },
@@ -229,6 +305,7 @@
         640,
         427
       ],
+      "shard": "pe0.parquet",
       "sha256": "ce48c6df8ca7791cd0aaf7eedea767fcb63db48c71186027bc7dbe7608796ea0",
       "bytes": 99421
     },
@@ -242,6 +319,7 @@
         500,
         333
       ],
+      "shard": "pe0.parquet",
       "sha256": "61a7b4d8a5e4d1f32c4ccaad1918a28028fbacc0531e9f01ed2080a7f648d16e",
       "bytes": 31600
     },
@@ -255,6 +333,7 @@
         500,
         333
       ],
+      "shard": "pe0.parquet",
       "sha256": "81c465f23dc6b03d155f87f479da72424461e3d437693f97f7ff7b2dbf055989",
       "bytes": 36395
     },
@@ -268,6 +347,7 @@
         640,
         427
       ],
+      "shard": "pe0.parquet",
       "sha256": "873841db9765e852625f0a36033427e840d0977e41117dad70d98b9f0f9ed7e1",
       "bytes": 57861
     },
@@ -281,6 +361,7 @@
         640,
         327
       ],
+      "shard": "pe0.parquet",
       "sha256": "4ef9af09d6a141ef9bc59a8718d76e5e3585d09b894ab1e071d80f095f9843eb",
       "bytes": 61055
     },
@@ -294,6 +375,7 @@
         640,
         457
       ],
+      "shard": "pe0.parquet",
       "sha256": "08d16d319326ea632c18af9d75bf34251531c95d7b2db541f119367e0d815cea",
       "bytes": 93443
     },
@@ -307,6 +389,7 @@
         640,
         640
       ],
+      "shard": "pe0.parquet",
       "sha256": "180812c119eb3f4a79743025bc211e8fd32c5629e94f6344a6a4d8190338668c",
       "bytes": 73394
     },
@@ -320,8 +403,289 @@
         600,
         480
       ],
+      "shard": "pe0.parquet",
       "sha256": "a855eeba360c559add5c0236edf0ef37f890a676e4e18b375afb7ff8864cfb10",
       "bytes": 76824
+    },
+    {
+      "file": "real_16.jpg",
+      "label": "real",
+      "generator": null,
+      "generator_licence": null,
+      "real_source": "LAION",
+      "resolution": [
+        640,
+        427
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "6eae9abe22792b900cad1e6670c020a23d6f0efd4f236441184812bef92acaa3",
+      "bytes": 49960
+    },
+    {
+      "file": "real_17.jpg",
+      "label": "real",
+      "generator": null,
+      "generator_licence": null,
+      "real_source": "LAION",
+      "resolution": [
+        426,
+        640
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "a48fdaaa6db603de7903d04e85c7dda75dc0b87e079e63f2d406769281105817",
+      "bytes": 73882
+    },
+    {
+      "file": "real_18.jpg",
+      "label": "real",
+      "generator": null,
+      "generator_licence": null,
+      "real_source": "LAION",
+      "resolution": [
+        640,
+        480
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "bc10f668fc79e9e8340b01c994c7aba17fe193fa6002e88f5d19d7cc5e3450b6",
+      "bytes": 45053
+    },
+    {
+      "file": "real_19.jpg",
+      "label": "real",
+      "generator": null,
+      "generator_licence": null,
+      "real_source": "LAION",
+      "resolution": [
+        640,
+        480
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "280ee44fc262f75cc0a5fa72b2224ec8d851b1f87cfc5c9d1307685e74cd6cd6",
+      "bytes": 70985
+    },
+    {
+      "file": "real_20.jpg",
+      "label": "real",
+      "generator": null,
+      "generator_licence": null,
+      "real_source": "LAION",
+      "resolution": [
+        500,
+        332
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "abec4180081d029c3c46fe2616c034940ee9e4bdcb5485f0c02379fab00d4d9b",
+      "bytes": 91585
+    },
+    {
+      "file": "real_21.jpg",
+      "label": "real",
+      "generator": null,
+      "generator_licence": null,
+      "real_source": "LAION",
+      "resolution": [
+        500,
+        332
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "6e9cb701951f0a03efa2ca4ff188fbad0cc8ff8bff9546f00c7699c4c47f6127",
+      "bytes": 31698
+    },
+    {
+      "file": "real_22.jpg",
+      "label": "real",
+      "generator": null,
+      "generator_licence": null,
+      "real_source": "LAION",
+      "resolution": [
+        500,
+        375
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "c49b9b01ef1fbabe8f2505b977006c631b8e587004cde6395e2b297e827dca0b",
+      "bytes": 84100
+    },
+    {
+      "file": "real_23.jpg",
+      "label": "real",
+      "generator": null,
+      "generator_licence": null,
+      "real_source": "LAION",
+      "resolution": [
+        640,
+        427
+      ],
+      "shard": "pe0.parquet",
+      "sha256": "0f1f3182bb5c670a5305cb52af174ae810e317e0cb59dc4ca892d9bf8b99a4e6",
+      "bytes": 122365
+    },
+    {
+      "file": "gen_kandinsky_2_2_00.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "5e5f716240835210d7be24f8ba687a1dbf06ec476dd7631afd93384c1e9e87a1",
+      "bytes": 264261
+    },
+    {
+      "file": "gen_kandinsky_2_2_01.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "20ed62f5b3244c987134ab3c39d0723cfafe602798afe22c4adc90da401236c7",
+      "bytes": 98656
+    },
+    {
+      "file": "gen_kandinsky_2_2_02.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "cc0f5b85c77b469f3d86867708132b0d6ebe979f3fc26a654f53ae7749ebcb4e",
+      "bytes": 112901
+    },
+    {
+      "file": "gen_kandinsky_2_2_03.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "a7369a910245879db3ff80e410cbc6142dfcaf848a0453b30cd857dd003a55ae",
+      "bytes": 205531
+    },
+    {
+      "file": "gen_kandinsky_2_2_04.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "c678fe614e5ae2116280a42fd55b455bedc04c70dc95a8abbcf82b0a3347e3d3",
+      "bytes": 138892
+    },
+    {
+      "file": "gen_kandinsky_2_2_05.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "6134c42a0823bddee2e8859b09e3f14723fe926ef8232b5d9c60753883f2d53a",
+      "bytes": 223275
+    },
+    {
+      "file": "gen_kandinsky_2_2_06.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "b5bc7c571c04e0978da8076e3773ffe20b9bb608c47c40d6c1906b8157d1b966",
+      "bytes": 207254
+    },
+    {
+      "file": "gen_kandinsky_2_2_07.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "833f21c701f6192c6928e44653aaf89ff68df88fb2c408df5bef3606c2f4d950",
+      "bytes": 302251
+    },
+    {
+      "file": "gen_kandinsky_2_2_08.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "720dc3266526e8b48e96e793f8ad43b869ac586ea4ee44a6748dd89a9fa4e25f",
+      "bytes": 240075
+    },
+    {
+      "file": "gen_kandinsky_2_2_09.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "d7f3300d7f633663a3afb5ed17f1d7907374d06d95b08a32c780de9f80ec7935",
+      "bytes": 250717
+    },
+    {
+      "file": "gen_kandinsky_2_2_10.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "dd9e2c7fe8ffe2d9e8bd17a6b5c7c5650a9b7652f8306d8065984c0ccebc2531",
+      "bytes": 165830
+    },
+    {
+      "file": "gen_kandinsky_2_2_11.jpg",
+      "label": "generated",
+      "generator": "kandinsky_2_2",
+      "generator_licence": "apache 2.0",
+      "real_source": "RAISE",
+      "resolution": [
+        768,
+        768
+      ],
+      "shard": "pe4.parquet",
+      "sha256": "10652412a04c2cb5e9682f7a7906ffa4e56575ccfed2100958acc8624e04422e",
+      "bytes": 232549
     }
   ]
 }

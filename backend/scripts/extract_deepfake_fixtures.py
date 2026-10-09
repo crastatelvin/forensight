@@ -58,8 +58,11 @@ DATASET_LICENCE_NOTE = (
     "used."
 )
 
-PER_MODEL = 8  # generated images per permitted generator
-PER_REAL = 16  # genuine images for the negative side
+#: Generated images per permitted generator. 8 rather than fewer so that a single missed
+#: image does not move the measured recall by a quarter -- the first fixture set measured
+#: 6/8, and two misses in eight is not a rate worth quoting.
+PER_MODEL = 12
+PER_REAL = 24  # genuine images for the negative side
 
 
 def fetch_metadata() -> list[dict[str, str]]:
@@ -90,70 +93,76 @@ def verify_licences(rows: list[dict[str, str]]) -> None:
     print(f"  licence check passed for {sorted(PERMITTED_MODELS)}")
 
 
-def extract(shard: pathlib.Path, out_dir: pathlib.Path) -> dict[str, list[dict[str, object]]]:
-    """Pull permitted generators' outputs and the real images, as small JPEGs."""
+def extract(
+    shards: list[pathlib.Path], out_dir: pathlib.Path
+) -> dict[str, list[dict[str, object]]]:
+    """Pull permitted generators' outputs and the real images, as small JPEGs.
+
+    **Takes several shards because the permitted generators are not co-located.** Of the
+    six PublicEval shards, FLUX-schnell is in shard 0 and kandinsky_2_2 in shard 4; the
+    other four hold only commercial-ToS, OpenRAIL++, MIT or NC generators. Quotas are
+    therefore global across all shards, not per shard, or a second shard would silently
+    reset them and the set would not be the size it claims to be.
+    """
     out_dir.mkdir(parents=True, exist_ok=True)
     by_model: dict[str, int] = defaultdict(int)
     real_count = 0
     manifest: list[dict[str, object]] = []
 
-    handle = pq.ParquetFile(str(shard))
     columns = ["image_name", "image_data", "label", "model_name", "real_source", "resolution"]
-    for batch in handle.iter_batches(batch_size=256, columns=columns):
-        for row in batch.to_pylist():
-            want_generated = row["label"] == 1 and row["model_name"] in PERMITTED_MODELS
-            if not want_generated and not (row["label"] == 0 and real_count < PER_REAL):
-                continue
-            if not want_generated and by_model and real_count >= PER_REAL:
-                continue
-            try:
-                image = Image.open(io.BytesIO(row["image_data"]))
-                image.load()
-            except Exception:  # noqa: BLE001, S112 - a corrupt row is skipped, not fatal
-                continue
-
-            if want_generated:
-                if by_model[row["model_name"]] >= PER_MODEL:
-                    continue
-                # A face crop is what the model actually consumes, but commit the whole
-                # image: cropping at fixture time would bake a preprocessing choice into
-                # the evidence and make a front-end change look like a fixture change.
-                image = image.convert("RGB")
-                stem = row["model_name"].replace("/", "_")
-                name = f"gen_{stem}_{by_model[row['model_name']]:02d}.jpg"
-                by_model[row["model_name"]] += 1
-                provenance = {
-                    "file": name,
-                    "label": "generated",
-                    "generator": row["model_name"],
-                    "generator_licence": PERMITTED_MODELS[row["model_name"]],
-                    "real_source": row["real_source"],
-                    "resolution": row["resolution"],
-                }
-            else:
-                image = image.convert("RGB")
-                name = f"real_{real_count:02d}.jpg"
-                real_count += 1
-                provenance = {
-                    "file": name,
-                    "label": "real",
-                    "generator": None,
-                    "generator_licence": None,
-                    "real_source": row["real_source"],
-                    "resolution": row["resolution"],
-                }
-
-            image.save(out_dir / name, "JPEG", quality=95, optimize=True)
-            provenance["sha256"] = hashlib.sha256((out_dir / name).read_bytes()).hexdigest()
-            provenance["bytes"] = (out_dir / name).stat().st_size
-            manifest.append(provenance)
-
-        if (
-            real_count >= PER_REAL
-            and all(v >= PER_MODEL for v in by_model.values())
-            and all(m in by_model for m in PERMITTED_MODELS)
+    for shard in shards:
+        if real_count >= PER_REAL and all(
+            by_model.get(m, 0) >= PER_MODEL for m in PERMITTED_MODELS
         ):
             break
+        handle = pq.ParquetFile(str(shard))
+        for batch in handle.iter_batches(batch_size=256, columns=columns):
+            for row in batch.to_pylist():
+                want_generated = row["label"] == 1 and row["model_name"] in PERMITTED_MODELS
+                if not want_generated and not (row["label"] == 0 and real_count < PER_REAL):
+                    continue
+                try:
+                    image = Image.open(io.BytesIO(row["image_data"]))
+                    image.load()
+                except Exception:  # noqa: BLE001, S112 - a corrupt row is skipped, not fatal
+                    continue
+
+                image = image.convert("RGB")
+                if want_generated:
+                    if by_model[row["model_name"]] >= PER_MODEL:
+                        continue
+                    # A face crop is what the model consumes, but commit the whole image:
+                    # cropping at fixture time would bake a preprocessing choice into the
+                    # evidence and make a front-end change look like a fixture change.
+                    stem = row["model_name"].replace("/", "_")
+                    name = f"gen_{stem}_{by_model[row['model_name']]:02d}.jpg"
+                    by_model[row["model_name"]] += 1
+                    provenance = {
+                        "file": name,
+                        "label": "generated",
+                        "generator": row["model_name"],
+                        "generator_licence": PERMITTED_MODELS[row["model_name"]],
+                        "real_source": row["real_source"],
+                        "resolution": row["resolution"],
+                        "shard": shard.name,
+                    }
+                else:
+                    name = f"real_{real_count:02d}.jpg"
+                    real_count += 1
+                    provenance = {
+                        "file": name,
+                        "label": "real",
+                        "generator": None,
+                        "generator_licence": None,
+                        "real_source": row["real_source"],
+                        "resolution": row["resolution"],
+                        "shard": shard.name,
+                    }
+
+                image.save(out_dir / name, "JPEG", quality=95, optimize=True)
+                provenance["sha256"] = hashlib.sha256((out_dir / name).read_bytes()).hexdigest()
+                provenance["bytes"] = (out_dir / name).stat().st_size
+                manifest.append(provenance)
 
     return {
         "manifest": manifest,
@@ -169,22 +178,36 @@ def extract(shard: pathlib.Path, out_dir: pathlib.Path) -> dict[str, list[dict[s
 
 def main() -> int:
     if len(sys.argv) < 3:
-        print("usage: extract_deepfake_fixtures.py <shard.parquet> <out_dir>", file=sys.stderr)
+        print(
+            "usage: extract_deepfake_fixtures.py <out_dir> <shard.parquet> [shard...]",
+            file=sys.stderr,
+        )
         return 2
-    shard, out_dir = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-    if not shard.is_file():
-        print(f"shard not found: {shard}", file=sys.stderr)
+    out_dir = pathlib.Path(sys.argv[1])
+    shards = [pathlib.Path(a) for a in sys.argv[2:]]
+    missing = [s for s in shards if not s.is_file()]
+    if missing:
+        print(f"shard not found: {missing[0]}", file=sys.stderr)
         return 1
 
     print("  verifying per-generator licences against the dataset's own metadata...")
     verify_licences(fetch_metadata())
 
-    result = extract(shard, out_dir)
+    result = extract(shards, out_dir)
     counts = result["counts"]
     print(
         f"  extracted {counts['generated']} generated ({counts['by_generator']}) "
         f"and {counts['real']} real -> {out_dir}"
     )
+    absent = [m for m in PERMITTED_MODELS if not counts["by_generator"].get(m)]
+    if absent:
+        # Not fatal: FLUX-schnell and kandinsky_2_2 live in different PublicEval shards, so
+        # a caller may hold only one. Said plainly, because a single-generator set is a
+        # materially weaker claim than a two-generator one and should not be silent.
+        print(
+            f"  NOTE: no images for {absent} -- those generators are in a different "
+            f"PublicEval shard than the one supplied"
+        )
     if counts["generated"] == 0 or counts["real"] == 0:
         print("  incomplete: need both populations", file=sys.stderr)
         return 1
@@ -194,7 +217,7 @@ def main() -> int:
                 "dataset": DATASET,
                 "dataset_licence": DATASET_LICENCE,
                 "dataset_licence_note": DATASET_LICENCE_NOTE,
-                "shard": shard.name,
+                "shards": [s.name for s in shards],
                 "count": result["counts"],
                 "fixtures": result["manifest"],
             },
