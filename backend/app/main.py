@@ -35,7 +35,12 @@ from app.domain.router import router as cases_router
 from app.drain import begin_draining, is_draining
 from app.drain import reset as drain_reset
 from app.health import gather_readiness
-from app.observability import MetricsMiddleware, configure_logging, metrics_router
+from app.observability import (
+    MetricsMiddleware,
+    configure_logging,
+    metrics_router,
+    wal_archiver_poller,
+)
 from app.reports.router import router as reports_router
 from app.tracing_router import install as tracing_router_install
 from app.tracing_router import router as tracing_router
@@ -158,7 +163,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.settings.app_name,
         app.state.settings.environment,
     )
-    yield
+    # Publish WAL-archiver state for point-in-time recovery (P10.B2). Started here rather
+    # than at import so tests that build the app do not spawn a poller per fixture, and
+    # cancelled on the way out so a shutting-down process does not keep a session open.
+    archiver_task = asyncio.create_task(wal_archiver_poller())
+    try:
+        yield
+    finally:
+        archiver_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await archiver_task
     # Shutdown ordering, and it is the ordering that matters. Readiness is dropped
     # FIRST, so a load balancer stops routing here before anything is torn down;
     # then the grace period lets in-flight work finish; only then are connections

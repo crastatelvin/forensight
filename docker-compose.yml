@@ -27,6 +27,41 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+      # WAL archiving for point-in-time recovery (P10.B2). See
+      # infra/postgres/conf.d/10-wal-archiving.conf for why a logical pg_dump cannot
+      # answer "restore to just before this write", and scripts/pitr.py for the
+      # recovery procedure. A SEPARATE volume from pgdata on purpose: an archive that
+      # lives inside the data directory does not survive the loss of that directory.
+      - pgwal:/var/lib/postgresql/wal
+      # One-shot-per-start ownership fix for the archive directory, then hands over to the
+      # image's own entrypoint. NOT an initdb.d script: those run only when the data
+      # directory is empty, so they are skipped on every start after the first and the
+      # named volume keeps root ownership. Verified by hitting it.
+      - ./infra/postgres/wal-entrypoint.sh:/usr/local/bin/wal-entrypoint.sh:ro
+    entrypoint: ["/usr/local/bin/wal-entrypoint.sh"]
+    # WAL archiving for point-in-time recovery (P10.B2). Passed as -c flags rather than
+    # an include_dir file because this image's postgresql.conf has `include_dir`
+    # COMMENTED OUT (verified: `grep include_dir` on the live container) and lives inside
+    # the pgdata volume, so a mounted conf.d would be ignored in silence. -c applies on
+    # every start; an initdb.d script would apply only on first initialisation of an empty
+    # data directory, which means a config change would not take effect for an operator
+    # who already has data. The reasoning behind each value is in
+    # infra/postgres/conf.d/10-wal-archiving.conf, which documents the settings this
+    # command must be kept in step with.
+    command:
+      - postgres
+      - -c
+      - archive_mode=on
+      - -c
+      - archive_command=test ! -f /var/lib/postgresql/wal/%f && cp %p /var/lib/postgresql/wal/%f
+      - -c
+      - archive_timeout=300
+      - -c
+      - max_wal_size=2GB
+      - -c
+      - min_wal_size=128MB
+      - -c
+      - wal_keep_size=512MB
     ports:
       - "5432:5432"
     healthcheck:
@@ -327,6 +362,8 @@ volumes:
   # Report-signing keys, kept out of the image. See the api service above.
   signingkeys:
   pgdata:
+  # Write-ahead-log archive for point-in-time recovery (P10.B2).
+  pgwal:
   redisdata:
   miniodata:
   ollamadata:

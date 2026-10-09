@@ -168,8 +168,14 @@ restore instead**: every digest the manifest records must be readable out of the
 restored database. A stronger guarantee than any exit code, because it is a statement
 about the data.
 
-Not covered: MinIO-side replication and point-in-time recovery. `pg_dump` is a logical
-backup; PITR needs WAL archiving configured on the server.
+**Point-in-time recovery is now available** (`scripts/pitr.py`, procedure in
+`docs/runbook.md`): WAL archiving is configured and alerted on, base backups are taken with
+`pg_basebackup`, and recovery replays the archive to a named restore point and stops there.
+Verified end to end on this deployment — see CHECKLIST.md under P10.B2.
+
+Still not covered: **MinIO-side replication**, and **off-host replication of the WAL
+archive**. The archive is a separate volume from `pgdata`, but a single host's loss takes
+both.
 
 ## Shutdown and draining
 

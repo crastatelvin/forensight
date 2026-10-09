@@ -1714,40 +1714,124 @@ that might not work — the same argument as the CI security scanners.
       egress allowlist added in P10.B4 would by default refuse. For an air-gapped
       deployment it is the wrong tool, and self-hosted error tracking is the honest
       answer if it is ever wanted.
-- [x] P10.B2 Backups — pg_dump + cryptographic verification + verified restore.
-      `scripts/backup.py` with `create` / `verify` / `restore`. What is finished and
-      tested: the dump, the manifest, and **cryptographic verification**.
-      Evidence is content-addressed (the object key *is* the SHA-256, see
-      `app/domain/storage.py`), so verification is a digest comparison rather than a
-      structural one. For every row the database records, `verify` hashes the backed-up
-      copy and compares it to the recorded digest — a truncated object, a partial
-      write and a silently-substituted file all fail, with nothing to interpret.
-      Digests come from the *database*, not the backup's own inventory, so a backup
-      that is internally consistent but missing evidence is caught too.
-      `create` refuses to write evidence whose bytes disagree with its recorded
-      digest, so a corrupt store fails at backup time — where it is diagnosable —
-      rather than producing an archive that fails its own verification later, in a
-      directory named by a timestamp.
-      `restore` writes to a named target and has **no in-place path and no
-      `--force`**: a restore tool that can overwrite the system it protects will
-      eventually be aimed at it by someone in a hurry.
-      **Eight tests green.** They cover a missing object, a same-length corrupted
-      object (the case a size check misses), a missing database dump, refusal to
-      restore an unverified backup, refusal to back up mismatched evidence, and
-      chunked hashing of a multi-megabyte file. Every one asserts the *failure
-      message names the evidence record*, because "the backup is incomplete" is not
-      actionable at 3am.
-      **Also found, and it changes the design: `pg_restore`'s exit code cannot be
-      trusted.** A PG18 `pg_dump` client against a PG16 server emits
-      `SET transaction_timeout = 0`, which PG16 does not know — so `pg_restore`
-      exits non-zero having *applied the archive*. A restore tool that treats that
-      exit code as the answer to "did the restore work" fails on every archive it just
-      wrote. So the archive is applied and then **verified**: every digest the manifest
-      records must be readable out of the restored database. That is a stronger
-      guarantee than any exit code, because it is a statement about the data rather
-      than about the tool's mood. That verification caught a silent restore failure on
-      its first run, which is the argument for building it that way — see T10.3.
-      Still to do: MinIO-side replication, and PITR documentation.
+- [~] P10.B2 Backups — **`pg_dump` + cryptographic verification + verified restore, and
+      point-in-time recovery is now built and verified end to end. MinIO-side replication
+      and off-host WAL replication remain.**
+      **This item was ticked `[x]` while its own body said work remained** — "Still to do:
+      MinIO-side replication, and PITR documentation" — and P10.E separately listed PITR as
+      one of the three things blocking phase exit. Found by verifying rather than reading
+      the tally. The plan scopes it explicitly
+      (`IMPLEMENTATION_PLAN.md`: "pg_dump + MinIO replication; documented PITR";
+      `DESIGN_PLAN.md`: "pg_dump + MinIO replication; point-in-time recovery"), so the work
+      was in scope and the tick was simply wrong. PITR is now built; the tick moves to
+      `[~]` because MinIO-side replication is still not done.
+
+      **What `backup.py` already did** (unchanged): the dump, the manifest, and
+      cryptographic verification. Evidence is content-addressed, so verification is a digest
+      comparison. Digests come from the *database*, not the backup's own inventory, so a
+      backup that is internally consistent but missing evidence is caught. `create` refuses
+      to back up evidence whose bytes disagree with its recorded digest, so a corrupt store
+      fails at backup time rather than producing an archive that fails its own verification
+      later. `restore` writes to a named target with **no in-place path and no `--force`**.
+      Eight tests cover a missing object, a same-length corrupted object, a missing dump,
+      refusal to restore an unverified backup, and chunked hashing of a multi-megabyte
+      file — each asserting the *message names the evidence record*.
+      **`pg_restore`'s exit code cannot be trusted**, measured here: a PG18 `pg_dump` client
+      against a PG16 server emits `SET transaction_timeout = 0`, which PG16 does not know, so
+      `pg_restore` exits non-zero having *applied* the archive. The archive is applied and
+      then **verified** against the manifest's digests. That verification caught a silent
+      restore failure on its first run.
+
+      **PITR needed three things and only one existed.** A base backup (`pg_basebackup`),
+      an unbroken WAL archive, and a recovery procedure.
+
+      **Archiving is configured, and its failure mode is silent.** `archive_mode=on`,
+      `archive_timeout=300`, and a separate `pgwal` volume — separate because an archive
+      inside the data directory does not survive losing that directory. Settings are passed
+      as `-c` flags rather than an `include_dir` file because this image's `postgresql.conf`
+      has `include_dir` **commented out** and lives inside the `pgdata` volume, so a mounted
+      `conf.d` would be **ignored in silence** (verified by inspecting the live container).
+
+      **Three silent failures found by running it, each of which would have left PITR
+      looking configured and being useless:**
+
+      1. **The archive directory was not writable.** The `pgwal` volume mounts root:root
+         0755; the server runs uid 999. So `archive_command` failed on every segment while
+         `archive_mode` read `on`, the container was healthy, and the logs were empty —
+         `pg_stat_archiver.failed_count` climbed to 8 with the archive **empty**. Fixed by
+         a startup wrapper that `chown`s the directory, because **an `initdb.d` script is
+         the wrong place**: those run only when the data directory is empty, so they are
+         skipped on every start after the first and the named volume keeps root ownership.
+         Verified by hitting exactly that.
+      2. **`pg_basebackup` had no `pg_hba.conf` entry for replication.** Replication
+         connections match the pseudo-database `replication`, a *different line* from the
+         ordinary `host all all all`, and the stock image ships only loopback ones. So it
+         failed with "no pg_hba.conf entry" even though the same credentials worked for
+         everything else. Added a scoped entry. **The guard on that addition was itself
+         wrong first**: it tested for the *presence* of a replication line, matched the
+         loopback ones, declined to add anything, and left `pg_basebackup` still failing — a
+         check that passed while the thing it checked for was absent. It now requires a
+         non-loopback scope.
+      3. **`pg_basebackup --format tar` writes `base.tar.gz` as a *directory* containing
+         the archive**, not as the file. The artefact check asserted it was a file and so
+         **refused a base backup that had been created correctly and completely**.
+
+      **The alert keys on a delta, not the counter, and that is measured rather than
+      assumed.** `failed_count` is monotonic and never resets, so an alert on it fires
+      forever once anything has ever failed. This deployment proved it: `failed_count` sat
+      at 8 while `archived_count` climbed 4 → 5 → 20, and `last_failed_time` predated the
+      fix. An alert on the counter would have fired indefinitely on a healthy cluster, and
+      the response to that is to mute it. `ForenSightWALArchiveFailing` therefore uses
+      `forensight_wal_archive_failed_delta`, and `ForenSightWALArchiveStalled` covers the
+      complementary quiet failure — archiving on, nothing failing, nothing archived — with
+      its threshold at twice `archive_timeout`. Both metrics are published by the existing
+      `/metrics` endpoint, so **no exporter service was added**, which matters for the
+      constrained-host profile.
+
+      **Verified end to end, not configured and assumed.** Two rows written either side of a
+      restore point, then a real recovery into a fresh container:
+
+      ```
+      LOG:  starting point-in-time recovery to "pitr_test_target"
+      LOG:  consistent recovery state reached at 0/9D000138
+      LOG:  recovery stopping at restore point "pitr_test_target", time 2026-10-09 12:26:49
+      LOG:  pausing at the end of recovery
+
+      select pg_is_in_recovery();  ->  t
+      select note from pitr_probe; ->  BEFORE-TARGET      (AFTER-TARGET absent)
+      ```
+
+      **The row written after the target is gone and the one before it survives** — which is
+      the entire claim, checked rather than configured.
+
+      **Recovery refuses, in four ways, each asserted by a test.** A gap in the archive is
+      refused because Postgres would replay to it and then **promote**, producing a server
+      that looks recovered and is silently missing every transaction after — the worst
+      outcome available to an evidence vault. There is no in-place recovery and no
+      `--force`, for the same reason `backup.py` has none: a tool that can overwrite the
+      system it protects will eventually be aimed at it by someone in a hurry. Exactly one
+      target is required. And recovery comes up **`pause`**, not auto-promoted, so a recovery
+      aimed at a timestamp guessed at 3am cannot become the live system by accident.
+
+      **Two bugs the tests caught in my own code, both of which would have been reported to
+      an operator as fact.** WAL segment names are 24 hex digits, and `int(name, 16)`
+      **wraps a machine int** — `000000010000000000000090` becomes 18446744073709551760.
+      The contiguity arithmetic stays internally consistent by luck, so the check still
+      worked, while every number it reported — including *"first missing segment
+      000000010000000000000092"*, which no such segment — was nonsense. Now compared as
+      fixed-width hex strings, which sort in numeric order and cannot overflow. Separately,
+      a test asserting the word `force` is absent from the source could never pass, because
+      `restore_to`'s own docstring says "and no `--force`"; it now introspects the real
+      parser's option strings, and `pitr.build_parser()` exists for that purpose.
+
+      **20 tests** cover the gap check, the empty-archive refusal, non-segment files
+      (`backup_manifest`, `.history`), the artefact-resolution rules, the four recovery
+      refusals, and both alert expressions — including one asserting the raw counter does
+      *not* appear in the failure alert. The full replay stays a recorded manual
+      verification rather than a test, because it needs a second container.
+
+      **Still to do: MinIO-side replication**, and **off-host replication of the WAL
+      archive** — it is a separate volume from `pgdata`, but a single host's loss takes both.
 - [x] P10.B3 Graceful shutdown + readiness/liveness. `app/drain.py`, SIGTERM handler,
       `SHUTDOWN_GRACE_SECONDS`.
       **The order is the feature.** Readiness drops *first*, because `/readyz` is the
@@ -2046,8 +2130,13 @@ that might not work — the same argument as the CI security scanners.
       built rather than only here:
       1. **A penetration test (P10.B5).** CI scanners that are themselves proven to
          fail prove the scanners work, not that the application has no findings.
-      2. **PITR and MinIO-side replication (P10.B2).** `pg_dump` is a logical backup;
-         point-in-time recovery needs WAL archiving.
+      2. **MinIO-side replication (P10.B2).** **Point-in-time recovery is no longer on
+         this list — it was built and verified end to end** (WAL archiving configured and
+         alerted on, base backups via `pg_basebackup`, recovery to a named restore point
+         checked against real rows either side of the target). What remains here is
+         MinIO-side replication and off-host WAL replication. **This item was also ticked
+         `[x]` while its own body admitted the work was outstanding**, which is what
+         prompted building it rather than re-ticking it.
       3. **Three Phase 9 items**, and this is the third time the *recorded reason* for a
          blocker was wrong when it was re-checked. **All three now have an accurate
          reason; none has a licence reason.**

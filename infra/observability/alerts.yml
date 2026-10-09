@@ -103,3 +103,55 @@ groups:
             `unsupported` and `not_applicable` outcomes are deliberately not counted
             here: neither is a failure, and alerting on them would page someone every
             time the module declined an input it cannot honestly score.
+      # --- point-in-time recovery (P10.B2) ---------------------------------
+      - alert: ForenSightWALArchiveFailing
+        # The DELTA, not `forensight_wal_archive_failed_total`.
+        #
+        # `pg_stat_archiver.failed_count` is monotonic: it never decreases, and never
+        # resets except on a server restart. Measured on this deployment -- the counter
+        # reached 8 while archiving was genuinely broken, then archiving was fixed, the
+        # counter stayed at 8, and archived_count continued climbing. So an alert on the
+        # raw counter fires forever on any cluster that has ever had a transient archive
+        # failure, which is how an alert gets muted and then missed. Alerting on the
+        # per-scrape delta means only *new* failures page.
+        #
+        # This is not hypothetical: with archive_mode on and every setting correct, a
+        # root-owned archive directory on a uid-999 server made every archive_command
+        # fail. The container stayed healthy, the logs were empty, and the only evidence
+        # was this counter.
+        expr: forensight_wal_archive_failed_delta > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "WAL archiving is failing -- point-in-time recovery is not progressing"
+          description: >-
+            The Postgres archiver has failed to archive a WAL segment since the last
+            scrape, for two minutes. Until this clears, the most recent recoverable
+            point is stuck: a logical `pg_dump` backup (scripts/backup.py) is a
+            snapshot, so anything written since the last dump is unrecoverable and no
+            point-in-time restore can reach this instant. Check
+            `select failed_count, last_failed_time from pg_stat_archiver;` and that
+            /var/lib/postgresql/wal is writable by uid 999.
+
+      - alert: ForenSightWALArchiveStalled
+        # The complementary failure: archiving configured, nothing failing, and nothing
+        # being archived either. This is what an idle-but-healthy cluster looks like when
+        # archive_timeout is misconfigured upward, or when archiving is enabled on a
+        # server whose archive_command writes somewhere nobody reads.
+        #
+        # The threshold is twice `archive_timeout` (300s, in
+        # infra/postgres/conf.d/10-wal-archiving.conf), so a quiet system is not flagged
+        # for simply not having filled a 16MB segment.
+        expr: forensight_wal_archive_stalled == 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No WAL segment has been archived in over 10 minutes"
+          description: >-
+            Archiving has not succeeded for more than twice archive_timeout. Either the
+            archiver is idle because archive_timeout is set far higher than the
+            documented 300s, or segments are being archived somewhere this metric cannot
+            see. Point-in-time recovery cannot reach past the last archived segment, so
+            the recovery objective is unbounded until this is explained.

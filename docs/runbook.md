@@ -208,21 +208,119 @@ Postgres, so reversibility is checked on every run.
 
 ## Backups
 
-Phase 10 formalizes this; until then, capture both stores — they are
-meaningless apart, since evidence rows point at object keys.
+Two stores, captured together — they are meaningless apart, since evidence rows point at
+object keys.
 
 ```bash
-# Postgres
-docker compose exec -T postgres pg_dump -U forensight forensight \
-  | gzip > forensight-$(date +%F).sql.gz
+# Postgres (logical, with cryptographic verification and a tested restore)
+cd backend && uv run python scripts/backup.py create /backups/$(date +%F)
+uv run python scripts/backup.py verify /backups/$(date +%F)
 
 # Evidence objects
 docker run --rm -v forensight_miniodata:/data -v "$PWD":/backup \
   alpine tar czf /backup/minio-$(date +%F).tar.gz -C /data .
 ```
 
-Restoring is untested and belongs in Phase 10 (P10.B2). Verify evidence hashes
-against `evidence.sha256` after any restore.
+`backup.py create` writes a dump, a manifest and the evidence objects;
+`backup.py restore` writes **only** to the target database you name, with no in-place
+path and no `--force`. Verify evidence hashes against the manifest after any restore.
+
+## Point-in-time recovery
+
+A `pg_dump` backup has exactly one recovery point: the snapshot. PITR answers the question
+an evidence vault actually gets asked — *put the database back to just before that write,
+without losing the hours either side of it* — by replaying the write-ahead log onto a
+physical base backup and stopping at a chosen instant.
+
+### Is archiving healthy?
+
+```bash
+cd backend && uv run python scripts/pitr.py check-archive
+```
+
+```
+  ok: contiguous, 000000010000000000000090 .. 00000001000000000000009F
+```
+
+**If this refuses, stop.** A gap in the archive is not something to work around:
+
+```
+REFUSED: WAL archive has 1 missing segment(s) between ...090 and ...09F;
+first is ...095. Recovery would replay to the gap and then PROMOTE, producing a
+server that looks recovered and is silently missing every transaction after it.
+```
+
+That last behaviour is Postgres, not this tool: it replays as far as it can and then
+promotes. For an evidence vault it is the worst available outcome, so `pitr.py` refuses
+before starting rather than letting you find out afterwards.
+
+The same check is available from inside the container, which is what to run first when
+something looks wrong:
+
+```bash
+docker compose exec postgres psql -U forensight -d forensight -c \
+  "select archived_count, failed_count, last_archived_time, last_failed_time from pg_stat_archiver;"
+```
+
+**`failed_count` is cumulative and never decreases.** It is not a health signal on its own
+— a cluster that failed three times last month and has archived perfectly since is healthy.
+This deployment measured exactly that: `failed_count` 8, `archived_count` climbing. So
+`failed_count` alone is worth nothing; what matters is whether it is *still rising*.
+
+### Taking a base backup
+
+Recovery replays WAL **on top of** a base backup, so you cannot recover to an instant
+*before* the oldest one. Take them on a schedule and keep the marker:
+
+```bash
+cd backend && uv run python scripts/pitr.py base-backup /backups/pitr/$(date +%F)
+```
+
+Needs `pg_basebackup` and a replication-capable connection. It writes `base.tar.gz/` and a
+`BASE_BACKUP_TAKEN` marker — **losing that directory loses the only recovery point**, and
+losing the marker means nobody knows when the range starts.
+
+### Recovering to an instant
+
+Prefer a named restore point over a timestamp. A restore point is created at the moment of
+the event and recorded with the incident; a timestamp typed at 3am is a guess about format
+and zone.
+
+```sql
+-- at the moment of the event, from the application database:
+SELECT pg_create_restore_point('incident-2026-10-09-unwanted-write');
+```
+
+Then:
+
+```bash
+cd backend && uv run python scripts/pitr.py restore-to /recovery/incident \
+  --base-backup-dir /backups/pitr/2026-10-09 \
+  --target-name incident-2026-10-09-unwanted-write
+```
+
+`restore-to` **refuses if the target directory exists** and offers no `--force`. To recover
+the live system, stop it and move the data directory aside deliberately. Then start Postgres
+against the prepared directory, using the command the tool prints. It comes up **paused** at
+the recovery target:
+
+```
+LOG:  recovery stopping at restore point "incident-2026-10-09-unwanted-write", time ...
+LOG:  pausing at the end of recovery
+```
+
+**Inspect it before promoting.** Confirm the row you expected to be gone is gone, then:
+
+```sql
+SELECT pg_wal_replay_resume();
+```
+
+### What this does not cover
+
+**The WAL archive is not replicated off-host.** It is a separate named volume from `pgdata`
+— an archive inside the data directory does not survive losing that directory — but a single
+host's loss still loses both. Copy `pgwal` somewhere else on the same schedule as the
+backups. MinIO-side replication is also still open (P10.B2).
 
 ## Scale-out notes
 
