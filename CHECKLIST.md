@@ -1245,78 +1245,82 @@ UI always has.
       must land before this is an analyzer. **What would finish it:** either a permissive
       licence on a GAN or pixel-diffusion generator, or a portrait-aware front end plus
       fixtures from a third architecture.
-- [ ] P9.B4 Gunshot audio — **the technique was built and measured; the evidence does not
-      exist.** Re-researched 2026-10-08, fourth attempt, and this time the blocker was
-      measured rather than argued.
+- [ ] P9.B4 Gunshot audio — **the technique is built, pinned and measured; the fixture
+      corpus does not exist, and that is now verified across seven corpora rather than
+      argued from four.** Fifth attempt on this item.
 
-      **The technique is available, permitted and working.** `Xenova/
-      ast-finetuned-audioset-10-10-0.4593` — an ONNX export of the MIT-licensed AST
-      fine-tuned on AudioSet, **527 classes with `Gunshot, gunfire` at index 427**
-      (`Machine gun` at 428, `Bang` beside them). 346 MB, digest-pinned in
-      `scripts/fetch_models.sh`. YAMNet's class was confirmed separately at 421 of 521; AST
-      is used because a YAMNet **ONNX** export is not reachable, and AudioSet-classifier
-      is what the plan meant by "YAMNet/PANNs".
+      **The technique works.** `Xenova/ast-finetuned-audioset-10-10-0.4593`, MIT, 527
+      AudioSet classes, **`Gunshot, gunfire` at index 427**, 346 MB, digest-pinned. Its
+      front end was hand-written (no librosa here) and **a wrong one fails silently** —
+      three versions were wrong before one matched the reference, including a mel
+      filterbank where **126 of 128 bands were identically zero**, and the model reported
+      `Silence` at 0.70–0.85 **on gunfire**. The hand-written version was measured against
+      the reference, differed by a mean of ~1.5 after normalisation — enough to change the
+      argmax on four of six fixtures — and was **deleted rather than shipped**. A
+      `Speech` control at 0.885 is what proves the pipeline before anything is claimed
+      about gunfire.
 
-      **The front end is the hard part, and a naive one fails silently.** AST wants a
-      `(1, 1024, 128)` log-mel spectrogram at 16 kHz. There is no librosa or scipy here, so
-      a front end was hand-written — and a wrong one does not error, it returns a confident
-      527-way distribution that is confidently wrong. It took **three** wrong versions to
-      find, and each failed silently:
-      - **A Slaney mel filterbank where AST uses HTK.** Every clip came back `Silence` at
-        0.70–0.85 — *on gunfire*.
-      - **Mel-space edges compared against Hz bins**, so **126 of the 128 bands were
-        identically zero** and the model was shown an almost-empty spectrogram. A
-        filterbank that is nearly all zeros survives code review and dies in production.
-      - **Reflect-padding inside the STFT where the reference zero-pads the waveform
-        before framing**, which mirrors content into frames the model expects to be silent.
-      A hand-written front end was written and measured against the reference
-      (`transformers`, in a throwaway virtualenv — **not** a project dependency): it agrees
-      *qualitatively* but differs numerically by a mean of ~1.5 after normalisation, which
-      changes the argmax on four of six fixtures. **It was deleted rather than shipped**,
-      because a component that cannot reproduce its reference is worse than no component.
+      **Seven corpora, each checked, and the reasons are different:**
 
-      **Then a control found the real problem.** `seg_speech_control.wav` — the repo's own
-      LibriVox narration — classifies as **`Speech` at 0.885**. The front end works, the
-      model works, the label map is right. Which left the fixtures to be checked, and:
+      | Corpus | Has gunfire? | Why it is unusable |
+      |---|---|---|
+      | Wikimedia Commons | **1 clip** | the only licence-clean one found |
+      | archive.org | no | keyword search returns podcasts and news bulletins |
+      | **UrbanSound8K** | **yes, thousands** | **licences unverifiable** — its own card says *"refer to the respective source"*; the audio is Freesound-sourced, and an MIT tag on a mirror of unverified audio is not a licence for it |
+      | **FSD50K** | **no** | has **per-clip licence maps** — the exact structure that solved P9.B3 — but no `gun_shot` class. Fireworks is the nearest impulsive negative |
+      | **AudioSet** | yes | the ontology is CC BY 4.0 but **its audio is YouTube-licensed** |
+      | Freesound | yes | the category exists; **the API needs a token this project does not have** |
+      | DVIDS | unknown | TLS certificate failure from this network |
 
-      > **Two of the six audio clips are not what their filenames say.**
-      >
-      > - `Zeigenbock Kopf - 01 - Machine Gun.ogg` (**CC BY 3.0 US**, a proper Creative
-      >   Commons licence) is **`Music` at 0.647**. It is a music file.
-      > - `Theres a thunderstorm coming.wav` (**CC0**) is **`Speech` at 0.82**. It is a
-      >   spoken recording.
-      >
-      > Only running a classifier over them reveals this. **Audio fixture filenames are not
-      > evidence of content**, and this is worse than the `LL-Q1860 …-gunshot.wav`
-      > pronunciation cluster found earlier: those are mislabelled by Commons' convention,
-      > these are mislabelled by whoever uploaded them, and both carry licences the gate
-      > accepts. `tests/probe_audio_fixtures.py` therefore asserts what each clip *is*, so
-      > the finding cannot quietly become folklore.
+      **UrbanSound8K is the significant one**, because it had `gun_shot` all along and was
+      never searched — the corpus list was the problem, not the availability. It is
+      **refused on a verified reason**, not an assumption: its card explicitly declines to
+      clear licensing, and the other mirrors are worse (a bare `apache-2.0` tag on a
+      306-byte card, on Freesound-sourced audio).
 
-      **The measurement, with the reference front end** (so nothing rests on the deleted
-      one):
+      **And the original Commons finding was re-tested with 16 more event-word search
+      terms** — `live fire`, `shooting range`, `rifle`, `pistol`, `artillery`, `cannon`,
+      `muzzle blast`, `volley`, `blank fire`, `shotgun`, `musket` and others, rather than
+      the word "gunshot". **29 licence-clean results, zero gunfire recordings.** They are
+      marches (*The Rifle Regiment*, *U.S. Field Artillery*, *Ancient and Honorable
+      Artillery Company*), **speeches on North Korean artillery**, a **New York
+      bar-admission argument about the shotgun doctrine**, a ceremonial salute cannon, and
+      a further batch of `LL-Q…` pronunciation files, several **CC0** and so passing the
+      licence gate. **The pattern is exactly as first recorded: searching for gunfire
+      returns things that mention it.**
 
-      | Clip | P(gunfire) | Gunfire rank | Reference top class |
-      |---|---|---|---|
-      | `seg_gunshots` (real gunfire) | **0.077** | **3rd** | Sound effect |
-      | `seg_fireworks` | 0.030 | 6th | Walk, footsteps (Fireworks 2nd, 0.095) |
-      | `seg_lightning` | 0.0003 | 189th | Rain on surface |
-      | `seg_machinegun` (*music*) | 0.0001 | 149th | Music |
-      | `seg_thunder` (*speech*) | 0.0000 | 264th | Speech |
-      | `seg_speech_control` | 0.0000 | 152nd | Speech |
+      **Synthetic gunfire was tried and falsified, which is the useful part.** A gunshot
+      was modelled physically — broadband muzzle-blast impulse, discrete early reflections,
+      expanding-gas tail, low-frequency muzzle thump — with parameters drawn from plausible
+      ranges and **not tuned to flatter the detector**:
 
-      **So P9.B4 stays unticked, and the reason is now a count rather than a shrug.**
-      Four corpora — Commons, archive.org, Freesound, DVIDS — hold **one** gunfire
-      recording between them under a licence this project accepts. P=0.077 against 0.030 is
-      a factor of 2.6 with a *single* sample on one side of it, and `Gunshot, gunfire` does
-      not even reach the top class. Shipping a detector on that is the same defect as the
-      deepfake model that flagged 8 of 8 genuine photographs as fake: **a number shaped
-      like a finding, resting on nothing.** The weights are fetched and pinned, the
-      fixtures and their provenance are committed, and the probe is reproducible — so the
-      item is one corroborated gunfire source away from being built, not rediscovered.
-      **What would unblock it:** a second genuine gunfire recording under CC0, CC BY or a
-      public-domain dedication. That is a sourcing task, not an engineering one.
+      | | P(gunfire) | P(Bang) |
+      |---|---|---|
+      | synthetic gunfire (8 clips) | **0.0006 – 0.0026** | 0.044 – 0.503 |
+      | **the one genuine recording** | **0.0769** | 0.106 |
+      | confusable negatives (fireworks, thunder, lightning) | 0.0000 – 0.0300 | 0.0002 – 0.0010 |
 
+      **The synthetic clips score *lower* than the real one and sit inside the negative
+      range.** Shipping them as positives would have made a working detector appear to
+      detect nothing — a fixture set misleading in the *opposite* direction. The model
+      recognises the synthesis as a **Bang** (4 of 8 rank it first) but not as
+      `Gunshot, gunfire`, which is consistent with AudioSet's gunfire class depending on
+      real acoustic context rather than on a transient alone. **This is the same conclusion
+      the fingerprint item reached by a different route: synthetic material cannot carry a
+      measurement about the real thing.**
+
+      **Two audio fixture filenames lie about their content**, found by classifying rather
+      than reading: `Zeigenbock Kopf - 01 - Machine Gun.ogg` (**CC BY 3.0 US**) is
+      `Music` at 0.647, and `Theres a thunderstorm coming.wav` (**CC0**) is `Speech` at
+      0.82. **Audio fixture filenames are not evidence of content**, so
+      `tests/probe_audio_fixtures.py` asserts what each clip *is*.
+
+      **What would unblock it:** a Freesound API token would make the one corpus with
+      thousands of permissively-licensed gunfire clips reachable, and per-clip licence
+      metadata is published with the download. That is a **credential**, not an engineering
+      task. Absent it, the honest form of this item is what it is now: weights pinned,
+      front end validated and deleted rather than shipped, fixtures and probe committed,
+      and **the corpus proven not to exist** rather than assumed to.
 - [x] P9.B5 Handwriting **document** similarity. `handwriting-match`, Tier B, ORB with a
       Lowe-ratio test, **no weights, no new dependency** (OpenCV already shipped for
       `face-compare`).
@@ -2074,10 +2078,18 @@ that might not work — the same argument as the CI security scanners.
            two of the 22 generators in the eval set are Apache 2.0.
            **Two "no permissively-licensed X" blockers in this phase were both a wrong
            search rather than a missing permission.**
-         - **P9.B4 (gunshot).** YAMNet **has** the class (421 of 521). The blocker is
-           that a keyword search for gunfire returns mostly things that *mention* it —
-           roughly 2 genuine clips from 35 permissively-licensed hits, one of which is a
-           recording of a person dying and is refused on those grounds.
+         - **P9.B4 (gunshot).** YAMNet **has** the class (421 of 521), and the AST
+           replacement is built, pinned and measured — front end validated against a
+           `Speech` control, hand-written version deleted when it failed to match its
+           reference. The blocker is the corpus, and it is now mapped across **seven**
+           corpora: **UrbanSound8K has `gun_shot` all along and was never searched**,
+           though its licences are unverifiable (its own card defers to the source);
+           FSD50K has per-clip licence maps but no such class; AudioSet's audio is
+           YouTube-licensed; Freesound has it behind an API token. Sixteen further
+           Commons searches return **29 licence-clean results and zero gunfire** — marches,
+           speeches on artillery, a bar-admission argument about the shotgun doctrine.
+           **Synthetic gunfire was tried and scores *below* the real clip**, inside the
+           negative range, so it would make a working detector look blind.
          **B2 (speaker) and B5 (handwriting) both shipped** once the search was widened
          past the obvious candidates, which is the direct evidence that the remaining
          blockers were worth re-checking rather than restating.
