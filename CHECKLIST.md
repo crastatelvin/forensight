@@ -2672,3 +2672,68 @@ tables directly will do that). Fixed by `alembic stamp 0008_traces`. **Nothing i
 with the migration** — on a fresh database it applies cleanly — but the failure mode is
 worth remembering: *the version table and the schema can disagree, and only one of them is
 consulted at boot.*
+
+---
+
+## Open defect found while capturing the README screenshots — **closed, and it falsified a recorded measurement**
+
+Raised while driving the real agent against local Ollama to produce an honest screenshot,
+not by a test. The suite mocks the model, so it could not see any of this.
+
+### The bounded timeout was still too short to ever finish a step
+
+The defect above bound generation at `LLM_MAX_TOKENS=1024`, which fixed *unbounded*
+generation — but left `OpenAICompatModel`'s HTTP timeout hardcoded at **60 s**, and that
+value was not configurable at all. On this host the bound does not fit inside it:
+
+| Measurement | Recorded here before | Measured now |
+|---|---|---|
+| Generation rate | ~7 tokens/s | **~5 tokens/s** |
+| 512-token completion | 71 s | **103 s** |
+
+At ~5 tok/s the default 1024-token budget is ~206 s against a 60 s timeout, so **every
+agent step on a local model died** with `ModelError: chat completion failed: timed out`.
+Not slow — failed. The first real run of the agent could not complete a single step.
+
+Fixed at the root, in the shared place: `Settings.llm_timeout` (default **300 s**,
+`ge=1.0`, `le=1800.0`) is threaded through **both** `resolve_model` construction sites,
+so the Ollama path and the cloud path are covered by one change. A test asserts the value
+reaches the client *and* that the shipped default outlasts the shipped token budget at the
+measured rate, so the two cannot drift apart again.
+
+The generation-rate figure above is now corrected in `app/config.py` where the wrong one
+lived. **The lesson repeats itself: a recorded measurement is a claim.** This one had been
+written down as measured and was off by 45%.
+
+### Verified after the fix
+
+- 5 live-agent tests pass against a real Ollama (`FORENSIGHT_LLM_LIVE=1`, with
+  `LLM_BASE_URL=http://localhost:11434/v1` — the in-compose hostname `ollama` does not
+  resolve from the host, which is why they skip silently by default).
+- A real run reached `declined / insufficient_evidence` after one `search_evidence` call:
+  it found nothing bearing on the origin of the fire and **refused to assert anything**,
+  citing nothing it could not source. That is the intended behaviour, and it is the
+  screenshot now in the README.
+
+### Three claims in the old README that did not survive checking
+
+Rewriting the README for publication meant checking what it asserted. Three did not hold:
+
+1. **"Five of these load pinned weights; the other six are pure algorithms."** Wrong.
+   `registry.all_specs()` reports **3** modules with a `model_key` — `face-compare`
+   (YuNet + SFace), `object-detect` (YOLOv4), `speaker-compare` (ECAPA-TDNN) — and
+   `fetch_models.sh` downloads exactly those four files. Eight are pure algorithms.
+   Corrected in the README.
+2. **"733 backend tests"** is the *collected* count, not the passing count. Honest
+   figure: **723 pass**, 10 skipped behind explicit flags, of which 5 pass against a live
+   Ollama. The README now states all three numbers rather than the flattering one.
+3. The **"82 single-byte flips"** tamper sweep *does* hold — corroborated independently in
+   `CHECKLIST.md` (T8.1) and `docs/threat-model.md`. Left as written. Recorded here
+   because checking it was the only way to know it was not also inherited.
+
+### The demo script had a committed default password
+
+`backend/scripts/demo_data.py` shipped with `FORENSIGHT_PASSWORD` defaulting to a literal
+credential. Harmless in a private repository; a findable default in a **public** one, in a
+script whose job is to log in. It now has no default and exits with instructions naming
+`app.seed`. The account is created by the operator, who chooses the password.

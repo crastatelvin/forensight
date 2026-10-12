@@ -200,6 +200,7 @@ def resolve_model(settings: Any) -> ChatModel:
     embed_model = getattr(settings, "llm_embed_model", "") or ""
     dim = int(getattr(settings, "embed_dim", EMBED_DIM) or EMBED_DIM)
     max_tokens = int(getattr(settings, "llm_max_tokens", 1024) or 1024)
+    timeout = float(getattr(settings, "llm_timeout", 300.0) or 300.0)
 
     if provider == "ollama":
         return OpenAICompatModel(
@@ -210,6 +211,7 @@ def resolve_model(settings: Any) -> ChatModel:
             api_key=key or "ollama",  # Ollama ignores it but requires the header
             embed_dim=dim,
             max_tokens=max_tokens,
+            timeout=timeout,
         )
     if not model:
         raise ModelError("no LLM configured: set LLM_PROVIDER and LLM_MODEL (see .env.example)")
@@ -221,6 +223,7 @@ def resolve_model(settings: Any) -> ChatModel:
         api_key=key,
         embed_dim=dim,
         max_tokens=max_tokens,
+        timeout=timeout,
     )
 
 

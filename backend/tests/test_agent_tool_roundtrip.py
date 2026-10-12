@@ -630,3 +630,34 @@ def test_the_bound_comes_from_configuration() -> None:
         egress_allowed_hosts = ""
 
     assert resolve_model(_Settings()).max_tokens == 256  # type: ignore[attr-defined]
+
+
+def test_the_timeout_comes_from_configuration() -> None:
+    """`LLM_TIMEOUT` must reach the client, and default high enough to be usable.
+
+    The timeout was hardcoded to 60 s, which is below what the constrained host this
+    project targets can produce: 1024 tokens at the measured ~5 tokens/second is ~206 s.
+    Every agent run on a local model therefore died with `ModelError: timed out`, and
+    nothing caught it because the suite mocks the model.
+    """
+    from app.agent.llm import resolve_model
+    from app.config import Settings
+
+    class _Settings:
+        llm_provider = "ollama"
+        llm_model = "qwen2.5"
+        llm_base_url = ""
+        llm_api_key = ""
+        llm_embed_model = ""
+        embed_dim = 1024
+        llm_max_tokens = 1024
+        llm_timeout = 412.5
+        egress_allowed_hosts = ""
+
+    assert resolve_model(_Settings()).timeout == 412.5  # type: ignore[attr-defined]
+
+    # And the shipped default must outlast the shipped token budget at the measured rate.
+    default = Settings(_env_file=None)  # type: ignore[call-arg]
+    assert default.llm_timeout >= 300.0, default.llm_timeout
+    # 1024 tokens at ~5 tokens/s is ~206 s; anything under that truncates every step.
+    assert default.llm_timeout >= default.llm_max_tokens / 5 * 1.2

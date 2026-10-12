@@ -157,18 +157,25 @@ class Settings(BaseSettings):
     llm_api_key: str = Field(default="")
     #: Hard ceiling on tokens generated per agent step.
     #:
-    #: **Measured, not guessed.** On the constrained-host profile this project targets,
-    #: `qwen2.5:3b` generates at roughly **7 tokens/second** on CPU: a 64-token
-    #: completion takes 8.6 s, 256 tokens takes 37.9 s, and 512 tokens takes 71 s. Left
-    #: unbounded — which is what an absent `max_tokens` means to the OpenAI chat
-    #: completions API — a single agent step costs tens of seconds of CPU and can exceed
-    #: the 60 s HTTP timeout in `OpenAICompatModel`, turning a slow answer into a
-    #: `ModelError` and a failed run.
+    #: **Measured, not guessed — and re-measured, because the first measurement was
+    #: wrong.** On the constrained-host profile this project targets, `qwen2.5:3b`
+    #: generates at roughly **5 tokens/second** on CPU: a 512-token completion takes
+    #: **103 s**, not the 71 s an earlier note here claimed. Left unbounded — which is
+    #: what an absent `max_tokens` means to the OpenAI chat completions API — a single
+    #: agent step costs minutes of CPU and cannot fit any sensible HTTP timeout.
     #:
     #: 1024 comfortably fits a tool call plus prose while capping the worst case. It is a
     #: bound, not a target: the agent emits short structured output, so a truncated
     #: response would show up as an unusable tool call rather than as a quiet shortening.
     llm_max_tokens: int = Field(default=1024, ge=64, le=32768)
+    #: HTTP timeout for one LLM call, which must outlast `llm_max_tokens` at the host's
+    #: real generation rate or every agent run dies with `ModelError: timed out`.
+    #:
+    #: This was not configurable, and the hardcoded 60 s default was below what the
+    #: host can produce: 1024 tokens at 5 tok/s is ~206 s. Found by running the agent
+    #: against local Ollama — the test suite mocks the model, so it could not see it.
+    #: 300 s covers the default token budget with headroom; raise it for a slower host.
+    llm_timeout: float = Field(default=300.0, ge=1.0, le=1800.0)
     llm_embed_model: str = Field(default="")
     #: Must match the pgvector column width in migration 0006, and the width the
     #: embedding model actually returns. A mismatch is rejected on write rather
