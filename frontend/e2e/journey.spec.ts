@@ -269,3 +269,46 @@ test.describe("case journey", () => {
     expect(Date.now() - started).toBeLessThan(60_000);
   });
 });
+
+/**
+ * The audit-chain verdict is only worth having if a user can watch it happen.
+ *
+ * This exists because the control was broken for the entire life of the feature: the
+ * component called `/api/audit/verify`, no such proxy route existed, and the failure was
+ * swallowed into "Could not reach the server to verify the chain." The backend endpoint
+ * was correct the whole time and had its own passing tests. Nothing clicked this button.
+ *
+ * So the assertion is on the *verdict*, not merely that no error appeared — a test that
+ * only checked for the absence of the alert would have passed against the broken version.
+ */
+test.describe("audit chain verification", () => {
+  test("verifying the chain reports a verdict in front of the user", async ({ page }) => {
+    await signInOnce(page);
+
+    const number = `E2E-CHAIN-${RUN}`;
+    const caseId = await caseIdFor(page, number, `Chain ${RUN}`);
+    await page.goto(`/cases/${caseId}`);
+
+    // The chain control lives on the Audit tab, so open it before asserting anything
+    // about its state.
+    await page.getByRole("tab", { name: /Audit/ }).click();
+
+    // Unverified is the honest starting state, and saying so is the feature.
+    await expect(page.getByText("Not verified in this session.")).toBeVisible();
+
+    await page.getByRole("button", { name: "Verify audit chain" }).click();
+
+    await expect(page.getByText(/Chain intact/)).toBeVisible({ timeout: 30_000 });
+
+    // Scoped to this control's own failure message rather than to `role="alert"`
+    // page-wide: the page carries other live regions, so a global alert count asserts
+    // something unrelated and would break for reasons that have nothing to do with the
+    // chain. This is the exact string the broken proxy produced.
+    await expect(
+      page.getByText("Could not reach the server to verify the chain."),
+    ).toHaveCount(0);
+
+    // The verdict is scoped to the user who asked, not to the page's server render.
+    await expect(page.getByText("Verified just now, in this browser.")).toBeVisible();
+  });
+});

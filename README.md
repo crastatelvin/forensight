@@ -77,21 +77,39 @@ The capability panel reports **11 of 11 analyzers available on this host**. When
 
 ![Analysis results with scores, thresholds and tiers](docs/screenshots/05-analysis-results.png)
 
-Each bar is scaled against **its own** threshold, and the interface is explicit that bars are comparable **within a row only**. Below: `image-ela` scored `0.0039` against a `0.01` threshold with the interpretation *"error levels consistent with uniform compression history"* and the full Pillow/libjpeg versions that produced it.
+Each bar is scaled against **its own** threshold, and the interface says so: *"Bars are
+comparable within a row only — each analyzer has its own scale."* Here 5 of 6 results sit at
+or near their threshold. The two `image-ela` rows are the same module on two different files —
+`0.0038` against a `0.01` threshold, and `0.0238` — which is the clearest illustration of why a
+forensic score only means something next to its own threshold and nowhere else. Each row also
+carries its tier, the exact library versions that produced it (`1.0.0+ela-q75+pil12.3.0-libjpeg6.2`),
+and the limitation that governs how far it can be pushed.
 
 ### The agent refusing to answer
 
 ![Agent console showing a considered refusal with its tool-call audit](docs/screenshots/06-agent-console.png)
 
-Asked to state what the analysis supports about the origin of the fire, the agent called `search_evidence`, found nothing about fire, and **declined**:
+Asked to *"state who took these two photographs, and the date each was captured"*, the agent
+called `search_evidence`, found nothing that could support that, and **declined**:
 
-> *This is a considered refusal, not a failure. It means the agent could not find a source it was willing to cite, and declined to assert something unsupported.*
+> *No image-exif or image-ela results found with sufficient confidence to identify the
+> photographer and date of the photographs.*
+>
+> *This is a considered refusal, not a failure. It means the agent could not find a source it
+> was willing to cite, and declined to assert something unsupported.*
 
-That is the single behaviour this project exists to make possible. The tool call is audited, hashed, and kept.
+That is the single behaviour this project exists to make possible. The tool call is audited
+and hashed. Note that the question is genuinely unanswerable from error levels, entropy and
+EXIF — the agent is not being coy, it is correct.
 
-### Evidence vault — content-addressed, with chain of custody
+### The case workspace and the evidence vault
 
-![Evidence list with SHA-256 digests and custody timestamps](docs/screenshots/04-evidence.png)
+![Case workspace showing the evidence vault with digests and custody timestamps](docs/screenshots/03-case-overview.png)
+
+The evidence list shows the SHA-256 digest, the size, the custody timestamp and the result
+count for each item, and the upload path states the rule the whole vault rests on: the file
+is hashed on arrival and written to the chain of custody **before anything is read from it**,
+and the original bytes are never modified.
 
 ### Audit chain
 
@@ -282,6 +300,7 @@ docker compose exec -e SEED_ADMIN_EMAIL=you@example.com \
 | Profile | Brings up | Status |
 |---|---|---|
 | `core` | postgres, redis, minio, ollama, api, CPU analysis worker | works |
+| `tsa` | RFC 3161 timestamp authority — **required for signed reports** | works |
 | `gpu-workers` | GPU analysis worker | needs the nvidia container runtime |
 | `observability` | Prometheus, Grafana, Loki | Prometheus scrapes `/metrics` |
 | `android-dev` | CPU-only API + Postgres + small Ollama; GPU modules degrade cleanly | |
@@ -293,6 +312,17 @@ backend/scripts/fetch_models.sh                    # pinned weights, digest-veri
 docker compose exec api .venv/bin/python scripts/provision_signer.py   # PAdES signing key → named volume
 cd backend && python scripts/provision_models.py .models              # upload weights to MinIO
 ```
+
+**Signed reports additionally need the timestamp authority.** It lives behind its own
+profile, so `docker compose --profile core up` alone leaves report generation returning a
+`500` from an unhandled `TimestampRequestError`:
+
+```bash
+docker compose --profile tsa up -d tsa
+```
+
+This is a rough edge worth naming: there is no unsigned fallback (by design), so a missing
+TSA takes report generation down entirely rather than degrading it.
 
 Provisioning is deliberate. A deployment that skips it gets every model-backed job
 failing with *"pinned weights are not provisioned"* and `/capabilities` reporting those
@@ -402,11 +432,16 @@ cd frontend && npx playwright test
 
 **733 backend tests** (723 pass against the default SQLite-plus-live-services profile; the
 remaining 10 are gated behind an explicit flag — 5 of those pass against a live Ollama, and
-the live-agent suite is green). **15 Playwright E2E tests.** The E2E suite deliberately does
+the live-agent suite is green). **16 Playwright E2E tests.** The E2E suite deliberately does
 *not* mock the API: a browser signs in through the Next server and the Next server talks to
 the API with the browser's cookie, because anything less would miss exactly the class of
 defect this project keeps finding — a cookie not forwarded, a CSRF header not set, a
 `Set-Cookie` dropped by a server-side fetch.
+
+> The E2E suite is **flaky under load**. With inference running concurrently on the same
+> host, tests time out on assertions that pass immediately when run alone. Every failure
+> observed this session passed on a clean re-run. Treat a lone red E2E run as a signal to
+> re-run it, not as a verdict.
 
 There are also three **standalone fixture probes** that verify the corpora a technique claims
 to have been measured against, and exit non-zero when the corpus does not exist:
@@ -436,6 +471,7 @@ Stated plainly, because a forensic tool that overstates itself is worse than no 
 - **Deepfake detection** is validated on one latent-diffusion architecture. It misses about 17% of generated samples, and GAN- and pixel-diffusion-based generation is untested.
 - **MinIO is AGPL-3.0 and archived upstream.** It now ships no security updates, which matters for a forensic tool where evidence durability is load-bearing. ForenSight runs the image unmodified and speaks S3 to it, so AGPL network copyleft does not attach to ForenSight's code — but *distributing* that image conveys the licence and corresponding source. There is no configuration that avoids this; the only way out is a different object store.
 - **Horizontal scaling** is not built, and Grafana/Loki dashboards are not verified against a live stack.
+- **Three analyzers have no plain-language description** — `geo-correlate`, `handwriting-match` and `near-duplicate` render as *"No plain-language description is recorded for this analyzer"* on the capabilities panel. They run and they score correctly; what is missing is the prose that tells an investigator what the number means before they lean on it. Visible in the dashboard screenshot above, and worth fixing before anyone deploys this.
 
 `CHECKLIST.md` carries the complete, itemised version of this list with the evidence for each claim.
 

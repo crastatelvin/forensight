@@ -1444,6 +1444,16 @@ UI always has.
       proves only that the code still produces what it produced, not that the number
       is a distance. A haversine with its arguments transposed is stable,
       reproducible, and wrong.
+- [ ] **Three analyzers have no plain-language description on the capabilities panel.**
+      `geo-correlate`, `handwriting-match` and `near-duplicate` render as *"No
+      plain-language description is recorded for this analyzer"*. The other eight carry
+      prose explaining what their number means, and that prose is the difference between
+      an investigative lead and a number someone leans on — so its absence on three of
+      eleven is a real gap, not a cosmetic one. Found by reading the capabilities
+      panel in a screenshot, which is the only place the gap is visible: `/capabilities`
+      returns them fine, so no test was failing and no log line mentioned it.
+      The fix is three descriptions in `app/analysis/modules/*.py`, each stating what
+      the score is, what it is sensitive to, and what it cannot establish.
 - [x] P9.B8 Tier B repositioned as visual similarity / triage, with the label
       **served from the backend rather than written in the interface.**
       The plan lists seven trace-evidence techniques (bloodstain, fiber, glass,
@@ -2737,3 +2747,61 @@ Rewriting the README for publication meant checking what it asserted. Three did 
 credential. Harmless in a private repository; a findable default in a **public** one, in a
 script whose job is to log in. It now has no default and exits with instructions naming
 `app.seed`. The account is created by the operator, who chooses the password.
+
+---
+
+## Audit-chain verification was broken in the UI for the whole life of the feature — **closed**
+
+Found by clicking the button while capturing a screenshot, not by a test. The screenshot was
+meant to show a verified chain, and produced *"Could not reach the server to verify the chain."*
+
+### The cause was a missing proxy route, and both halves of the system were tested
+
+`ChainStatus` has always called `fetch("/api/audit/verify")`. **No such route existed** under
+`frontend/src/app/api/`. The request 404'd through the Next server and the `catch` rendered
+the failure as a network message, which is a lie about the cause — the network was fine.
+
+The backend endpoint `GET /cases/audit/verify` existed, worked, and had its own passing
+tests. The Playwright suite had 15 tests and none of them clicked this control. So the
+feature was 100% non-functional in the product and 100% green in CI. This is the clearest
+single example of the pattern this section keeps finding.
+
+Fixed by adding `frontend/src/app/api/audit/verify/route.ts`, following the shape of
+`app/api/jobs/[jobId]/route.ts`. The browser's cookie is forwarded so the API scopes the
+chain to what the caller may see.
+
+### A second bug behind it: the verdict silently dropped its entry count
+
+`ChainVerdict` read the count as `body.checked`. The API returns `{"valid", "entries"}`. So
+`checked` was always `undefined`, and `body.checked ? … : ""` quietly rendered the badge as
+*"✓ Chain intact"* with no count. It never rendered a wrong number — it rendered nothing,
+which is why it was not noticed alongside the broken route. Corrected to `entries`.
+
+### Covered now, by asserting the verdict rather than the absence of an error
+
+A Playwright test clicks the control and asserts *"Chain intact"* is visible and the exact
+failure string is absent. Asserting only *"no alert appeared"* would have passed against the
+broken version — the component did render an alert, but the useful assertion is the verdict
+itself. The first draft of that test asserted the unverified state *before* opening the Audit
+tab, which is where the control lives; fixed.
+
+### Report signing needs a profile that the quickstart does not start
+
+Unrelated to the above, and found while the E2E suite failed for a different reason:
+`GET /reports/cases/{id}.pdf` returned **HTTP 500** — an unhandled
+`pyhanko.sign.timestamps.common_utils.TimestampRequestError`. The RFC 3161 TSA is behind the
+**`tsa` profile**, which `docker compose --profile core up` does not start. With the TSA up,
+the same request returns a real 4-page signed PDF.
+
+There is **no unsigned fallback by design**, so a missing TSA takes report generation down
+rather than degrading it. Documented in the README rather than papered over with a default,
+because an operator who finds this should know the reason, not get a PDF that quietly makes
+no integrity claim.
+
+### The E2E suite is flaky under load — recorded, not hidden
+
+Two tests (`login, create a case…` and `an action parked for approval…`) failed in full-suite
+runs and passed immediately when run alone, and a clean full-suite run is **16/16**. The
+correlating condition was concurrent CPU load from Ollama inference on the same host. The
+README now says so, so the next person does not spend an hour chasing a red build that is
+telling them about the machine, not the code.

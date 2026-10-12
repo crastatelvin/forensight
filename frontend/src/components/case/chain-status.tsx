@@ -77,11 +77,13 @@ export function ChainStatus({
 }
 
 function ChainVerdict({ status }: { status: unknown }) {
-  const body = status as { valid?: boolean; checked?: number; broken_at?: string };
+  // The API returns `{valid, entries}`; the count field was previously read as `checked`,
+  // so the badge silently dropped the entry count instead of showing it wrong.
+  const body = status as { valid?: boolean; entries?: number; broken_at?: string };
   if (body.valid === true) {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full border border-calm-border bg-calm-bg px-2 py-0.5 text-[11px] font-medium text-calm">
-        ✓ Chain intact{body.checked ? ` — ${body.checked} entries` : ""}
+        ✓ Chain intact{body.entries ? ` — ${body.entries} entries` : ""}
       </span>
     );
   }
