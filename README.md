@@ -2,7 +2,6 @@
 
 <img src="docs/images/forensight-logo.png" alt="ForenSight logo" width="180"/>
 
-# 🔍 ForenSight
 
 ### A Forensic Investigation Platform That Refuses to Assert What Its Evidence Cannot Support
 
